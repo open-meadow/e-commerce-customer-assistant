@@ -1,0 +1,7 @@
+id,query,intent,category,example_expected_action,notes
+Q001,Where is my order?,order_status,Orders,get_order_status,No order ID provided; ask for order ID
+Q002,How do I return a product?,return_process,Returns,explain_return_steps,Refer to 7-day return window
+Q003,My payment failed but money was deducted.,payment_failure,Payments,explain_reversal_process,Mention 3–7 business days timeline
+Q004,Do you charge for shipping?,shipping_charges,Shipping,explain_shipping_fees,"Free above ₹999, else ₹79"
+Q005,How do I contact customer support?,contact_support,Support,provide_support_channels,Email support@example.com or website chat
+Q006,Does the 24-inch monitor have HDMI?,product_spec_query,Product_Info,answer_from_product_specs,Use product catalog/specs

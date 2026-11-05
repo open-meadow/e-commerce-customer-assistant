@@ -1,0 +1,79 @@
+[
+  {
+    "id": "P1001",
+    "name": "Wireless Earbuds",
+    "category": "Audio",
+    "price_inr": 2499,
+    "currency": "INR",
+    "description": "True wireless Bluetooth earbuds with charging case and touch controls.",
+    "specs": {
+      "battery_life_hours": 20,
+      "bluetooth_version": "5.3",
+      "water_resistance": "IPX4",
+      "color": "Black"
+    },
+    "stock_status": "in_stock"
+  },
+  {
+    "id": "P1002",
+    "name": "Over-Ear Headphones",
+    "category": "Audio",
+    "price_inr": 3799,
+    "currency": "INR",
+    "description": "Over-ear wired headphones with noise isolation and padded earcups.",
+    "specs": {
+      "type": "Over-ear",
+      "connector": "3.5mm",
+      "cable_length_m": 1.5,
+      "color": "Blue"
+    },
+    "stock_status": "in_stock"
+  },
+  {
+    "id": "P1003",
+    "name": "65W GaN Charger",
+    "category": "Accessories",
+    "price_inr": 1999,
+    "currency": "INR",
+    "description": "Compact 65W USB-C GaN charger suitable for phones, tablets, and laptops.",
+    "specs": {
+      "max_output_watt": 65,
+      "ports": 2,
+      "port_types": [
+        "USB-C",
+        "USB-A"
+      ],
+      "color": "White"
+    },
+    "stock_status": "in_stock"
+  },
+  {
+    "id": "P1006",
+    "name": "24-inch Monitor (Full HD)",
+    "category": "Computers",
+    "price_inr": 9999,
+    "currency": "INR",
+    "description": "24-inch Full HD monitor with HDMI and VGA inputs.",
+    "specs": {
+      "screen_size_inches": 24,
+      "resolution": "1920x1080",
+      "refresh_rate_hz": 75,
+      "panel_type": "IPS"
+    },
+    "stock_status": "in_stock"
+  },
+  {
+    "id": "P1010",
+    "name": "Power Bank 20,000mAh",
+    "category": "Accessories",
+    "price_inr": 2499,
+    "currency": "INR",
+    "description": "20,000mAh power bank with fast charging and dual USB output.",
+    "specs": {
+      "capacity_mah": 20000,
+      "max_output_watt": 18,
+      "ports": 3
+    },
+    "stock_status": "in_stock"
+  }
+]
