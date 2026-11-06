@@ -1,7 +1,7 @@
 # Database Implementation Plan — AI E-Commerce Customer Support Assistant
 
-**Phase:** 2 — Database Implementation (planning only)
-**Status:** Revised per Technical Lead review (round 1 — sequencing fix, Test 2b scope clarification, preserved rules reinforced). Pending further review. **Implementation has not started.**
+**Phase:** 2 — Database Implementation
+**Status:** Plan approved. Checkpoints 1 and 2 are implemented and approved (`app/db/connection.py`, `app/db/schema.py`, approved 2026-11-06). Checkpoint 3 is not started and is not authorized until explicitly requested. The sections below remain the specification; they are not a claim that later checkpoints exist.
 **Input documents:** `docs/01_database_design.md` (Technical Lead approved, Phase 1), `PROJECT_STATUS.md`
 **Scope of this document:** sequencing, contracts, and checkpoints for implementation. **No code, migrations, seed scripts, or test files are created in this task** — those are the work this plan schedules, not what it contains.
 
@@ -271,7 +271,7 @@ Each checkpoint is small, has a clear pass/fail acceptance criterion, and lists 
 
 ---
 
-**Stopping here for Technical Lead review and approval before any code, migration, seed script, or test file is written.**
+**Planning stop lifted for Checkpoints 1 and 2 only.** Both are approved. Do not write `tests/test_schema.py` or any later checkpoint until explicitly asked.
 
 ---
 

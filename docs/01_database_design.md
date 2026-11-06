@@ -1,7 +1,7 @@
 # Database Design — AI E-Commerce Customer Support Assistant
 
 **Phase:** 1 — Database Design
-**Status:** Revised per Technical Lead review (round 2 — Test 12 correction only). Architecture direction accepted; **not yet approved for implementation.** Pending further review.
+**Status:** Phase 1 design approved. Checkpoint 2 (`app/db/schema.py`) implements Section C and was approved on 2026-11-06. Checkpoint 3 has not started.
 **Scope of this document:** design only. No application code, migrations, seed scripts, UI, RAG, LangGraph, or voice work is included, per the Phase 1 task boundary.
 
 ---

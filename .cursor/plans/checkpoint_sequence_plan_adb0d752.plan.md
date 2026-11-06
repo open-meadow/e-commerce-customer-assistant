@@ -1,12 +1,12 @@
 ---
 name: Checkpoint sequence plan
-overview: A short map of the eleven database checkpoints from the approved Phase 2 plan. Checkpoint 1 is done. Only Checkpoint 2 is the next authorized step.
+overview: A short map of the eleven database checkpoints. Checkpoints 1 and 2 are approved. Checkpoint 3 is next, but it is not authorized to start yet.
 todos:
   - id: cp2-schema
     content: "Checkpoint 2 only: app/db/schema.py for the five tables, then stop for review"
-    status: pending
+    status: completed
   - id: cp3-schema-tests
-    content: "After approval: tests/test_schema.py (FK, refund CHECK, pragma)"
+    content: "Do not start until asked: tests/test_schema.py (FK, refund CHECK, pragma)"
     status: pending
   - id: cp4-seed
     content: "After approval: seed_data.py with C101/C102 scenario and Products.json checks"
@@ -24,9 +24,9 @@ isProject: false
 
 Source: [PROJECT_STATUS.md](PROJECT_STATUS.md) and [docs/02_database_implementation_plan.md](docs/02_database_implementation_plan.md) Section 7. Schema details live in [docs/01_database_design.md](docs/01_database_design.md) Section C. Each step waits for the one before it. Do not start a later checkpoint until the current one is approved.
 
-**Done:** Checkpoint 1, [app/db/connection.py](app/db/connection.py). Every later file must use `get_connection()` (foreign keys on, `sqlite3.Row`).
+**Done and approved:** Checkpoint 1, [app/db/connection.py](app/db/connection.py). Checkpoint 2, [app/db/schema.py](app/db/schema.py), approved 2026-11-06. Every later file must use `get_connection()` (foreign keys on, `sqlite3.Row`).
 
-**Next authorized work:** Checkpoint 2 only. Stop there for review. Checkpoints 3–11 stay unstarted until 2 is approved.
+**Not started:** Checkpoint 3. Do not begin it, or anything after it, until explicitly asked.
 
 ```mermaid
 flowchart LR
@@ -48,7 +48,7 @@ flowchart LR
 ## What each checkpoint does
 
 - **1 — connection (done).** One function opens SQLite, turns foreign keys on, checks they are on, and returns rows as `sqlite3.Row`. Failures become `ConnectionError_`.
-- **2 — schema.** [app/db/schema.py](app/db/schema.py) creates five tables, in order: `customers`, `orders`, `order_items`, `return_requests`, `support_tickets`. Money is integer paise. Times are UTC ISO-8601 text. Composite foreign keys stop a return or ticket from pairing an order with the wrong customer, or an item with the wrong order. CHECKs cover status values and the refund rule (amount is null only when refund is “Not Applicable”). Pass: tables create with no error, and a hand-inserted return with a mismatched `(order_id, customer_id)` is rejected. That hand check needs a few temporary rows, because seed data does not exist yet.
+- **2 — schema (approved).** [app/db/schema.py](app/db/schema.py) creates five tables, in order: `customers`, `orders`, `order_items`, `return_requests`, `support_tickets`. Money is integer paise. Times are UTC ISO-8601 text. Composite foreign keys stop a return or ticket from pairing an order with the wrong customer, or an item with the wrong order. CHECKs cover status values and the refund rule (amount is null only when refund is “Not Applicable”). The manual check passed: tables created, and a return with a mismatched `(order_id, customer_id)` was rejected.
 - **3 — schema tests.** [tests/test_schema.py](tests/test_schema.py) automates the hand check from 2, plus the refund CHECK, plus “foreign keys are actually on.” Tests 5b, 11, and 12 from design doc Section K.
 - **4 — seed.** [app/db/seed_data.py](app/db/seed_data.py) fills a fresh database with synthetic data. Fixed case: C101 owns ORD1001 (Delivered, inside the 7-day window) and ORD1002; C102 owns ORD1003. Also about 6 customers and the status coverage in design doc Section J. Dates are offsets from an injected “now,” not the real clock. Every `product_id` must exist in `Products.json` or the script stops. Do not edit `Products.json`. Re-running with the same “now” yields the same rows.
 - **5 — read functions.** In [app/db/repository.py](app/db/repository.py): `list_customer_orders`, `get_order`, `get_order_items`, `get_customer_returns`, `get_customer_tickets`. Each takes the logged-in customer id and filters in SQL. Someone else’s order looks the same as a missing order: `None` or an empty list. Spot check: `get_order("C101", "ORD1003")` is `None`.
@@ -64,7 +64,7 @@ flowchart LR
 - Identity comes from the app session, never from the chat message.
 - Composite foreign keys keep rows consistent. They do not replace the customer filter in SQL.
 - No payment or shipment tables. Catalog stays in `Products.json`.
-- Open items that do not block Checkpoint 2: return and ticket status enums still need sign-off; no non-returnable product in the catalog, so that path is not seeded unless resolved before Checkpoint 4.
+- Open items that do not block the approved schema: return and ticket status enums still need sign-off; no non-returnable product in the catalog, so that path is not seeded unless resolved before Checkpoint 4.
 
 ## After this database phase
 

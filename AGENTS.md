@@ -18,15 +18,15 @@ Streamlit chat that answers order, delivery, payment, return, refund, product, a
 Phase 0–1 docs approved. Phase 2 plan approved.
 
 - **Checkpoint 1 (approved):** `app/db/connection.py`. `get_connection()` sets `PRAGMA foreign_keys = ON`, verifies it is `1`, `row_factory = sqlite3.Row`, raises `ConnectionError_`. Default path `data/app.db`. `app/db/__init__.py` re-exports `get_connection`. `main.py` is a smoke call.
-- **Checkpoint 2 (implemented, awaiting approval):** `app/db/schema.py`. `create_schema(connection)` creates the five tables. It does not open a connection.
+- **Checkpoint 2 (approved 2026-11-06):** `app/db/schema.py`. `create_schema(connection)` creates the five tables. It does not open a connection.
 
 ## Not built
 
-Do not treat these as existing. Next step is **Checkpoint 3 only** after Checkpoint 2 is approved (`docs/02` §7). Do not start 4+ before that.
+Do not treat these as existing. Checkpoint 3 is the next step in `docs/02` §7, but it is **not authorized**. Do not start it, or anything after it, until asked.
 
 | Checkpoint | File | Status |
 |---|---|---|
-| 2 schema | `app/db/schema.py` | implemented, awaiting approval |
+| 2 schema | `app/db/schema.py` | approved |
 | 3 schema tests | `tests/test_schema.py` | not started |
 | 4 seed | `app/db/seed_data.py` | not started |
 | 5–8 reads/writes | `app/db/repository.py` | not started |
