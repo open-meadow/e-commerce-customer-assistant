@@ -2,7 +2,7 @@
 
 **Project:** AI E-Commerce Customer Support Assistant
 **Deadline:** 12 days from Nov 1, 2026 → due ~Nov 13, 2026
-**Current phase:** Phase 2 — Database Implementation. **Checkpoint 1 complete and approved. Checkpoint 2 next, not started.**
+**Current phase:** Phase 2 — Database Implementation. **Checkpoint 1 approved. Checkpoint 2 implemented, awaiting review. Checkpoint 3 not started.**
 
 *(Phase numbering note: this line is corrected from the previous revision, which still labeled upcoming work "Phase 1." The docs folder's own numbering is the source of truth — `docs/00_project_discovery.md` = Phase 0, `docs/01_database_design.md` = Phase 1 (approved), `docs/02_database_implementation_plan.md` = Phase 2 (in progress). This file now matches that numbering.)*
 
@@ -39,11 +39,16 @@
   - **Target environment (Windows, `D:\ecommerce-support-assistant`):** an actual PowerShell smoke test was run by the Technical Lead against the real `get_connection()` function; `PRAGMA foreign_keys` returned `1`; `row_factory` confirmed as `sqlite3.Row`; smoke test passed
 - **Checkpoint 1 is approved and complete.**
 
+**Phase 2, Checkpoint 2 — `app/db/schema.py`**
+- `create_schema(connection)` creates `customers`, `orders`, `order_items`, `return_requests`, and `support_tickets` with the composite foreign keys, CHECK constraints, and indexes from `docs/01_database_design.md` Section C.
+- The function does not call `sqlite3.connect()`. Callers pass a connection from `get_connection()`.
+- Manual check on an in-memory connection from `get_connection()` (`uv run`, `PRAGMA foreign_keys` read back `1`): all five tables were created. A `return_requests` row whose `(order_id, customer_id)` did not match `orders` was rejected with `FOREIGN KEY constraint failed`. No return row was stored. **Awaiting Technical Lead approval.**
+
 ## In progress
-- None. Checkpoint 2 (`app/db/schema.py`) has not been started and is awaiting Technical Lead authorization to begin, per the approved implementation plan's checkpoint sequencing (`docs/02_database_implementation_plan.md` Section 7).
+- Checkpoint 2 is implemented and waiting for review. Checkpoint 3 has not been started.
 
 ## Pending work
-- **Checkpoint 2 — `app/db/schema.py`:** create all five tables (`customers`, `orders`, `order_items`, `return_requests`, `support_tickets`) with the composite foreign keys, CHECK constraints, and indexes from `docs/01_database_design.md` Section C. **Not started.**
+- **Checkpoint 2 review** before any later checkpoint.
 - **Checkpoint 3 — `test_schema.py`:** automated verification of the schema itself, including the corrected foreign-key-enforcement test. **Not started.**
 - **Checkpoint 4 — `app/db/seed_data.py`:** synthetic customers/orders/items, including the fixed C101/C102/ORD1003 authorization scenario, with `product_id` values validated against `Products.json` (failing loudly on any unknown ID). **Not started.**
 - **Checkpoint 5 — read-only repository functions.** **Not started.**
@@ -56,7 +61,7 @@
 - Docker setup — **not started**
 - Technical report, presentation deck — **not started**
 
-No schema, schema test, seed data, repository function, RAG, LLM orchestration, or Streamlit UI work is marked complete anywhere in this document — all of it remains in the Pending section above until actually implemented and verified.
+Schema code exists in `app/db/schema.py` and the manual foreign-key check above passed. It is not approved yet. Schema tests, seed data, repository functions, RAG, LLM orchestration, and the Streamlit UI are not started.
 
 ## Open decisions (see `docs/01_database_design.md` Section L)
 1. ~~Confirm no separate payment/shipment tables needed~~ — **Resolved:** single-table model approved.
@@ -71,4 +76,4 @@ No schema, schema test, seed data, repository function, RAG, LLM orchestration, 
 - Two "master prompt" documents describing an expanded (voice + full auth) version of this project — treated as aspirational/future scope, not current requirements, per student's explicit decision
 
 ## Next recommended action
-Begin Checkpoint 2: implement `app/db/schema.py` against the approved schema in `docs/01_database_design.md` Section C, using only connections obtained through the now-approved `app/db/connection.py`. Do not begin Checkpoint 3 or later until Checkpoint 2 is reviewed and approved.
+Review Checkpoint 2 (`app/db/schema.py`). Do not begin Checkpoint 3 or later until Checkpoint 2 is approved.
