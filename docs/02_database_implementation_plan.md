@@ -1,7 +1,7 @@
 # Database Implementation Plan — AI E-Commerce Customer Support Assistant
 
 **Phase:** 2 — Database Implementation
-**Status:** Plan approved. Checkpoints 1 and 2 are implemented and approved (`app/db/connection.py`, `app/db/schema.py`, approved 2026-11-06). Checkpoint 3 is not started and is not authorized until explicitly requested. The sections below remain the specification; they are not a claim that later checkpoints exist.
+**Status:** Plan approved. Checkpoints 1–6 are complete, reviewed, tested, committed, and pushed (connection, schema, schema tests, seed data, customer-scoped read functions, authorization tests). Checkpoint 7A (documentation contract for the two write functions) is in progress: corrections are made, but 7A is not approved until the Technical Lead reviews the final diff. Checkpoint 7 (implementation of `create_return_request` and `create_support_ticket`) has not started. Checkpoints 8 onward are not yet approved. The sections below remain the specification; they are not a claim that later checkpoints exist.
 **Input documents:** `docs/01_database_design.md` (Technical Lead approved, Phase 1), `PROJECT_STATUS.md`
 **Scope of this document:** sequencing, contracts, and checkpoints for implementation. **No code, migrations, seed scripts, or test files are created in this task** — those are the work this plan schedules, not what it contains.
 
@@ -147,7 +147,7 @@ ecommerce-support-assistant/
 6. **Authorization tests** (`test_authorization.py`) — run against steps 1–5. Per `PROJECT_STATUS.md`, these must pass before any orchestration or UI code is written in a later phase.
 7. **Write repository functions** (`create_return_request`, `create_support_ticket` in `repository.py`) — implemented after the authorization gate (step 6) passes, since the write paths' own validation logic depends on the same ownership-query pattern the read functions and authorization tests have already proven correct.
 8. **Return and ticket integrity tests** (`test_returns.py`, `test_tickets.py`) — run against the write functions from step 7 and the eligibility-window seed data from step 4.
-9. **Full-suite verification** — all four test files run together, with actual output reviewed, not assumed.
+9. **Full-suite verification** — all test files run together, with actual output reviewed, not assumed.
 
 This ordering is now identical to Section 7's checkpoint sequence; the two sections are cross-referenced rather than independently maintained; see Section 7 for acceptance criteria and explicit dependency statements per step.
 
@@ -170,17 +170,25 @@ All functions below take `authenticated_customer_id: str` as their first paramet
 ### `get_order_items(authenticated_customer_id: str, order_id: str) -> list[OrderItemRecord]`
 - **Input:** authenticated customer ID and order ID.
 - **Output:** list of item records (item_id, product_id, quantity, price) for that order — but only if the order belongs to the authenticated customer; empty list otherwise (same non-distinguishing behavior as `get_order`).
-- **Ownership check:** per design doc Section E, implemented by first confirming the order belongs to the customer (same query as `get_order`), then fetching items for that order_id — never by trusting a bare `item_id` or `order_id` lookup against `order_items` directly without the ownership step first.
+- **Ownership check:** per design doc Section E, implemented as a single query that JOINs `order_items` to `orders` and filters by both the authenticated customer ID (`orders.customer_id`) and the requested order ID. It is not a two-step lookup, and no `order_items` row is read without the ownership-filtered JOIN to `orders`.
 
-### `create_return_request(authenticated_customer_id: str, order_id: str, item_id: str, reason: str) -> ReturnRequestResult` **(write)**
-- **Input:** authenticated customer ID, the order and item being returned, and the customer's stated reason (free text; the reason's content, e.g. "damaged," determines which eligibility window applies per design doc Section F).
-- **Output:** a result object indicating one of: created (with the new `return_id`), or rejected with a specific, non-leaking reason — `not_found` (order doesn't belong to this customer, or doesn't exist — same message either way), `item_mismatch` (item doesn't belong to the stated order), `outside_window` (eligibility check failed), or `duplicate` (an active return already exists for this item). Never raises a raw database exception to the caller.
-- **Ownership check:** the three-condition validation from design doc Section F, run before the insert, inside a transaction (Section 5 below).
+### `create_return_request(authenticated_customer_id, order_id, item_id, reason, *, reason_category, reference_time=None)` **(write)**
+Full contract: design doc Sections F, H, and I. Summary:
+- **Input:** authenticated customer ID (trusted context only), order ID, item ID, free-text `reason` (stored as given, never interpreted), keyword-only `reason_category` (`damaged`, `wrong_product`, or `standard`; selects the window), and keyword-only optional `reference_time`.
+- **Windows:** `damaged` and `wrong_product`: 48 hours; `standard`: 7 × 24 hours, measured from `orders.delivered_at`. Boundaries are inclusive. A NULL, future, or invalid `delivered_at` is `outside_window`.
+- **Reference time:** `None` reads `datetime.now(timezone.utc)` exactly once. A supplied value must be a timezone-aware `datetime` or an ISO-8601 string with an explicit offset, normalized to UTC (naive datetime, or unparseable/offset-less string: `ValueError`; other types: `TypeError`). Whole-second precision means truncation (microseconds dropped, never rounded). One normalized instant serves both eligibility and `requested_at`; the clock is never read twice. (`seed_database(None)` keeps its fixed baseline `2026-11-07T00:00:00Z`; that is a different function.)
+- **Validation:** wrong type: `TypeError`; invalid value, including blank or whitespace-only strings or an unknown `reason_category`: `ValueError`. Validation completes before any transaction opens.
+- **Check order** (inside one `BEGIN IMMEDIATE` transaction): ownership (`not_found`), item belongs to order (`item_mismatch`), existing active return (`duplicate`), eligibility window (`outside_window`), insert.
+- **Output:** exactly `{"outcome": ..., "return_id": ...}` where `outcome` is `created`, `not_found`, `item_mismatch`, `outside_window`, `duplicate`, or `failed`. Only `created` carries a non-null `return_id` (`RET-` plus 12 uppercase hex characters from a UUID4). `created` is returned only after `COMMIT` succeeds. `failed` is generic and carries no database text.
+- **Known MVP limitation:** category-based non-returnable enforcement is not implemented because `Products.json` has no returnability metadata (design doc Section L, item 1). No `non_returnable` outcome or schema field is added.
 
 ### `create_support_ticket(authenticated_customer_id: str, issue_type: str, description: str, order_id: str | None = None, conversation_summary: str | None = None) -> SupportTicketResult` **(write)**
-- **Input:** authenticated customer ID, required issue type and description, and an optional order ID (ticket may be general).
-- **Output:** a result object with the new `ticket_id` and the `order_id` actually stored — which may be `None` even if the caller supplied one, per design doc Section G, if that order didn't belong to this customer. The result distinguishes "ticket created, order linked" from "ticket created, order not linked" so the orchestration layer (a later phase) can phrase the response safely, without ever stating that the order "belongs to someone else."
-- **Ownership check:** when `order_id` is supplied, the same ownership query as `get_order` runs first; on failure, the ticket is still created but with `order_id` cleared to `NULL` — never rejected outright, matching the approved design.
+Full contract: design doc Sections G and H. Summary:
+- **Input:** authenticated customer ID (trusted context only), required `issue_type` and `description`, optional `order_id`, optional `conversation_summary`.
+- **Validation:** wrong type: `TypeError`; invalid value, including blank or whitespace-only strings: `ValueError`. Blank strings are never converted to `None`. `order_id=None` creates a general ticket; a non-empty string is checked for ownership; a blank string raises `ValueError`; a non-string raises `TypeError`. `conversation_summary=None` is stored as SQL NULL; a non-empty string is stored; a blank string raises `ValueError`; a non-string raises `TypeError`.
+- **Ownership check:** when `order_id` is a non-empty string, the same ownership query as `get_order` runs inside the transaction. If the order is nonexistent or owned by another customer, the ticket is still created with `order_id = NULL` and the same result as for a nonexistent order. Existence of an unowned order is never disclosed.
+- **Output:** `{"outcome": "created", "ticket_id": "TKT-<12 uppercase hex>", "order_id": <owned order ID or None>, "order_linked": <bool>}` after `COMMIT`; on database failure `{"outcome": "failed", "ticket_id": None, "order_id": None, "order_linked": False}`.
+- **Timestamps:** `status`, `priority`, and `created_at` use the schema defaults. `created_at` defaults to `strftime('%Y-%m-%dT%H:%M:%SZ', 'now')` (UTC, approved format, SQLite clock). No `reference_time` parameter.
 
 ### `get_customer_returns(authenticated_customer_id: str) -> list[ReturnRequestRecord]`
 - **Input:** authenticated customer ID only.
@@ -198,13 +206,24 @@ All functions below take `authenticated_customer_id: str` as their first paramet
 
 ## 5. Transaction and Error Handling
 
-**Writes.** Both write operations (`create_return_request`, `create_support_ticket`) follow the same pattern, per design doc Section H: open a transaction, run the read-only validation queries, and only issue the `INSERT` if validation passes — all within that one transaction, so a validation failure never leaves a partial row, and an insert-time failure (e.g., a constraint violation the validation didn't anticipate) rolls back cleanly rather than leaving an orphaned record.
+**Writes.** Both write operations (`create_return_request`, `create_support_ticket`) follow the same pattern, per design doc Section H:
+1. Validate inputs first (wrong type: `TypeError`; invalid value, including blank strings: `ValueError`). No transaction is open yet.
+2. Open the connection through `get_connection()` and run `BEGIN IMMEDIATE`.
+3. Run the ownership and business checks, then the parameterized `INSERT`, in that one transaction. A business rejection rolls back and returns its result dictionary; no partial row remains.
+4. Return `created` only after `COMMIT` succeeds.
+
+**Exception handling.**
+- `sqlite3.Error` during database operations: roll back if a transaction is open, then return the function's generic `failed` dictionary. The result carries no SQLite message, SQL text, or exception type.
+- Any other exception (a programming error): roll back if a transaction is open, then re-raise. It is never converted to `failed` or any other result. Do not catch every exception.
+- If rollback itself fails, the rollback error never replaces the original: on the `sqlite3.Error` path return `failed`; otherwise re-raise the original exception.
+- `ConnectionError_` raised by `get_connection()` during connection acquisition returns the function's generic `failed` dictionary. It is not propagated. No transaction was opened, so nothing is rolled back.
+- Raw database error details are never exposed through a write-operation result.
 
 **Duplicate return submissions.** Handled at two levels, per design doc Section H:
 1. The repository function checks for an existing *active* (`Requested` or `Approved`) return request for the same `item_id` before attempting the insert, and returns a `duplicate` result without touching the database further if one exists.
-2. The database's unique partial index (`return_requests(item_id) WHERE status IN ('Requested','Approved')`) is the actual guarantee — if the application-level check were ever bypassed or raced, the database itself refuses the second insert. The repository function catches this specific constraint failure and translates it into the same `duplicate` result the application-level check would have produced, so the caller sees one consistent outcome regardless of which layer caught it.
+2. The database's unique partial index (`return_requests(item_id) WHERE status IN ('Requested','Approved')`) is the actual guarantee — if the application-level check were ever bypassed or raced, the database itself refuses the second insert. The repository function translates a `sqlite3.IntegrityError` caused by `uq_active_return_per_item` into the same `duplicate` result the application-level check would have produced, so the caller sees one consistent outcome regardless of which layer caught it. No raw SQLite text is exposed. An `IntegrityError` from any other constraint is a generic `failed`, not `duplicate`.
 
-**Translating database errors into safe application-level results.** The repository layer is the only place that ever sees a raw `sqlite3` exception. No such exception is allowed to propagate past `repository.py` to any caller. Each repository function catches the specific exceptions it can anticipate (a `UNIQUE`/composite-FK constraint violation, a `CHECK` constraint violation) and maps them to the named result outcomes in Section 4 (`not_found`, `item_mismatch`, `outside_window`, `duplicate`). Any *unanticipated* database error (e.g., a disk I/O failure) is caught at the same boundary and surfaced as a generic "operation failed" result — the caller never receives a raw exception, a SQL error string, or any detail that could reveal schema internals or another customer's data. This matters for the same reason as the "same not-found result" rule in Section E: an error message is itself a channel that could leak information if not deliberately controlled.
+**Translating database errors into safe application-level results.** For the **write** functions, the repository layer is the only place that sees a raw `sqlite3` exception, and no `sqlite3.Error` propagates to the caller. Business outcomes (`not_found`, `item_mismatch`, `outside_window`, `duplicate`) come from explicit checks, plus the single `uq_active_return_per_item` translation above. Any other `sqlite3.Error` (e.g., a disk I/O failure or other constraint) becomes the generic `failed` result — the caller never receives a raw exception, a SQL error string, or any detail that could reveal schema internals or another customer's data. Non-database exceptions (programming errors) are rolled back and re-raised, never masked as results. The existing read functions propagate `sqlite3.Error` unmodified, as already implemented and tested; this section does not change them. This matters for the same reason as the "same not-found result" rule in Section E: an error message is itself a channel that could leak information if not deliberately controlled.
 
 ---
 
@@ -235,7 +254,7 @@ Every test from design doc Section K mapped to its implementation test and file:
 
 **Why `test_authorization.py` is its own file, not folded into `test_schema.py` or a general test file:** `PROJECT_STATUS.md` names it explicitly as the gate that must pass before any orchestration or UI code is written. Keeping it separate makes "has this gate passed" a one-command, unambiguous check (`pytest tests/test_authorization.py`) rather than something buried inside a larger test run.
 
-**Reference time in tests:** every test touching return-eligibility windows (7, 7b, 8, 8b) constructs its seed data relative to an explicitly injected reference time, per design doc Section I — no test reads the real system clock, so the whole suite stays reproducible regardless of when it's run, today or months from now.
+**Reference time in tests:** every test touching return-eligibility windows (7, 7b, 8, 8b) passes an explicit `reference_time` to `create_return_request` (for example the seed baseline `2026-11-07T00:00:00Z` or an offset from it), per design doc Section I, so the suite stays reproducible regardless of when it is run. `create_return_request(reference_time=None)` uses the real current UTC time; at most one test may exercise that default, and it must assert only that `requested_at` is a well-formed `YYYY-MM-DDTHH:MM:SSZ` value within a tolerance of the real clock. `seed_database(None)` keeps its fixed baseline.
 
 ---
 
@@ -251,27 +270,26 @@ Each checkpoint is small, has a clear pass/fail acceptance criterion, and lists 
 | 4 | Implement `seed_data.py` | Running it against a fresh schema populates exactly the fixed reference scenario (C101/C102/ORD1001/ORD1002/ORD1003) plus the full coverage list from design doc Section J; re-running it from scratch produces the same data (deterministic, given the same injected reference time). | 2 |
 | 5 | Implement read-only repository functions (`list_customer_orders`, `get_order`, `get_order_items`, `get_customer_returns`, `get_customer_tickets`) | Each function's contract from Section 4 is met against the seeded database; manual spot-check confirms `get_order("C101", "ORD1003")` returns `None`. | 4 |
 | 6 | Write `test_authorization.py` (design doc tests 1, 2, 2b, 3, 4, 6) | All pass. This checkpoint is the one `PROJECT_STATUS.md` names as the gate before orchestration/UI work begins. | 5 |
-| 7 | Implement `create_return_request` | Contract from Section 4 met: valid request creates a row; each rejection path (`not_found`, `item_mismatch`, `outside_window`, `duplicate`) returns the correct named result without raising a raw exception. | 4, 6 |
-| 8 | Implement `create_support_ticket` | Contract from Section 4 met: ticket created with a valid owned order_id attached; ticket created with an unowned order_id results in `order_id = NULL` in the stored row, never an error. | 4, 6 |
-| 9 | Write `test_returns.py` (design doc tests 5, 5b already covered in Checkpoint 3, 7, 7b, 8, 8b, 9) | All pass, using the injected reference time. | 7 |
-| 10 | Write `test_tickets.py` (design doc test 10) | Passes. | 8 |
-| 11 | Full-suite run and review | `pytest` run across all four test files passes with no skips; Technical Lead reviews actual output, not a claim that tests "would pass." | 3, 6, 9, 10 |
+| 7A | Finalize the write-operation documentation contract (design doc Sections F, G, H, I; this plan Sections 4 and 5) | Technical Lead reviews and approves the final diff. **In progress; not approved.** | 6 |
+| 7 | Implement `create_return_request` and `create_support_ticket` in `repository.py` (**not started**) | Contracts from design doc Sections F–H and this plan's Section 4 met exactly: signatures, result dictionaries, validation (`TypeError` for wrong type, `ValueError` for invalid value), check order, `BEGIN IMMEDIATE`, `RET-`/`TKT-` IDs, `uq_active_return_per_item` `IntegrityError` translated to `duplicate`, generic `failed` for other `sqlite3.Error`, non-database exceptions re-raised, `created` only after `COMMIT`. No schema, seed, or catalog changes. | 4, 6, 7A |
+| 8 | Write `test_returns.py` and `test_tickets.py` (design doc tests 5, 7, 7b, 8, 8b, 9, 10; 5b is already covered by Checkpoint 3) (**not yet approved**) | All pass. Returns tests: every outcome; 48-hour and 168-hour inclusive boundaries (exactly, and one second past); `damaged`, `wrong_product`, `standard`; NULL and future `delivered_at`; duplicate checked before eligibility; duplicate via the unique index when the pre-check is bypassed; wrong-type `TypeError` and invalid-value `ValueError` cases, including naive `datetime` and offset-less string for `reference_time`; explicit `reference_time` in every window test, `requested_at` equal to the normalized reference time; failure injection proving `failed` hides database text and programming errors re-raise with rollback. Tickets tests: owned order linked; unowned and nonexistent orders give identical results with NULL `order_id`; general ticket; `conversation_summary` None, valid, blank (`ValueError`), non-string (`TypeError`); blank and non-string `order_id`; `TKT-` ID format; failure handling. | 7 |
+| 9 | Full-suite run and review (**not yet approved**) | `pytest` across all test files passes with no skips; Technical Lead reviews actual output, not a claim that tests "would pass." | 3, 6, 8 |
 
 ---
 
 ## 8. Risks and Unresolved Assumptions
 
-1. **Checkpoint 2's "manual attempt" step is manual, not automated**, until Checkpoint 3 writes the real test. This is intentional sequencing (prove it works once by hand before encoding it as a test), but it means Checkpoint 2 alone is not sufficient evidence on its own — it must be followed immediately by Checkpoint 3, not treated as done in isolation.
-2. **`Checkpoint 2`'s composite FK proof requires test data that doesn't yet exist** (an `orders` row and an `order_items` row to attempt a mismatched `return_requests` insert against) — this means Checkpoint 2's manual check needs a few hand-inserted rows before seed_data.py exists in Checkpoint 4. This is a minor sequencing wrinkle, not a blocker, but is flagged so it isn't a surprise during implementation.
+1. ~~Checkpoint 2's "manual attempt" step is manual until Checkpoint 3~~ — **Resolved:** Checkpoint 3 (`tests/test_schema.py`) is complete and automates this proof.
+2. ~~Checkpoint 2's composite FK proof needed data that did not yet exist~~ — **Resolved:** Checkpoint 4 seed data and the Checkpoint 3 tests are complete.
 3. **Result-object shape (`OrderRecord`, `ReturnRequestResult`, etc.) is named but not specified field-by-field** in this document — Section 4 states what information each must carry in prose, but the exact Python type (dataclass, `TypedDict`, plain dict) is left to implementation, since choosing it doesn't affect any approved architecture decision and over-specifying it here would be exactly the unnecessary detail this planning phase should avoid.
 4. ~~No decision yet on how `product_id` validation against `Products.json` is performed during seeding~~ — **Resolved per Technical Lead review: this is now a preserved implementation rule, not an open question.** `seed_data.py` must validate every `product_id` it uses against the IDs actually present in `Products.json` (read-only, per design doc Section C — the catalog itself is never modified), and **must fail loudly** — raise an error and stop — if a seed row references a `product_id` that doesn't exist in `Products.json`, rather than silently skipping that row or substituting a default. A dangling product reference in seed data is a bug to catch immediately, not an edge case to tolerate silently. This rule is now also reflected in Section 3, step 4.
-5. **The non-returnable product gap (design doc Section L, item 1) remains open** and is unaffected by this plan. No seed data in this phase includes a non-returnable product unless the Technical Lead resolves that open item first; if resolved before Checkpoint 4, `seed_data.py` should incorporate it, otherwise that specific eligibility path stays untested by seed data, as already disclosed in Phase 1.
+5. **The non-returnable product gap (design doc Section L, item 1) is a documented MVP limitation.** `Products.json` has no returnability metadata. The write contract adds no `non_returnable` outcome, schema field, or catalog change, and no test covers category-based non-returnable enforcement. A separate approved design decision is required to change this.
 6. **Test execution environment (plain `pytest` vs. Docker) is not decided in this plan.** Docker setup is listed as later-phase work in `PROJECT_STATUS.md`; this plan assumes tests are runnable locally against a local SQLite file first, with containerization applied afterward — flagged as an assumption, not a decision made here.
 7. **No teacher-provided schema or code has been supplied for comparison at this phase either** — same standing note carried from Phases 0 and 1.
 
 ---
 
-**Planning stop lifted for Checkpoints 1 and 2 only.** Both are approved. Do not write `tests/test_schema.py` or any later checkpoint until explicitly asked.
+**Status of the stop:** Checkpoints 1–6 are complete. Checkpoint 7A is documentation-only and awaits Technical Lead approval. Do not begin Checkpoint 7 (or anything after it) until explicitly authorized.
 
 ---
 

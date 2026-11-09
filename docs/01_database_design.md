@@ -1,8 +1,8 @@
 # Database Design — AI E-Commerce Customer Support Assistant
 
 **Phase:** 1 — Database Design
-**Status:** Phase 1 design approved. Checkpoint 2 (`app/db/schema.py`) implements Section C and was approved on 2026-11-06. Checkpoint 3 has not started.
-**Scope of this document:** design only. No application code, migrations, seed scripts, UI, RAG, LangGraph, or voice work is included, per the Phase 1 task boundary.
+**Status:** Phase 1 design approved. Checkpoint 2 (`app/db/schema.py`) implements Section C and was approved on 2026-11-06. Checkpoint 7A (documentation corrections to the write-function contracts in Sections F, G, and H) is in progress and is not approved until the Technical Lead reviews the final diff. Those functions are not implemented.
+**Scope of this document:** design only. No application code, migrations, seed scripts, UI, RAG, LangGraph, or voice work is included, per the Phase 1 task boundary. Checkpoint 7A changes the write contracts only; it does not change Section C.
 
 ---
 
@@ -29,7 +29,7 @@
 - FR-DB3: Support listing all orders for a given customer.
 - FR-DB4: Support creating a return request tied to a specific order and item.
 - FR-DB5: Support creating a support ticket, optionally tied to an order.
-- FR-DB6: Support determining return eligibility from order data (delivery date, item category) combined with the policy rules in `Policies.md`.
+- FR-DB6: Support determining return eligibility from `orders.delivered_at` and the approved `reason_category` window (`Policies.md` §2, `FAQ.md` Q3.4). Category-based non-returnable enforcement is an MVP limitation, not part of the current write contract (Sections F and L).
 - FR-DB7: Prevent duplicate return requests for the same order item.
 
 ### Data ownership and security requirements
@@ -42,7 +42,7 @@
 - Authentication is simulated via a Streamlit-session customer selector, not a real login system. The database layer trusts whatever `customer_id` the application layer passes in; it does not itself verify a password or token, because none exists in this MVP. This is a stated limitation, not a hidden gap.
 - Products remain in `Products.json`, not a database table (rationale in Section I... see Section C note under `order_items`).
 - No payment gateway, courier, or email/SMS integration exists; all such effects (e.g., "refund processed") are represented purely as status fields, not external calls.
-- The dataset's non-returnable examples ("hygiene/personal care items," "software licenses") do not correspond to any category currently in `Products.json` (Audio, Accessories, Computers). This is flagged as an open item in Section L. Per Technical Lead instruction, the supplied `Products.json` is **not modified** in this document or any future implementation without explicit approval — the design supports a non-returnable flag mechanism either way, but whether a qualifying product is ever added is a decision for the Technical Lead, not something this design presumes or performs.
+- The dataset's non-returnable examples ("hygiene/personal care items," "software licenses") do not correspond to any category currently in `Products.json` (Audio, Accessories, Computers). `Products.json` has no product-level returnability field. Checkpoint 7A does not add a `non_returnable` outcome, a schema column, or a catalog change. Category-based non-returnable enforcement remains an MVP limitation until a separate design decision approves it (Section L). The supplied `Products.json` stays unmodified.
 
 ---
 
@@ -313,20 +313,98 @@ A return request must satisfy three joined conditions before it is created. Foll
 1. **`order_id` belongs to `customer_id`** — checked at the application layer via the same ownership query pattern as Section E (`SELECT 1 FROM orders WHERE customer_id = :auth_id AND order_id = :order_id`), rejected before any further check runs if this returns no row; **and** enforced again at the database layer by the `FOREIGN KEY (order_id, customer_id) REFERENCES orders(order_id, customer_id)` composite constraint on `return_requests`, which would reject the insert outright even if the application check were somehow bypassed.
 2. **`item_id` belongs to `order_id`** — checked at the application layer via `SELECT 1 FROM order_items WHERE order_id = :order_id AND item_id = :item_id`, preventing a return request referencing an item from a *different* order even one the same customer owns; **and** enforced again by the `FOREIGN KEY (item_id, order_id) REFERENCES order_items(item_id, order_id)` composite constraint.
    - As Section B explains, these composite FKs prove the IDs are *internally consistent with each other* — they cannot by themselves prove the request came from the *right customer*, which is why the application-level check against the session's `authenticated_customer_id` remains mandatory and cannot be replaced by the constraints alone.
-3. **Eligibility**, derived from `Policies.md` (no additional rules invented, unchanged from the original design — both source-defined windows preserved):
-   - Standard window: `orders.delivered_at` must be non-null, and the return must be requested within **7 days** of `delivered_at` (`Policies.md` §2, `FAQ.md` Q3.1).
-   - Damaged/wrong-item exception: `FAQ.md` Q3.4 states returns for a damaged or wrong product must be initiated within **48 hours** of delivery. This is a distinct, shorter window tied to a different reason category, not a replacement for the 7-day rule — the application layer must apply whichever window matches the customer-stated reason.
-   - Non-returnable category check: `Policies.md` §2 names "hygiene/personal care items," "software licenses and digital subscriptions," and "items explicitly marked as non-returnable" as non-returnable. **Open item:** `Products.json` has no field marking a product non-returnable, and none of the current 5 products fall into the named categories. The schema and repository logic will check a `non_returnable` flag or category list if/when such a product exists in the catalog; until then, this check has nothing to enforce against in the seed data (flagged in Section L, not silently skipped).
+3. **Eligibility**, from the approved policy windows. No additional return rule is added. The 48-hour damaged and wrong-product window is the approved business policy from `FAQ.md` Q3.4, including where it is shorter than the 7-day window and therefore stricter than a general return.
+   - The repository does not read or interpret the free-text `reason`. The caller supplies `reason_category`, a controlled value, and the repository validates it.
+   - Allowed `reason_category` values and windows, measured from `orders.delivered_at` to the normalized UTC reference time:
+     - `damaged`: 48 hours.
+     - `wrong_product`: 48 hours.
+     - `standard`: 7 × 24 hours (`Policies.md` §2, `FAQ.md` Q3.1).
+   - A boundary is inclusive. Elapsed time of exactly 48 hours, or exactly 168 hours for `standard`, is eligible. Elapsed time is negative when `delivered_at` is later than the reference time; that request is ineligible. A NULL `delivered_at` is ineligible. All three ineligible cases use the `outside_window` result. There is no separate outcome for them.
+   - Category-based non-returnable enforcement is not part of this contract. `Policies.md` §2 names categories that are non-returnable, but `Products.json` has no returnability metadata. This checkpoint does not invent a `non_returnable` result or change the schema or catalog (Section L).
 
-If all three conditions pass, the row is inserted with `status = 'Requested'`. If any fail, no row is written, and the specific failure reason (not owned / item mismatch / outside window / non-returnable) is returned to the orchestration layer so the assistant can explain it — but never in a way that reveals another customer's data (condition 1 failing looks identical to "order not found," per Section E).
+**Approved repository contract (Checkpoint 7A).** Not yet implemented. Schema columns and constraints in Section C are unchanged. `reason_category` is not stored; the free-text `reason` is stored in the existing `reason` column. `requested_at` is the normalized reference time, written by this function as `YYYY-MM-DDTHH:MM:SSZ`, so the stored timestamp and the eligibility comparison use the same instant. The column default (`strftime('%Y-%m-%dT%H:%M:%SZ', 'now')`) remains in the schema for other writers.
+
+```text
+create_return_request(authenticated_customer_id, order_id, item_id, reason, *, reason_category, reference_time=None)
+```
+
+`reason_category` is required and keyword-only. `reference_time` is optional and keyword-only.
+
+Check order, inside one `BEGIN IMMEDIATE` transaction after input validation:
+
+1. Validate inputs. This step runs before the transaction opens.
+2. Verify order ownership. A nonexistent order and an order owned by another customer both produce `not_found`. The function stops before the item check.
+3. Verify that the item belongs to the specified order. Failure produces `item_mismatch`.
+4. Check for an existing active return (`status` of `Requested` or `Approved`) for the same `item_id`. This is the same predicate as `uq_active_return_per_item`. An active row produces `duplicate`, including when the new request would also be outside the eligibility window.
+5. Check return eligibility, as defined above.
+6. Insert one row with `status = 'Requested'`, the generated `return_id`, the original `reason`, and `requested_at` set from the normalized reference time.
+
+The return ID is `RET-` plus the first 12 hexadecimal characters of a UUID4, uppercased (`uuid.uuid4().hex[:12].upper()`). `outcome` is `created` only after `COMMIT` succeeds.
+
+**Reference time.** `reference_time` follows the timezone rules used by `seed_database` (timezone-aware input, normalized to UTC), but its default differs:
+
+- `None`: the function reads the current UTC time exactly once, with `datetime.now(timezone.utc)`. This is the production behavior. (`seed_database(None)` is unaffected and continues to use its fixed deterministic baseline `2026-11-07T00:00:00Z`.)
+- A `datetime` must be timezone-aware and is converted to UTC. A naive `datetime` raises `ValueError`.
+- A string must be an ISO-8601 timestamp with an explicit UTC offset (`Z` or a numeric offset) and is normalized to UTC. An unparseable string or a string without an offset raises `ValueError`.
+- Any other type raises `TypeError`.
+- The normalized value uses whole-second precision, meaning truncation: microseconds are dropped (`replace(microsecond=0)`), never rounded. For example, `10:00:00.999999` becomes `10:00:00`, not `10:00:01`. Whole-second precision is acceptable for this contract.
+- The same normalized instant is used for the eligibility comparison and for `requested_at`. The clock is read at most once per operation, and never again after that. Tests inject `reference_time` to stay deterministic.
+
+**Input validation (type versus value).** A wrong type raises `TypeError`. A right type with an invalid value, including a blank or whitespace-only string, raises `ValueError`.
+
+- `authenticated_customer_id`, `order_id`, `item_id`, `reason`: must be `str` (otherwise `TypeError`) with a non-empty `strip()` (otherwise `ValueError`). The stored `reason` is the original string.
+- `reason_category`: must be `str` (otherwise `TypeError`) and exactly `damaged`, `wrong_product`, or `standard` (otherwise `ValueError`).
+
+Exact result dictionaries:
+
+```text
+{"outcome": "created", "return_id": "<generated-id>"}
+{"outcome": "not_found", "return_id": None}
+{"outcome": "item_mismatch", "return_id": None}
+{"outcome": "outside_window", "return_id": None}
+{"outcome": "duplicate", "return_id": None}
+{"outcome": "failed", "return_id": None}
+```
+
+`failed` is the generic database-failure result. It carries no SQLite message, SQL text, or exception type. A business rejection rolls the transaction back and returns its dictionary. No partial row remains. Transaction and exception rules are in Section H.
 
 ---
 
 ## G. Support Ticket Integrity
 
-- `support_tickets.customer_id` is always required and always sourced from trusted session context, identically to orders.
+- `support_tickets.customer_id` is always required and always sourced from trusted session context, identically to orders. The repository parameter is `authenticated_customer_id`. It is never taken from the user message or from model text.
 - `support_tickets.order_id` is optional (a ticket can be general, e.g., "how do I contact support").
-- **When `order_id` is supplied**, the same ownership check from Section E runs first at the application layer: `SELECT 1 FROM orders WHERE customer_id = :auth_id AND order_id = :order_id`. If this fails, the ticket is still created, but **without** the order reference (`order_id` stored as `NULL`) rather than silently attaching another customer's order ID to the ticket.
+- **When `order_id` is a non-empty string**, the same ownership check from Section E runs first at the application layer: `SELECT 1 FROM orders WHERE customer_id = :auth_id AND order_id = :order_id`. If this returns no row, the ticket is still created, but **without** the order reference (`order_id` stored as `NULL`). A nonexistent order and an unowned order produce the same stored row and the same result dictionary. The function does not attach another customer's order ID.
+
+**Approved repository contract (Checkpoint 7A).** Not yet implemented. Section C is unchanged.
+
+```text
+create_support_ticket(authenticated_customer_id, issue_type, description, order_id=None, conversation_summary=None)
+```
+
+- `order_id=None` is a general ticket. No ownership query runs.
+- Validation rule: a wrong type raises `TypeError`; an invalid value, including a blank or whitespace-only string, raises `ValueError`. Blank strings are never silently converted to `None`.
+- `order_id`: `None` is a general ticket. A non-empty string is checked for ownership. A blank or whitespace-only string raises `ValueError`. A non-string, non-`None` value raises `TypeError`.
+- `authenticated_customer_id`, `issue_type`, and `description` must be `str` (otherwise `TypeError`) with a non-empty `strip()` (otherwise `ValueError`).
+- `conversation_summary`: `None` is stored as SQL NULL. A non-empty string is accepted and stored. An empty or whitespace-only string raises `ValueError`. A non-string, non-`None` value raises `TypeError`.
+- An order owned by the authenticated customer is stored and linked. Any other lookup result is stored as NULL and is not linked.
+- The INSERT uses parameterized SQL inside `BEGIN IMMEDIATE`. It does not override the schema defaults: `status = 'Open'`, `priority = 'Normal'`, and `created_at` from the column default. The column default is `strftime('%Y-%m-%dT%H:%M:%SZ', 'now')` (`app/db/schema.py`), which yields UTC text in the approved `YYYY-MM-DDTHH:MM:SSZ` format and reads SQLite's own clock at insert time. Ticket creation does not take a `reference_time` parameter.
+- The ticket ID is `TKT-` plus the first 12 hexadecimal characters of a UUID4, uppercased (`uuid.uuid4().hex[:12].upper()`).
+- `outcome` is `created` only after `COMMIT` succeeds. `order_linked` is true only when the stored `order_id` is the owned order ID.
+
+Exact success result:
+
+```text
+{"outcome": "created", "ticket_id": "<generated-id>", "order_id": "<owned-order-id-or-None>", "order_linked": true-or-false}
+```
+
+Generic database failure, with no SQLite message, SQL text, or exception type:
+
+```text
+{"outcome": "failed", "ticket_id": None, "order_id": None, "order_linked": False}
+```
+
+There is no rejection outcome for a missing or unowned order. The customer-facing layer must not say that the order belongs to someone else. Transaction and exception rules are in Section H.
 - **Why the application check runs before the insert, not after:** the new composite FK on `support_tickets` (Section C revision: `FOREIGN KEY (order_id, customer_id) REFERENCES orders(order_id, customer_id)`) would in fact also reject an insert that tried to pair C101's `customer_id` with C102's `order_id` directly — but relying on that alone would surface a raw database constraint failure to the customer, which is poor UX and risks leaking implementation detail in an error message. The application layer checks first and silently clears `order_id` to NULL, so ticket creation always succeeds from the customer's point of view; the composite FK exists as a safety net in case application code has a bug, not as the primary mechanism (same division of responsibility as Section B).
 - **How this is communicated safely:** the customer is never told "that order doesn't belong to you" (which would confirm the order ID exists under someone else's account). Instead, the assistant's response treats this identically to the case where the order ID doesn't exist at all — something like "I've logged your ticket; I wasn't able to link it to a specific order, so a support agent will follow up for the order details." This keeps ticket creation from becoming a side channel for confirming another customer's order ID exists, consistent with Section E's "same not-found result" principle.
 
@@ -334,9 +412,10 @@ If all three conditions pass, the row is inserted with `status = 'Requested'`. I
 
 ## H. Transactions and Duplicate Requests
 
-**Return request creation** and **support ticket creation** are each a single-row insert preceded by read-only validation queries (Sections F and G). Given SQLite's default transaction behavior, each insert is wrapped in a single transaction so that:
-- If any validation check fails, no partial row is ever written.
-- If the insert itself fails (e.g., a constraint violation), the transaction rolls back cleanly, leaving no orphaned or half-written record.
+**Return request creation** and **support ticket creation** are each a single-row insert preceded by the checks in Sections F and G. Each write opens its connection through `get_connection()`, runs `BEGIN IMMEDIATE`, and uses parameterized SQL. Input validation finishes before `BEGIN IMMEDIATE`. A validation error (`TypeError` for a wrong type, `ValueError` for an invalid value) therefore opens no transaction.
+
+- If a business check fails, the transaction rolls back and the function returns that check's result dictionary. No partial row remains.
+- The insert runs only after those checks pass. `created` is returned only after `COMMIT` succeeds.
 
 **Preventing duplicate return submissions:** rather than relying only on application-layer "check then insert" logic (which has a race-condition gap, even if unlikely in a single-user Streamlit demo), the design recommends a **unique partial index**:
 
@@ -346,9 +425,15 @@ ON return_requests(item_id)
 WHERE status IN ('Requested', 'Approved');
 ```
 
-This makes the database itself the final authority against duplicates: a second insert attempt for the same `item_id` while an active request exists will fail at the constraint level, not just be caught by a prior read. The application layer should still check first (to give a clean user-facing message rather than a raw constraint error), but the constraint is the actual guarantee. This specific index is a design recommendation for Phase 2 implementation, included here for Technical Lead review since it affects the table definition.
+This index is the database guarantee against a duplicate active return. The repository still runs the duplicate pre-check inside the same `BEGIN IMMEDIATE` transaction. If the insert then raises a `sqlite3.IntegrityError` caused by `uq_active_return_per_item`, the function rolls back and translates it to the same `duplicate` dictionary. It may inspect the SQLite error internally to recognize that index. The caller receives no raw SQLite text. Any other `sqlite3.Error`, including an `IntegrityError` from a different constraint, uses the generic `failed` result below, not `duplicate`.
 
-**Failure handling:** on any exception during a write, the transaction is rolled back and the orchestration layer is told the operation did not succeed — consistent with the standing rule that the assistant must never claim an action succeeded unless the backend confirms it.
+**Failure handling:**
+
+- On `sqlite3.Error`, roll back and return the documented `failed` dictionary for that function. Do not put the exception message, SQL, or exception type in the result. Do not claim the write succeeded.
+- On a programming error or any exception that is not a `sqlite3.Error`, roll back and re-raise that exception. Do not convert it into `failed`.
+- If rollback itself fails, do not replace the original exception with the rollback exception. On the `sqlite3.Error` path, still return `failed` with no database text. On every other path, re-raise the original exception.
+- `ConnectionError_` raised by `get_connection()` during connection acquisition returns the same generic `failed` dictionary. It is not propagated to the caller. No transaction was opened, so there is nothing to roll back. The result carries no connection or database error text.
+- Raw database error details (messages, SQL text, exception types) are never exposed through a write-operation result.
 
 ---
 
@@ -371,7 +456,7 @@ Already consistent with the HR Leave Assistant practical referenced earlier in t
 2. **Timestamps as UTC ISO-8601 text, one consistent format throughout.** SQLite has no native datetime type; storing timestamps as `TEXT` in the format `YYYY-MM-DDTHH:MM:SSZ` (always UTC, always this exact format) means they sort correctly as plain strings and parse unambiguously in Python (`datetime.fromisoformat`, with care for the trailing `Z`). Every `DATETIME`-labeled column in earlier drafts of this document (`order_date`, `delivered_at`, `requested_at`, `created_at`) is corrected to this `TEXT (ISO-8601 UTC)` type throughout Section C.
 3. **Explicit foreign-key enforcement on every connection.** SQLite does not enforce foreign keys by default — each new connection must run `PRAGMA foreign_keys = ON;` before any write, or every FK and composite FK in this design (Sections B and C) is silently unenforced. This must be part of the connection-setup code in Phase 2, not an optional flag; it is the single most important implementation detail carried over from this design document, since the entire relational-integrity revision in Section B depends on it being set.
 
-**Reproducible test dates:** return-eligibility logic (7-day and 48-hour windows, Section F) depends on comparing `delivered_at` against "now." If tests call the real system clock, a test that is eligible today could become ineligible tomorrow purely from time passing, making the test suite non-reproducible. The design requires that eligibility-checking functions accept an **injectable reference "now" value** (e.g., a `reference_time` parameter defaulting to the real UTC clock in production but overridden to a fixed timestamp in tests) rather than calling the system clock directly inside the eligibility logic. Seed data's `delivered_at` values should then be expressed as offsets from that same fixed reference time (e.g., "3 days before reference_time"), not as hardcoded calendar dates, so the seed data and the tests that check it never drift out of sync with each other regardless of when the test suite actually runs. This is a design requirement for Phase 2, not an implementation detail decided here.
+**Reproducible test dates:** return-eligibility logic (Section F) compares `delivered_at` with `reference_time`. When `reference_time` is omitted, `create_return_request` reads the current UTC time once with `datetime.now(timezone.utc)`, truncates it to whole seconds, and uses that single instant for both eligibility and `requested_at`. Callers and tests inject a timezone-aware `datetime` or an ISO-8601 string with an explicit UTC offset (normalized to UTC) so results are reproducible; tests must not rely on the wall clock. `seed_database(None)` is a separate function and continues to use its fixed deterministic baseline `2026-11-07T00:00:00Z`; seed `delivered_at` values are offsets from that baseline, so tests that combine seed data with `create_return_request` must pass `reference_time` explicitly (for example the seed baseline). Support-ticket `created_at` is separate: `create_support_ticket` uses the schema column default (`strftime('%Y-%m-%dT%H:%M:%SZ', 'now')`, UTC, approved format) and does not accept `reference_time`.
 
 ---
 
@@ -389,7 +474,7 @@ Proposed synthetic dataset (volumes per the task's required coverage, and per di
   - At least one `Delivered` order with `delivered_at` **more than** 7 days ago (ineligible — standard window expired).
   - At least one order with `delivered_at` within 48 hours (for the damaged/wrong-item exception path).
   - At least one order containing **multiple `order_items` rows** (multi-item order).
-- **Products:** reuse the 5 existing `Products.json` entries for `order_items.product_id`. As flagged in Section F, none are currently in a non-returnable category — if demonstrating the non-returnable rule is wanted for the test suite, either a 6th product in a plausible non-returnable category should be added to `Products.json` (pending approval — this would be a dataset change, not invented policy) or that specific test case is marked as "not currently exercisable by seed data" rather than silently skipped.
+- **Products:** reuse the 5 existing `Products.json` entries for `order_items.product_id`. The catalog has no returnability metadata. The approved return contract does not test or implement a non-returnable outcome (Sections F and L). Adding that behavior needs a separate approved design decision. `Products.json` is not modified.
 - **The required authorization scenario, standardized per Technical Lead review and built into the seed data by construction:**
   - `C101` owns `ORD1001` (status `Delivered`, recent — within the 7-day return window) and `ORD1002`.
   - `C102` owns `ORD1003`.
@@ -408,15 +493,15 @@ Seed data generation itself (a script) is **out of scope for this document**, pe
 | 2b | **Not-found equivalence (new)** | C101 requesting ORD1003 (exists, owned by C102) and C101 requesting ORD9999 (doesn't exist) produce byte-identical application-layer responses → proves Section E's "same not-found result" guarantee, not just that both are denied |
 | 3 | Cross-customer order-item access denial | C101 requests an item belonging to ORD1003 → zero rows |
 | 4 | Cross-customer return access denial | C101 requests a return_request row created by C102 → zero rows |
-| 5 | Invalid return/order/item relationship | Return request submitted with an `item_id` that belongs to a *different* order than the supplied `order_id` → rejected before insert (Section F, condition 2) |
+| 5 | Invalid return/order/item relationship | Return request submitted with an `item_id` that belongs to a *different* order than the supplied `order_id` → `{"outcome": "item_mismatch", "return_id": None}` and no row (Section F, check 3) |
 | 5b | **Composite FK rejection at DB layer (new)** | Attempt a direct insert into `return_requests` with a `(order_id, customer_id)` pair that doesn't exist together in `orders` (bypassing application checks) → SQLite raises a foreign key constraint violation, proving the composite FK is the enforced backstop described in Section B |
 | 6 | Cross-customer ticket access denial | C101 requests a ticket belonging to C102 → zero rows |
-| 7 | Valid return eligibility (standard window) | Delivered order, 3 days since delivery, standard reason → eligible, request created |
-| 7b | **Valid return eligibility (damaged/wrong-item window)** | Delivered order, 36 hours since delivery, damaged-item reason → eligible under the 48-hour rule even though it would already be within the 7-day window too — confirms the two windows don't conflict |
-| 8 | Invalid return eligibility (expired window) | Delivered order, 10 days since delivery, standard reason → rejected, no row created |
-| 8b | **Invalid return eligibility (expired damaged-item window)** | Delivered order, 60 hours since delivery, damaged-item reason → rejected under the 48-hour rule, even though it's still within the 7-day window — confirms the shorter window applies when the reason category matches |
-| 9 | Duplicate return submission | Second return request for the same `item_id` while the first is still `Requested` or `Approved` → rejected at both the application check and the unique partial index (Section H) |
-| 10 | Ticket creation with unowned order_id | C101 creates a ticket referencing ORD1003 → ticket is created, but `order_id` stored as NULL, not C102's order (Section G) |
+| 7 | Valid return eligibility (standard window) | Delivered order, 3 days since delivery, `reason_category="standard"` → `{"outcome": "created", "return_id": "<generated-id>"}`. Exactly 168 hours is also eligible. |
+| 7b | **Valid return eligibility (48-hour window)** | Delivered order, 36 hours since delivery, `reason_category="damaged"` → created. `wrong_product` uses the same 48-hour window. Exactly 48 hours is eligible. |
+| 8 | Invalid return eligibility (expired window) | Delivered order, 10 days since delivery, `reason_category="standard"` → `{"outcome": "outside_window", "return_id": None}`, no row |
+| 8b | **Invalid return eligibility (expired 48-hour window)** | Delivered order, 60 hours since delivery, `reason_category="damaged"` or `"wrong_product"` → `outside_window`, even though the order is still inside 168 hours. NULL `delivered_at` and a future `delivered_at` are also `outside_window`. |
+| 9 | Duplicate return submission | Second return request for the same `item_id` while the first is still `Requested` or `Approved` → `{"outcome": "duplicate", "return_id": None}` from the pre-check, and the same dictionary if `uq_active_return_per_item` rejects the insert (Section H). This check runs before eligibility. |
+| 10 | Ticket creation with unowned order_id | C101 creates a ticket referencing ORD1003 → `{"outcome": "created", "ticket_id": "<generated-id>", "order_id": None, "order_linked": False}`. A nonexistent order ID produces that same result shape. The stored `order_id` is NULL (Section G). |
 | 11 | **Refund consistency rule (new)** | Attempt to set `refund_status = 'Processed'` with `refund_amount = NULL`, and separately `refund_status = 'Not Applicable'` with a non-null `refund_amount` → both rejected per the consistency rule in Sections C/D |
 | 12 | **Foreign key enforcement is actually on** | Four-part test, corrected per Technical Lead review (see note below): (a) open a connection through the application's normal connection path and confirm it executes `PRAGMA foreign_keys = ON;` as part of setup; (b) immediately query `PRAGMA foreign_keys;` on that same connection and assert the result is `1`, not just that the statement ran without error; (c) on that same connection, attempt an insert that violates a composite foreign key (e.g., a `return_requests` row whose `order_id`/`customer_id` pair doesn't exist together in `orders`) and assert SQLite raises a foreign key constraint violation; (d) **optional, documentation-only** — separately open a second connection that deliberately does *not* execute the pragma, query `PRAGMA foreign_keys;` on it and observe it reports `0`, then attempt the same violating insert and observe SQLite accepts it silently, to demonstrate what the failure mode looks like if the pragma were ever omitted in application code. |
 
@@ -428,14 +513,14 @@ Tests 2b, 5b, 7b, 8b, 11, and 12 are new or corrected in this revision, added to
 
 ## L. Risks and Open Questions
 
-1. **Non-returnable category has no current seed product.** `Products.json`'s three categories (Audio, Accessories, Computers) don't match the dataset's named non-returnable examples. **Unchanged by this review** — still needs a Technical Lead decision: add a product in a non-returnable category (dataset extension, not a `Products.json` modification — the existing 5 products stay exactly as supplied) or accept that this rule path is implemented but not exercised by seed data for the demo. Per this round's instruction not to silently modify the supplied `Products.json`, no product has been added or altered in this revision; the decision is still open.
+1. **Category-based non-returnable enforcement is an MVP limitation.** `Products.json` has no returnability metadata, and its categories do not match the non-returnable examples in `Policies.md` §2. Checkpoint 7A does not add a `non_returnable` outcome, a schema change, or a catalog change. Enforcing that policy requires a separate approved design decision. `Products.json` remains unmodified.
 2. **Four enum sets remain engineering proposals, not dataset facts** (`payment_status`, `refund_status`, `return_requests.status`, `support_tickets.status`/`priority`) — **`payment_status` and `refund_status` values have been corrected per this review round** (Section D) and are now explicitly labeled as proposed engineering enums distinct from the dataset-sourced `orders.status` list; `return_requests.status` and `support_tickets.status`/`priority` are carried over unchanged from the prior draft and still need explicit sign-off.
 3. **`delivered_at` cross-column consistency** (must be null unless status is Delivered/Returned) and the **new `refund_amount`/`refund_status` consistency rule** (Section C/D) are both identified as `CHECK` constraint candidates but not fully specified in SQL here, per the design-only boundary — to be finalized in Phase 2.
 4. **`product_id` is validated at the application layer, not via a database foreign key**, since the catalog lives in `Products.json`. Unchanged by this review — still a deliberate MVP boundary (Section C), flagged for Technical Lead awareness rather than treated as settled.
 5. **Simulated authentication remains a labeled limitation.** The composite foreign keys added in this revision strengthen *relational consistency* between orders, items, returns, and tickets — they do not and cannot substitute for real authentication. The database still cannot itself verify that the Streamlit session selector reflects a real login; that trust boundary sits one layer up, in the application, and should be stated plainly in the final technical report so the security claim isn't overstated.
 6. **Teacher-provided schema/code**, if it exists outside this conversation, has not been reviewed. Unchanged by this review — if provided later, this design would need to be reconciled against it rather than assumed compatible.
 7. **New (this revision): composite foreign keys require `PRAGMA foreign_keys = ON` on every connection to have any effect** (Section I). This is a single line of setup code, but if it is ever omitted in Phase 2, every composite FK and every plain FK in this design becomes silently unenforced with no error — this is flagged as the single highest-leverage implementation risk introduced by this revision, specifically because its failure mode is silent rather than loud.
-8. **New (this revision): reproducible test dates require eligibility functions to accept an injectable reference time**, rather than reading the system clock directly (Section I). If Phase 2 implementation reads `datetime.now()` directly inside eligibility logic instead of accepting it as a parameter, tests 7/7b/8/8b (Section K) will become flaky over time rather than reproducible — flagged now so the function signature is designed correctly from the start rather than refactored later.
+8. **Reference time is injectable, and defaults to the real clock** (Sections F and I). `create_return_request(reference_time=None)` reads `datetime.now(timezone.utc)` exactly once and uses that instant for both eligibility and `requested_at`; it is not the seed baseline. Tests must inject `reference_time` to stay reproducible. `seed_database(None)` keeps its fixed `2026-11-07T00:00:00Z` baseline. Ticket `created_at` uses the schema default (`strftime('%Y-%m-%dT%H:%M:%SZ', 'now')`, SQLite's clock, approved UTC format) because Section G gives that function no `reference_time` parameter.
 
 ---
 
