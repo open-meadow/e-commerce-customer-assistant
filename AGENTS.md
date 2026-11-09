@@ -1,6 +1,6 @@
 # Agent guide
 
-Capstone: text customer-support assistant. Synthetic data only. No real store, payments, or shipping. Deadline ~2026-11-13. Status source: `PROJECT_STATUS.md` (prefer it over stale headers in `docs/02`).
+Capstone: text customer-support assistant. Synthetic data only. No real store, payments, or shipping. Deadline ~2026-11-13. Status source: `docs/01` and `docs/02` are canonical; `PROJECT_STATUS.md` may be outdated.
 
 ## Aim
 
@@ -15,23 +15,25 @@ Streamlit chat that answers order, delivery, payment, return, refund, product, a
 
 ## Built
 
-Phase 0–1 docs approved. Phase 2 plan approved.
+Phase 0–1 docs approved. Phase 2 plan approved. Checkpoints 1–6 complete, reviewed, tested, committed, and pushed (207 tests passing at last verification).
 
-- **Checkpoint 1 (approved):** `app/db/connection.py`. `get_connection()` sets `PRAGMA foreign_keys = ON`, verifies it is `1`, `row_factory = sqlite3.Row`, raises `ConnectionError_`. Default path `data/app.db`. `app/db/__init__.py` re-exports `get_connection`. `main.py` is a smoke call.
-- **Checkpoint 2 (approved 2026-11-06):** `app/db/schema.py`. `create_schema(connection)` creates the five tables. It does not open a connection.
+- **1** `app/db/connection.py`: `get_connection()` sets and verifies `PRAGMA foreign_keys = ON`, `row_factory = sqlite3.Row`, raises `ConnectionError_`. Default path `data/app.db`. `app/db/__init__.py` re-exports `get_connection`. `main.py` is a smoke call.
+- **2** `app/db/schema.py`: `create_schema(connection)` creates the five tables. It does not open a connection.
+- **3** `tests/test_schema.py`.
+- **4** `app/db/seed_data.py`: deterministic seed, fixed baseline `2026-11-07T00:00:00Z`.
+- **5** `app/db/repository.py`: five customer-scoped read functions.
+- **6** `tests/test_authorization.py`.
+- **7A** Write-function contracts approved, committed, and pushed (`8ce2d43`): `docs/01` §F–§H, `docs/02` §4–§5.
 
 ## Not built
 
-Do not treat these as existing. Checkpoint 3 is the next step in `docs/02` §7, but it is **not authorized**. Do not start it, or anything after it, until asked.
+Do not treat these as existing. Checkpoints 7–9 are **not authorized**. Do not start them until asked.
 
-| Checkpoint | File | Status |
+| Checkpoint | Work | Status |
 |---|---|---|
-| 2 schema | `app/db/schema.py` | approved |
-| 3 schema tests | `tests/test_schema.py` | not started |
-| 4 seed | `app/db/seed_data.py` | not started |
-| 5–8 reads/writes | `app/db/repository.py` | not started |
-| 6 auth tests | `tests/test_authorization.py` | not started; must pass before orchestrator or UI |
-| 9–11 return/ticket tests | `tests/` | not started |
+| 7 | `create_return_request`, `create_support_ticket` in `repository.py` | not started, not authorized |
+| 8 | `tests/test_returns.py`, `tests/test_tickets.py` | not started, not authorized |
+| 9 | Full-suite verification | not started, not authorized |
 
 Also absent: RAG, LangGraph orchestrator, Streamlit UI, eval set (~60–80; seed CSV has 6 rows), Docker, report, deck. `pyproject.toml` has no runtime deps. `src/ecommerce_support_assistant/` is an unused uv stub.
 

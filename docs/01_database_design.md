@@ -1,7 +1,7 @@
 # Database Design — AI E-Commerce Customer Support Assistant
 
 **Phase:** 1 — Database Design
-**Status:** Phase 1 design approved. Checkpoint 2 (`app/db/schema.py`) implements Section C and was approved on 2026-11-06. Checkpoint 7A (documentation corrections to the write-function contracts in Sections F, G, and H) is in progress and is not approved until the Technical Lead reviews the final diff. Those functions are not implemented.
+**Status:** Phase 1 design approved. Checkpoint 2 (`app/db/schema.py`) implements Section C and was approved on 2026-11-06. Checkpoint 7A (the write-function contracts in Sections F, G, and H) is approved and was committed and pushed in `8ce2d43`. Those functions are not implemented; Checkpoint 7 implementation has not started and is not authorized.
 **Scope of this document:** design only. No application code, migrations, seed scripts, UI, RAG, LangGraph, or voice work is included, per the Phase 1 task boundary. Checkpoint 7A changes the write contracts only; it does not change Section C.
 
 ---
