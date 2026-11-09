@@ -1,4 +1,4 @@
-"""Read-only database repository (Checkpoint 5).
+"""Customer-scoped database repository (Checkpoints 5 and 7).
 
 This module is the single place in the application permitted to run
 SQL queries against customer-owned data. Every function here accepts
@@ -19,24 +19,40 @@ that at the Python level — it can only guarantee that *whatever*
 customer ID it is given is the one, and the only one, used to scope
 every query.
 
-Scope (Checkpoint 5 only)
---------------------------
-Only the five read operations below are implemented. No write
-operations (``create_return_request``, ``create_support_ticket``) are
-implemented here — those belong to a later checkpoint, per
-docs/02_database_implementation_plan.md Section 4.
+Scope
+-----
+Checkpoint 5: five read operations (``list_customer_orders``,
+``get_order``, ``get_order_items``, ``get_customer_returns``,
+``get_customer_tickets``).
+
+Checkpoint 7: two write operations (``create_return_request``,
+``create_support_ticket``), implemented exactly as specified in
+docs/01_database_design.md Sections F, G and H and
+docs/02_database_implementation_plan.md Sections 4 and 5. Their error
+handling differs from the read functions' — see "Write error handling"
+below.
 
 Connection lifecycle
 ----------------------
-Each function here opens its own connection via
-``app.db.connection.get_connection()``, runs exactly one query, and
-closes the connection in a ``finally`` block before returning — even
-if the query raises. No connection is held open across function
-calls, and no connection is ever exposed to a caller of this module;
-callers only ever receive plain Python data (dicts, lists, or
-``None``), never a cursor or connection object. This keeps all
-database access centralized in this one module, per the Checkpoint 5
-scope restrictions.
+Every function here opens its own connection via
+``app.db.connection.get_connection()`` and closes it before returning,
+even if a query or the transaction fails. No connection is held open
+across function calls, and no connection is ever exposed to a caller of
+this module; callers only ever receive plain Python data (dicts, lists,
+or ``None``), never a cursor or connection object. This keeps all
+database access centralized in this one module.
+
+Read functions (Checkpoint 5): each runs exactly one query on its own
+connection and closes the connection in a ``finally`` block. There is
+no explicit transaction.
+
+Write functions (Checkpoint 7): each runs several statements (the
+ownership and business checks, then the INSERT) inside a single
+explicit ``BEGIN IMMEDIATE`` transaction on its own connection. The
+transaction is committed only after every check passes and the INSERT
+succeeds, and is rolled back on a business rejection or any failure.
+The connection is closed in a ``finally`` block afterwards. See "Write
+error handling" below.
 
 Error handling
 ----------------
@@ -48,14 +64,26 @@ exactly what it is, not hidden behind a generic message. The only
 validation this module performs itself is on its own input parameters
 (e.g. rejecting an empty ``authenticated_customer_id``), which is
 ordinary defensive input checking, not a business rule.
+
+Write error handling (Checkpoint 7)
+-----------------------------------
+The two write functions follow docs/01 Section H instead: a
+``ConnectionError_`` from ``get_connection()`` or a ``sqlite3.Error``
+during the transaction (after a rollback, if one is open) produces a
+generic ``failed`` result carrying no database text; any other
+exception is rolled back and re-raised unchanged; a rollback or close
+failure never masks the original outcome.
 """
 
 from __future__ import annotations
 
+import re
 import sqlite3
-from typing import Any, Optional
+import uuid
+from datetime import datetime, timezone
+from typing import Any, Callable, Optional
 
-from app.db.connection import get_connection
+from app.db.connection import ConnectionError_, get_connection
 
 
 # ---------------------------------------------------------------------------
@@ -330,3 +358,358 @@ def get_customer_tickets(authenticated_customer_id: str) -> list[dict[str, Any]]
         return _rows_to_dicts(rows)
     finally:
         connection.close()
+
+
+# ---------------------------------------------------------------------------
+# Write operations (Checkpoint 7)
+#
+# Contracts: docs/01_database_design.md Sections F, G, H and I;
+# docs/02_database_implementation_plan.md Sections 4 and 5.
+# ---------------------------------------------------------------------------
+
+_TIMESTAMP_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
+_STORED_TIMESTAMP_RE = re.compile(
+    r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z"
+)
+
+# reason_category -> maximum elapsed time since delivery (inclusive), in
+# seconds. 48 hours: FAQ.md Q3.4. 7 x 24 hours: Policies.md Section 2.
+_RETURN_WINDOW_SECONDS = {
+    "damaged": 48 * 3600,
+    "wrong_product": 48 * 3600,
+    "standard": 7 * 24 * 3600,
+}
+
+_RETURN_FAILED = {"outcome": "failed", "return_id": None}
+_TICKET_FAILED = {
+    "outcome": "failed",
+    "ticket_id": None,
+    "order_id": None,
+    "order_linked": False,
+}
+
+
+def _require_string(value: Any, parameter_name: str) -> None:
+    """Wrong type -> ``TypeError``; blank/whitespace-only -> ``ValueError``."""
+    if not isinstance(value, str):
+        raise TypeError(
+            f"{parameter_name!r} must be a string; got {type(value).__name__}"
+        )
+    if not value.strip():
+        raise ValueError(f"{parameter_name!r} must not be blank")
+
+
+def _normalize_reference_time(reference_time: Any) -> datetime:
+    """Return the single UTC instant (whole seconds, truncated) for one write.
+
+    ``None`` reads the real clock exactly once. A ``datetime`` must be
+    timezone-aware; a string must be ISO-8601 with an explicit UTC
+    offset. Naive / unparseable / offset-less input raises
+    ``ValueError``; any other type raises ``TypeError``.
+    """
+    if reference_time is None:
+        instant = datetime.now(timezone.utc)
+    elif isinstance(reference_time, datetime):
+        instant = reference_time
+    elif isinstance(reference_time, str):
+        try:
+            instant = datetime.fromisoformat(reference_time)
+        except ValueError:
+            raise ValueError(
+                "'reference_time' is not a valid ISO-8601 timestamp"
+            ) from None
+    else:
+        raise TypeError(
+            "'reference_time' must be None, a datetime, or an ISO-8601 "
+            f"string; got {type(reference_time).__name__}"
+        )
+
+    if instant.tzinfo is None or instant.utcoffset() is None:
+        raise ValueError("'reference_time' must be timezone-aware")
+    try:
+        return instant.astimezone(timezone.utc).replace(microsecond=0)
+    except OverflowError:
+        raise ValueError("'reference_time' is out of range") from None
+
+
+def _parse_stored_timestamp(value: Any) -> Optional[datetime]:
+    """Parse a stored ``YYYY-MM-DDTHH:MM:SSZ`` value; ``None`` if absent/invalid.
+
+    Only the exact fixed-width representation is accepted. ``strptime``
+    alone is too lenient (it accepts non-zero-padded fields such as
+    ``2026-1-4T0:0:0Z`` and lowercase ``t``/``z``), so the shape is
+    checked first; ``strptime`` then validates the calendar values.
+    """
+    if not isinstance(value, str) or _STORED_TIMESTAMP_RE.fullmatch(value) is None:
+        return None
+    try:
+        return datetime.strptime(value, _TIMESTAMP_FORMAT).replace(
+            tzinfo=timezone.utc
+        )
+    except ValueError:
+        return None
+
+
+def _rollback_quietly(connection: sqlite3.Connection) -> None:
+    """Roll back an open transaction; a rollback failure is discarded."""
+    try:
+        if connection.in_transaction:
+            connection.rollback()
+    except Exception:
+        pass
+
+
+def _close_quietly(connection: sqlite3.Connection) -> None:
+    """Close the connection; a close failure is discarded."""
+    try:
+        connection.close()
+    except Exception:
+        pass
+
+
+def _run_write_transaction(
+    work: Callable[[sqlite3.Connection], tuple[dict[str, Any], bool]],
+    failed_result: dict[str, Any],
+) -> dict[str, Any]:
+    """Run *work* inside ``BEGIN IMMEDIATE`` with the Section H error rules.
+
+    *work* returns ``(result, commit)``: when ``commit`` is true the
+    transaction is committed and *result* is returned only after the
+    COMMIT succeeded; otherwise it is rolled back and *result* returned.
+
+    * ``ConnectionError_`` on acquisition -> generic ``failed``.
+    * ``sqlite3.Error`` (including a failed COMMIT) -> rollback, ``failed``.
+    * Any other exception -> rollback, re-raised unchanged.
+    * A rollback or close failure never replaces the original outcome.
+    """
+    try:
+        connection = get_connection()
+    except ConnectionError_:
+        return dict(failed_result)
+
+    try:
+        connection.execute("BEGIN IMMEDIATE")
+        result, commit = work(connection)
+        if commit:
+            connection.commit()
+        else:
+            connection.rollback()
+        return result
+    except sqlite3.Error:
+        _rollback_quietly(connection)
+        return dict(failed_result)
+    except BaseException:
+        _rollback_quietly(connection)
+        raise
+    finally:
+        _close_quietly(connection)
+
+
+def _has_active_return(connection: sqlite3.Connection, item_id: str) -> bool:
+    """Same predicate as the ``uq_active_return_per_item`` partial index."""
+    row = connection.execute(
+        "SELECT 1 FROM return_requests "
+        "WHERE item_id = ? AND status IN ('Requested', 'Approved')",
+        (item_id,),
+    ).fetchone()
+    return row is not None
+
+
+def _is_active_return_violation(exc: sqlite3.IntegrityError) -> bool:
+    """True if *exc* is the unique violation on ``return_requests.item_id``.
+
+    SQLite does not put the index name in the message, so the violating
+    column is matched instead. ``item_id`` is only unique through
+    ``uq_active_return_per_item``; a ``return_id`` collision or any
+    other constraint failure is not matched and becomes ``failed``.
+    """
+    return (
+        getattr(exc, "sqlite_errorname", None) == "SQLITE_CONSTRAINT_UNIQUE"
+        and "return_requests.item_id" in str(exc)
+    )
+
+
+def create_return_request(
+    authenticated_customer_id: str,
+    order_id: str,
+    item_id: str,
+    reason: str,
+    *,
+    reason_category: str,
+    reference_time: Any = None,
+) -> dict[str, Any]:
+    """Create a return request for an item of an order the customer owns.
+
+    Contract: docs/01 Sections F, H, I; docs/02 Sections 4 and 5.
+
+    Args:
+        authenticated_customer_id: trusted application context only.
+        order_id, item_id: the order and item being returned.
+        reason: free text, stored as given, never interpreted.
+        reason_category: exactly ``damaged``, ``wrong_product`` (48 hours)
+            or ``standard`` (7 x 24 hours), measured from
+            ``orders.delivered_at``; boundaries inclusive.
+        reference_time: ``None`` (current UTC time, read once), a
+            timezone-aware ``datetime``, or an ISO-8601 string with an
+            explicit offset. Normalized to UTC, truncated to whole
+            seconds, and used for both eligibility and ``requested_at``.
+
+    Returns:
+        ``{"outcome": ..., "return_id": ...}`` where outcome is
+        ``created`` (only after COMMIT; the only case with a non-null
+        ``return_id``), ``not_found``, ``item_mismatch``,
+        ``outside_window``, ``duplicate`` or ``failed``.
+
+    Raises:
+        TypeError: an argument has the wrong type.
+        ValueError: an argument has an invalid value (blank string,
+            unknown ``reason_category``, naive or unparseable
+            ``reference_time``).
+        Any non-database exception raised during the write is rolled
+        back and re-raised.
+    """
+    # Step 1: validate inputs (before any transaction or connection).
+    _require_string(authenticated_customer_id, "authenticated_customer_id")
+    _require_string(order_id, "order_id")
+    _require_string(item_id, "item_id")
+    _require_string(reason, "reason")
+    if not isinstance(reason_category, str):
+        raise TypeError(
+            "'reason_category' must be a string; got "
+            f"{type(reason_category).__name__}"
+        )
+    if reason_category not in _RETURN_WINDOW_SECONDS:
+        raise ValueError(
+            "'reason_category' must be one of "
+            f"{sorted(_RETURN_WINDOW_SECONDS)}"
+        )
+    reference = _normalize_reference_time(reference_time)  # clock read once
+
+    def work(connection: sqlite3.Connection) -> tuple[dict[str, Any], bool]:
+        # Step 2: ownership. Nonexistent and unowned look identical.
+        order_row = connection.execute(
+            "SELECT delivered_at FROM orders "
+            "WHERE customer_id = ? AND order_id = ?",
+            (authenticated_customer_id, order_id),
+        ).fetchone()
+        if order_row is None:
+            return {"outcome": "not_found", "return_id": None}, False
+
+        # Step 3: the item must belong to that order.
+        item_row = connection.execute(
+            "SELECT 1 FROM order_items WHERE order_id = ? AND item_id = ?",
+            (order_id, item_id),
+        ).fetchone()
+        if item_row is None:
+            return {"outcome": "item_mismatch", "return_id": None}, False
+
+        # Step 4: an active return wins over an expired window.
+        if _has_active_return(connection, item_id):
+            return {"outcome": "duplicate", "return_id": None}, False
+
+        # Step 5: eligibility. NULL, invalid or future delivered_at is
+        # ineligible; elapsed time exactly at the limit is eligible.
+        delivered = _parse_stored_timestamp(order_row["delivered_at"])
+        if delivered is None:
+            return {"outcome": "outside_window", "return_id": None}, False
+        elapsed = (reference - delivered).total_seconds()
+        if not 0 <= elapsed <= _RETURN_WINDOW_SECONDS[reason_category]:
+            return {"outcome": "outside_window", "return_id": None}, False
+
+        # Step 6: insert.
+        return_id = f"RET-{uuid.uuid4().hex[:12].upper()}"
+        try:
+            connection.execute(
+                "INSERT INTO return_requests "
+                "(return_id, customer_id, order_id, item_id, reason, "
+                "status, requested_at) "
+                "VALUES (?, ?, ?, ?, ?, 'Requested', ?)",
+                (
+                    return_id,
+                    authenticated_customer_id,
+                    order_id,
+                    item_id,
+                    reason,
+                    reference.strftime(_TIMESTAMP_FORMAT),
+                ),
+            )
+        except sqlite3.IntegrityError as exc:
+            if _is_active_return_violation(exc):
+                return {"outcome": "duplicate", "return_id": None}, False
+            raise
+        return {"outcome": "created", "return_id": return_id}, True
+
+    return _run_write_transaction(work, _RETURN_FAILED)
+
+
+def create_support_ticket(
+    authenticated_customer_id: str,
+    issue_type: str,
+    description: str,
+    order_id: Optional[str] = None,
+    conversation_summary: Optional[str] = None,
+) -> dict[str, Any]:
+    """Create a support ticket, optionally linked to an order the customer owns.
+
+    Contract: docs/01 Sections G and H; docs/02 Sections 4 and 5.
+
+    An ``order_id`` that does not exist and one owned by another
+    customer give the same stored row (``order_id`` NULL) and the same
+    result, so ticket creation never reveals whether an unowned order
+    exists. ``status``, ``priority`` and ``created_at`` use the schema
+    defaults.
+
+    Returns:
+        ``{"outcome": "created", "ticket_id": ..., "order_id": <owned
+        order ID or None>, "order_linked": <bool>}`` after COMMIT, or
+        ``{"outcome": "failed", "ticket_id": None, "order_id": None,
+        "order_linked": False}``.
+
+    Raises:
+        TypeError: wrong argument type (including a non-string,
+            non-``None`` ``order_id`` or ``conversation_summary``).
+        ValueError: blank or whitespace-only string (never converted to
+            ``None``).
+        Any non-database exception raised during the write is rolled
+        back and re-raised.
+    """
+    _require_string(authenticated_customer_id, "authenticated_customer_id")
+    _require_string(issue_type, "issue_type")
+    _require_string(description, "description")
+    if order_id is not None:
+        _require_string(order_id, "order_id")
+    if conversation_summary is not None:
+        _require_string(conversation_summary, "conversation_summary")
+
+    def work(connection: sqlite3.Connection) -> tuple[dict[str, Any], bool]:
+        linked_order_id: Optional[str] = None
+        if order_id is not None:
+            owned = connection.execute(
+                "SELECT 1 FROM orders WHERE customer_id = ? AND order_id = ?",
+                (authenticated_customer_id, order_id),
+            ).fetchone()
+            if owned is not None:
+                linked_order_id = order_id
+
+        ticket_id = f"TKT-{uuid.uuid4().hex[:12].upper()}"
+        connection.execute(
+            "INSERT INTO support_tickets "
+            "(ticket_id, customer_id, order_id, issue_type, description, "
+            "conversation_summary) VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                ticket_id,
+                authenticated_customer_id,
+                linked_order_id,
+                issue_type,
+                description,
+                conversation_summary,
+            ),
+        )
+        return {
+            "outcome": "created",
+            "ticket_id": ticket_id,
+            "order_id": linked_order_id,
+            "order_linked": linked_order_id is not None,
+        }, True
+
+    return _run_write_transaction(work, _TICKET_FAILED)
