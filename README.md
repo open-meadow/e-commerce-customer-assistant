@@ -192,7 +192,7 @@ From the repository root, start the Streamlit chat with:
 uv run streamlit run app/ui/streamlit_app.py
 ```
 
-Choose C101 or C102 in the sidebar to use the simulated login. The current chat replies come from a local demo stub; live order, return, policy, and ticket answers will be available when the real `handle_turn` implementation is integrated.
+Choose C101 or C102 in the sidebar to use the simulated login. The UI currently uses a local fake backend with canned replies and demo return-choice and confirmation flows; it is not connected to live order, return, policy, or ticket data. Confirming a demo action does not submit a real request.
 
 ## 11. Disclaimer
 
