@@ -16,7 +16,7 @@ todos:
     status: completed
   - id: ui-documentation
     content: "Document how to run the Streamlit app and explain the stub's limitations"
-    status: pending
+    status: completed
 isProject: false
 ---
 
@@ -56,9 +56,9 @@ flowchart TD
 2. **[DONE] Add the UI package.** New files: [app/ui/__init__.py](app/ui/__init__.py), [app/ui/session.py](app/ui/session.py), [app/ui/client.py](app/ui/client.py), [app/ui/streamlit_app.py](app/ui/streamlit_app.py). `session.py` holds the session keys (`authenticated_customer_id`, `messages`), the rule that a customer change clears `messages`, and the check that chat is blocked until an id is set. `client.py` is the stub `handle_turn`. Keep Streamlit widgets in `streamlit_app.py` so the session rules can be tested without a browser.
 3. **[DONE] Build the sidebar selector.** Options come from the fixed C101 / C102 list. On change, update session state and clear the transcript. Do not accept a typed customer id in the chat box.
 4. **[DONE] Build the transcript.** On submit: append the user turn, call `handle_turn(session customer id, text, prior messages)`, append the returned string as the assistant turn, rerun. Pass the session id as its own argument. Do not put it inside the user message for the model to pick up.
-5. **Document how to run it.** Add the `uv run streamlit run ...` command to [README.md](README.md) section 10, plus the simulated-login note already stated in section 3. Note that live order, return, policy, and ticket answers arrive when the teammate's branch supplies the real `handle_turn`.
+5. **[DONE] Document how to run it.** Added the `uv run streamlit run ...` command to [README.md](README.md) section 10. The simulated-login note remains in section 3; section 10 clarifies that the current chat uses a local stub until the real `handle_turn` implementation is integrated.
 
-**Progress:** Steps 1–4 are complete. The selector starts with no customer selected, offers only C101/C102, shows the active customer ID, and clears chat history on customer switch. The chat appends user/assistant turns to session history, sends the session customer ID separately from the message, passes only prior turns to the stub, and records a short assistant failure message if the handler raises. Streamlit AppTest verified customer selection, transcript updates over multiple turns, prior-history counts, and that mentioning C102 in the prompt does not change the C101 session identity. Step 5 remains pending.
+**Progress:** Steps 1–5 are complete. The selector starts with no customer selected, offers only C101/C102, shows the active customer ID, and clears chat history on customer switch. The chat appends user/assistant turns to session history, sends the session customer ID separately from the message, passes only prior turns to the stub, and records a short assistant failure message if the handler raises. Streamlit AppTest verified customer selection, transcript updates over multiple turns, prior-history counts, and that mentioning C102 in the prompt does not change the C101 session identity. README section 10 documents how to launch the UI and notes that its replies are currently stubbed.
 
 ## Checks
 
