@@ -1,11 +1,48 @@
+"""Adapter exposing the frontend API from the selected backend implementation."""
+
+from app.ui.fake_backend import (
+    ChatReply,
+    ChoiceOption,
+    ChoiceSelection,
+    ChoiceView,
+    Citation,
+    ConfirmationDecision,
+    ConversationState,
+    LoginOption,
+    PendingView,
+    StartSessionResult,
+    handle_message,
+    list_login_options,
+    start_session,
+)
+
+
 def handle_turn(
-        authenticated_customer_id: str,
-        message: str,
-        history: list[dict[str, str]]
+    authenticated_customer_id: str,
+    message: str,
+    history: list[dict[str, str]],
 ) -> str:
-    return (
-        f"[Demo only; authenticated customer: {authenticated_customer_id}] "
-        f"I received: {message!r}. "
-        f"There are {len(history)} earlier message(s) in this chat. "
-        "Live order, return, policy, and ticket answers are not connected yet."
-    )
+    """Compatibility bridge for the UI until it adopts the session API."""
+    del history
+    session = start_session(authenticated_customer_id)
+    if not session.ok or session.state is None:
+        return session.greeting
+    return handle_message(session.state, message).text
+
+
+__all__ = [
+    "ChatReply",
+    "ChoiceOption",
+    "ChoiceSelection",
+    "ChoiceView",
+    "Citation",
+    "ConfirmationDecision",
+    "ConversationState",
+    "LoginOption",
+    "PendingView",
+    "StartSessionResult",
+    "handle_message",
+    "handle_turn",
+    "list_login_options",
+    "start_session",
+]
