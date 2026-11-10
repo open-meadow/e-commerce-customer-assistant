@@ -186,9 +186,13 @@ Each checkpoint must be reviewed and tested before moving to the next.
 
 ## 10. Running the Project
 
-Development setup and execution instructions will be added as the application components are implemented.
+From the repository root, start the Streamlit chat with:
 
-The current project is in its initial setup and database implementation preparation stage.
+```bash
+uv run streamlit run app/ui/streamlit_app.py
+```
+
+Choose C101 or C102 in the sidebar to use the simulated login. The current chat replies come from a local demo stub; live order, return, policy, and ticket answers will be available when the real `handle_turn` implementation is integrated.
 
 ## 11. Disclaimer
 
