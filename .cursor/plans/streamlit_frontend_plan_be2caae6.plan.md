@@ -10,7 +10,7 @@ todos:
     status: completed
   - id: ui-sidebar-selector
     content: "Build and verify the sidebar customer selector and clear history on customer switch"
-    status: pending
+    status: completed
   - id: ui-transcript
     content: "Build and verify transcript rendering and turn handling"
     status: pending
@@ -52,13 +52,13 @@ flowchart TD
 
 ## Steps
 
-1. **Add Streamlit with uv.** `uv add streamlit`. Do not create a second virtualenv and do not add a SQLite package. Launch with `uv run streamlit run app/ui/streamlit_app.py`.
-2. **Add the UI package.** New files: [app/ui/__init__.py](app/ui/__init__.py), [app/ui/session.py](app/ui/session.py), [app/ui/client.py](app/ui/client.py), [app/ui/streamlit_app.py](app/ui/streamlit_app.py). `session.py` holds the session keys (`authenticated_customer_id`, `messages`), the rule that a customer change clears `messages`, and the check that chat is blocked until an id is set. `client.py` is the stub `handle_turn`. Keep Streamlit widgets in `streamlit_app.py` so the session rules can be tested without a browser.
-3. **Build the sidebar selector.** Options come from the fixed C101 / C102 list. On change, update session state and clear the transcript. Do not accept a typed customer id in the chat box.
+1. **[DONE] Add Streamlit with uv.** `uv add streamlit`. Do not create a second virtualenv and do not add a SQLite package. Launch with `uv run streamlit run app/ui/streamlit_app.py`.
+2. **[DONE] Add the UI package.** New files: [app/ui/__init__.py](app/ui/__init__.py), [app/ui/session.py](app/ui/session.py), [app/ui/client.py](app/ui/client.py), [app/ui/streamlit_app.py](app/ui/streamlit_app.py). `session.py` holds the session keys (`authenticated_customer_id`, `messages`), the rule that a customer change clears `messages`, and the check that chat is blocked until an id is set. `client.py` is the stub `handle_turn`. Keep Streamlit widgets in `streamlit_app.py` so the session rules can be tested without a browser.
+3. **[DONE] Build the sidebar selector.** Options come from the fixed C101 / C102 list. On change, update session state and clear the transcript. Do not accept a typed customer id in the chat box.
 4. **Build the transcript.** On submit: append the user turn, call `handle_turn(session customer id, text, prior messages)`, append the returned string as the assistant turn, rerun. Pass the session id as its own argument. Do not put it inside the user message for the model to pick up.
 5. **Document how to run it.** Add the `uv run streamlit run ...` command to [README.md](README.md) section 10, plus the simulated-login note already stated in section 3. Note that live order, return, policy, and ticket answers arrive when the teammate's branch supplies the real `handle_turn`.
 
-**Progress:** Steps 1 and 2 are complete. Step 2's imports and Streamlit page execution have been checked. Step 3 is still pending; the selector code currently present has not been reviewed and verified against that step. Do not begin Step 3 until approved.
+**Progress:** Steps 1–3 are complete. The selector starts with no customer selected, offers only C101/C102, shows the active customer ID, and clears chat history on customer switch. Streamlit AppTest verified the unselected initial state, login as C101, and switch to C102 with history cleared. Step 4 is pending approval.
 
 ## Checks
 

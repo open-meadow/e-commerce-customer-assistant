@@ -24,11 +24,6 @@ SIMULATED_CUSTOMERS = {
     "C102": "Customer C102",
 }
 
-def _current_customer_label(customer_id: str | None) -> str:
-    if customer_id is None:
-        return "No customer selected"
-    return SIMULATED_CUSTOMERS.get(customer_id, customer_id)
-
 def _set_customer_from_sidebar() -> None:
     initialize_session(st.session_state)
     current = st.session_state.get(AUTHENTICATED_CUSTOMER_ID_KEY)
@@ -39,11 +34,15 @@ def _set_customer_from_sidebar() -> None:
         index=(
             list(SIMULATED_CUSTOMERS.keys()).index(current)
             if current in SIMULATED_CUSTOMERS
-            else 0
+            else None
         ),
+        placeholder="Choose a customer",
         key="customer_selector",
     )
     set_authenticated_customer_id(st.session_state, selected)
+    st.sidebar.caption(
+        f"Active customer_id: {selected if selected is not None else 'None'}"
+    )
 
 def _render_chat() -> None:
     initialize_session(st.session_state)
