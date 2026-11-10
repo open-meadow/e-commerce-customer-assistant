@@ -194,6 +194,16 @@ uv run streamlit run app/ui/streamlit_app.py
 
 Choose C101 or C102 in the sidebar to use the simulated login. The UI currently uses a local fake backend with canned replies and demo return-choice and confirmation flows; it is not connected to live order, return, policy, or ticket data. Confirming a demo action does not submit a real request.
 
+### Run with Docker
+
+From the repository root, run:
+
+```bash
+docker compose up --build
+```
+
+Open `http://localhost:8501`. The Compose service stores its data and vector-store files in Docker-managed volumes. The current demo uses a fake backend and does not require an API key.
+
 ## 11. Disclaimer
 
 This is an educational capstone project using synthetic data. It is not connected to any real e-commerce company, customer account, payment gateway, or shipping provider.
