@@ -67,7 +67,7 @@ Rules for calling it:
 **B1. Streamlit UI (`app/ui`)**
 1. [DONE] Create `app/ui/fake_backend.py` matching the contract (canned replies, including one `needs_choice` flow with the three return-reason options "Damaged or defective item", "Wrong product received", "Other / standard return reason", one `needs_confirmation` flow, and one `error` reply).
 2. **[DONE]** Rewrite `app/ui/client.py` as a thin adapter that imports the backend functions from one place, so switching from the fake to `app.backend` is a single import change.
-3. Update `streamlit_app.py` and `session.py`: login selector from `list_login_options`, chat transcript, confirm/cancel buttons, category buttons, spinner, error banner, new-session handling. Keep the code small and typed.
+3. **[DONE]** Update `streamlit_app.py` and `session.py`: login selector from `list_login_options`, chat transcript, confirm/cancel buttons, category buttons, spinner, error banner, new-session handling. Keep the code small and typed.
 4. Add a few unit tests for the pure session and state logic only (no Streamlit rendering, no database), under `tests/ui/`.
 5. Provide a one-line run command (e.g. `uv run streamlit run app/ui/streamlit_app.py`) and put it in the README.
  

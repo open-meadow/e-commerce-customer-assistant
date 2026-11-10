@@ -1,20 +1,37 @@
 """Adapter exposing the frontend API from the selected backend implementation."""
 
-from app.ui.fake_backend import (
-    ChatReply,
-    ChoiceOption,
-    ChoiceSelection,
-    ChoiceView,
-    Citation,
-    ConfirmationDecision,
-    ConversationState,
-    LoginOption,
-    PendingView,
-    StartSessionResult,
-    handle_message,
-    list_login_options,
-    start_session,
-)
+if __package__:
+    from .fake_backend import (
+        ChatReply,
+        ChoiceOption,
+        ChoiceSelection,
+        ChoiceView,
+        Citation,
+        ConfirmationDecision,
+        ConversationState,
+        LoginOption,
+        PendingView,
+        StartSessionResult,
+        handle_message,
+        list_login_options,
+        start_session,
+    )
+else:
+    from fake_backend import (
+        ChatReply,
+        ChoiceOption,
+        ChoiceSelection,
+        ChoiceView,
+        Citation,
+        ConfirmationDecision,
+        ConversationState,
+        LoginOption,
+        PendingView,
+        StartSessionResult,
+        handle_message,
+        list_login_options,
+        start_session,
+    )
 
 
 def handle_turn(
