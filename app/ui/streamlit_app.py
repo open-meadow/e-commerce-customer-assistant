@@ -67,12 +67,13 @@ def _render_chat() -> None:
     ):
         messages = st.session_state.setdefault(MESSAGES_KEY, [])
         messages.append({"role": "user", "content": prompt})
+        prior_messages = messages[:-1]
 
         try:
             reply = handle_turn(
                 authenticated_customer_id=customer_id,
                 message=prompt,
-                history=messages[:-1],
+                history=prior_messages,
             )
         except Exception:
             messages.append({"role": "assistant", "content": "Sorry, the chat stub failed."})
