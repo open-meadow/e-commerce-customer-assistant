@@ -1,14 +1,20 @@
-"""Validate demo database initialization arguments.
-
-Database creation and seeding are added in the next implementation step.
-"""
+"""Initialize a demo database at an explicit path and reference time."""
 
 from __future__ import annotations
 
 import argparse
 import re
+import sys
 from datetime import UTC, datetime
 from pathlib import Path
+
+_PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
+
+from app.db.connection import get_connection
+from app.db.schema import create_schema
+from app.db.seed_data import seed_database
 
 _ISO8601_TIMESTAMP = re.compile(
     r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}"
@@ -49,7 +55,10 @@ def resolve_safe_db_path(value: str, *, project_root: Path | None = None) -> Pat
         if project_root is not None
         else Path(__file__).resolve().parents[1]
     )
-    candidate = Path(value).expanduser().resolve()
+    candidate = Path(value).expanduser()
+    if not candidate.is_absolute():
+        candidate = root / candidate
+    candidate = candidate.resolve()
     protected_database = (root / "data" / "app.db").resolve()
     if candidate == protected_database:
         raise argparse.ArgumentTypeError(
@@ -81,6 +90,27 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def initialize_database(db_path: Path, reference_time: datetime) -> None:
+    """Create the schema and seed an empty database, refusing existing objects."""
+    connection = get_connection(str(db_path))
+    try:
+        existing_objects = connection.execute(
+            "SELECT name FROM sqlite_master "
+            "WHERE type IN ('table', 'view') AND name NOT LIKE 'sqlite_%' "
+            "LIMIT 1"
+        ).fetchone()
+        if existing_objects is not None:
+            raise ValueError(
+                f"database is not empty (found {existing_objects['name']!r}); "
+                "refusing to initialize it"
+            )
+
+        create_schema(connection)
+        seed_database(connection, reference_time=reference_time)
+    finally:
+        connection.close()
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     arguments = parser.parse_args(argv)
@@ -89,10 +119,12 @@ def main(argv: list[str] | None = None) -> int:
     except argparse.ArgumentTypeError as exc:
         parser.error(str(exc))
 
-    print(
-        "Arguments validated. Database initialization will be added in B3-2 "
-        f"(path: {db_path}, reference time: {arguments.reference_time.isoformat()})."
-    )
+    try:
+        initialize_database(db_path, arguments.reference_time)
+    except ValueError as exc:
+        parser.error(str(exc))
+
+    print(f"Demo database initialized and seeded at {db_path}.")
     return 0
 
 
