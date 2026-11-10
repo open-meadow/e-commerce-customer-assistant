@@ -4,15 +4,18 @@ overview: "A Streamlit chat page only: simulated customer login, session-only hi
 todos:
   - id: add-streamlit
     content: uv add streamlit and run via uv run streamlit run app/ui/streamlit_app.py
-    status: pending
+    status: completed
   - id: ui-session-and-page
-    content: "Add app/ui/session.py and streamlit_app.py: selector, transcript, clear history on customer switch"
+    content: "Add the UI package, session helpers, and local handle_turn stub"
+    status: completed
+  - id: ui-sidebar-selector
+    content: "Build and verify the sidebar customer selector and clear history on customer switch"
     status: pending
-  - id: ui-stub-client
-    content: Add a local handle_turn stub the page calls, so the chat runs without the database or orchestrator branch
+  - id: ui-transcript
+    content: "Build and verify transcript rendering and turn handling"
     status: pending
-  - id: ui-checks
-    content: "Check login, transcript, customer switch, and that the stub receives the session customer id"
+  - id: ui-documentation
+    content: "Document how to run the Streamlit app and explain the stub's limitations"
     status: pending
 isProject: false
 ---
@@ -54,6 +57,8 @@ flowchart TD
 3. **Build the sidebar selector.** Options come from the fixed C101 / C102 list. On change, update session state and clear the transcript. Do not accept a typed customer id in the chat box.
 4. **Build the transcript.** On submit: append the user turn, call `handle_turn(session customer id, text, prior messages)`, append the returned string as the assistant turn, rerun. Pass the session id as its own argument. Do not put it inside the user message for the model to pick up.
 5. **Document how to run it.** Add the `uv run streamlit run ...` command to [README.md](README.md) section 10, plus the simulated-login note already stated in section 3. Note that live order, return, policy, and ticket answers arrive when the teammate's branch supplies the real `handle_turn`.
+
+**Progress:** Steps 1 and 2 are complete. Step 2's imports and Streamlit page execution have been checked. Step 3 is still pending; the selector code currently present has not been reviewed and verified against that step. Do not begin Step 3 until approved.
 
 ## Checks
 

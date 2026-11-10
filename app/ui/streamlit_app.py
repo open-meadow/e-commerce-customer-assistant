@@ -1,13 +1,23 @@
 import streamlit as st
 
-from app.ui.client import handle_turn
-from app.ui.session import (
-    AUTHENTICATED_CUSTOMER_ID_KEY,
-    MESSAGES_KEY,
-    initialize_session,
-    is_chat_enabled,
-    set_authenticated_customer_id,
-)
+if __package__:
+    from .client import handle_turn
+    from .session import (
+        AUTHENTICATED_CUSTOMER_ID_KEY,
+        MESSAGES_KEY,
+        initialize_session,
+        is_chat_enabled,
+        set_authenticated_customer_id,
+    )
+else:
+    from client import handle_turn
+    from session import (
+        AUTHENTICATED_CUSTOMER_ID_KEY,
+        MESSAGES_KEY,
+        initialize_session,
+        is_chat_enabled,
+        set_authenticated_customer_id,
+    )
 
 SIMULATED_CUSTOMERS = {
     "C101": "Customer C101",
