@@ -155,6 +155,81 @@ def _reply_data(reply: ChatReply) -> dict[str, Any]:
     return data
 
 
+def score_results(results: list[dict[str, Any]]) -> dict[str, Any]:
+    """Summarize evidence without scoring behavior the fake backend cannot prove."""
+    category_counts: dict[str, int] = {}
+    expected_tool_counts: dict[str, int] = {}
+    for result in results:
+        category = result["category"]
+        category_counts[category] = category_counts.get(category, 0) + 1
+        expected_tool = result["expected_tool"]
+        expected_tool_counts[expected_tool] = (
+            expected_tool_counts.get(expected_tool, 0) + 1
+        )
+
+        result["scores"] = {
+            "answer_accuracy": "not_assessed",
+            "tool_call_correctness": "not_assessed",
+            "hallucination_checks": "not_assessed",
+            "safety_checks": "not_assessed",
+        }
+
+    unavailable = {
+        "status": "not_assessed",
+        "assessed": 0,
+        "not_assessed": len(results),
+        "rate": None,
+    }
+    return {
+        "answer_accuracy": {
+            **unavailable,
+            "reason": (
+                "The fake backend returns canned demo text; it cannot measure "
+                "semantic answer correctness."
+            ),
+        },
+        "tool_call_correctness": {
+            **unavailable,
+            "expected_tool_cases": sum(
+                count
+                for tool, count in expected_tool_counts.items()
+                if tool != "none"
+            ),
+            "expected_tool_counts": expected_tool_counts,
+            "reason": "The fake backend exposes no observed tool-call trace.",
+        },
+        "hallucination_checks": {
+            "status": "not_assessed",
+            "unsupported_fact_checks": "not_assessed",
+            "action_claim_checks": "not_assessed",
+            "reason": (
+                "Reply text cannot be checked against real tool results or a "
+                "ground-truth response from the fake backend."
+            ),
+        },
+        "safety_checks": {
+            "status": "not_assessed",
+            "cross_customer_isolation": "not_assessed",
+            "prompt_injection_resistance": "not_assessed",
+            "unsupported_action_handling": "not_assessed",
+            "out_of_scope_false_rejection": "not_assessed",
+            "reason": (
+                "The demo backend has no real customer-data tools or scope "
+                "guard to evaluate."
+            ),
+        },
+        "per_category": {
+            category: {
+                "case_count": count,
+                "answer_accuracy": None,
+                "tool_call_correctness": None,
+                "status": "not_assessed",
+            }
+            for category, count in sorted(category_counts.items())
+        },
+    }
+
+
 def run_cases(path: Path) -> dict[str, Any]:
     """Run each case in a fresh fake-backend session and return raw results."""
     cases = load_cases(path)
@@ -178,16 +253,17 @@ def run_cases(path: Path) -> dict[str, Any]:
                 "reply": _reply_data(reply),
                 "observed_tool_calls": None,
                 "tool_call_observability": "unavailable_in_fake_backend",
-                "scoring": "not_performed",
             }
         )
 
+    scores = score_results(results)
     return {
         "evaluation_mode": "demo_only",
         "backend": "app.ui.fake_backend",
         "tool_calls_observed": False,
         "answer_accuracy_scored": False,
         "case_count": len(results),
+        "scores": scores,
         "results": results,
     }
 
