@@ -3,7 +3,7 @@
 **Project:** AI E-Commerce Customer Support Assistant
 **Deadline:** Approximately 2026-11-13
 **Status snapshot:** 2026-11-11
-**Current workstream:** B5 documentation and presentation, on `rohan/documents`
+**Current workstream:** B5 documentation and presentation complete, on `rohan/documents`
 
 ## Product scope and current behavior
 
@@ -30,7 +30,10 @@ hallucination, and safety results are explicitly not assessed.
 | B4 — Evaluation cases and demo-only runner | Complete; all evaluation metrics remain unassessed |
 | B5-1 — README | Complete |
 | B5-2 — Reconcile status and agent guidance | Complete; database checkpoint discrepancy is documented for Technical Lead resolution |
-| B5-3 through B5-6 — Diagram, report, deck, consistency review | Not started |
+| B5-3 — Architecture diagram | Complete |
+| B5-4 — Technical report | Complete |
+| B5-5 — Presentation deck | Complete; editable Markdown source and PowerPoint deliverable |
+| B5-6 — Documentation consistency review | Complete |
 
 ## Database implementation status and discrepancy
 
@@ -63,18 +66,15 @@ before updating `docs/02` or treating those checkpoints as formally approved.
 - Evaluation: `data/eval/queries.csv` (70 cases),
   `scripts/eval/run_eval.py`, sample logs under `data/eval/logs/`, and focused
   tests in `tests/test_eval_runner.py`.
-- At the B5-1 verification, `uv run python -m pytest` passed: **545 passed**.
-  `uv sync --check` and `docker compose config --quiet` also passed.
+- On 2026-11-11, `uv run python -m pytest -q` passed: **545 passed**.
+  `uv run python scripts/eval/run_eval.py` processed **70 cases**; quality,
+  safety, hallucination, and tool-call metrics remain `not_assessed`.
+  `uv sync --check` and `docker compose config --quiet` passed.
 
 ## Remaining work
 
 - Ask the Technical Lead to resolve the database checkpoint discrepancy in
   the canonical plan before changing its recorded authorization status.
-- B5-3: create an architecture diagram that distinguishes implemented
-  components from planned design.
-- B5-4: write the technical report from verified implementation and tests.
-- B5-5: prepare the presentation deck with demo limitations disclosed.
-- B5-6: cross-check documentation and deliverables for consistency.
 - Real backend, LLM/RAG integration, tool execution, and production
   authentication are not present in the current UI and are not represented as
   completed work here.

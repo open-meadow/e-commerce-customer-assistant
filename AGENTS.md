@@ -21,14 +21,18 @@ The following are present in this checkout:
 - Docker setup: `Dockerfile`, `docker-compose.yml`, `.dockerignore`, and `.env.example`. The Compose environment values are provisional and unused by the current chat.
 - Safe demo DB initializer: `scripts/init_demo_db.py` and `tests/test_init_demo_db.py`.
 - Evaluation: 70 synthetic cases in `data/eval/queries.csv`, a fake-backend smoke runner in `scripts/eval/run_eval.py`, sample logs, and tests. The runner does not assess correctness, safety, hallucinations, or tool calls.
-- At the B5-1 verification, the full test suite passed (545 tests).
+- At the B5-6 verification on 2026-11-11, the full test suite passed
+  (545 tests), the demo evaluator processed 70 cases, `uv sync --check`
+  passed, and `docker compose config --quiet` passed.
 
 ## Not implemented or integrated
 
 - No real backend orchestration, LLM, RAG, product lookup, tool execution, scope guard, or tool-call telemetry is wired to the chat.
 - No real store, payment, refund, shipping, courier, or customer data integration exists.
 - No production authentication exists.
-- Technical report, presentation deck, and architecture diagram remain pending in B5.
+- B5 documentation deliverables now present: `docs/architecture.md`,
+  `docs/technical_report.md`, and `docs/presentation.md` plus
+  `docs/presentation.pptx`. The B5-6 consistency review is complete.
 
 ### Database checkpoint status discrepancy
 
