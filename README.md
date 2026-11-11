@@ -1,209 +1,114 @@
-# AI-Powered E-Commerce Customer Support Assistant
+# E-Commerce Customer Support Assistant
 
-An AI-powered customer support system designed to help e-commerce customers resolve common issues related to orders, deliveries, payments, returns, refunds, products, and support policies through a conversational interface.
+This repository is an educational capstone prototype for a text-based
+e-commerce customer-support assistant. It uses synthetic data only and is not
+connected to a real store, customer account, payment provider, or courier.
 
-The project combines **Large Language Models (LLMs), Retrieval-Augmented Generation (RAG), structured database queries, and controlled backend tools** to provide context-aware and reliable customer support.
+## Current prototype
 
-## 1. Project Overview
+The runnable Streamlit UI has a **fake backend** with canned responses and
+demo-only return-choice and confirmation flows. Simulated login options are
+C101 and C102. The database schema, seed data, and customer-scoped repository
+are implemented and tested separately, but the UI does not currently use them.
 
-E-commerce platforms receive large volumes of repetitive customer support queries, including:
-
-- Where is my order?
-- Has my payment been successful?
-- Can I cancel my order?
-- Am I eligible for a return?
-- When will I receive my refund?
-- What are the specifications of a product?
-- How can I contact customer support?
-
-This project aims to build an AI assistant that can understand these questions, retrieve relevant information, access authorized customer records, and guide customers through appropriate support workflows.
-
-The system uses synthetic customer and transaction data. It does not connect to a real e-commerce platform.
-
-## 2. Project Objectives
-
-- Build a conversational customer support interface.
-- Retrieve accurate answers from FAQs and policy documents using RAG.
-- Retrieve product information from structured JSON data.
-- Access customer-specific order and transaction information securely.
-- Implement controlled backend tools for supported operations.
-- Create support tickets when escalation is required.
-- Prevent unauthorized access to another customer's information.
-- Evaluate answer quality, retrieval performance, and tool execution reliability.
-
-## 3. Project Scope
-
-### Included in the MVP
-
-| Component | Responsibility |
+| Area | Current state |
 |---|---|
-| Streamlit UI | Conversational customer support interface |
-| Customer context | Simulated authenticated customer identity |
-| SQLite database | Customers, orders, order items, returns, and support tickets |
-| RAG pipeline | Retrieve information from FAQ and policy documents |
-| Product lookup | Retrieve product details from `Products.json` |
-| Backend tools | Controlled customer-data retrieval and support operations |
-| LLM orchestration | Understand queries and coordinate retrieval and tools |
-| Ticket escalation | Create support ticket records |
-| Testing | Authorization, business logic, retrieval, and orchestration tests |
+| Streamlit chat | Implemented |
+| Simulated customer selector | Implemented for C101 and C102; not real authentication |
+| Return choice and confirmation | Demo flows only; no real return or ticket is submitted |
+| SQLite schema, seed, repository | Implemented separately; not wired to the chat UI |
+| Evaluation data | 70 synthetic labeled cases in `data/eval/queries.csv` |
+| Evaluation runner | Demo-only smoke harness; it does not assess answer quality or observe tools |
+| LLM, RAG, product lookup, live order tools | Not integrated into the runnable chat |
 
-**Authentication note:** The MVP uses a simulated customer selector in Streamlit session state. This is for demonstrating authorization boundaries and is not production-grade authentication.
+The target architecture includes retrieval over the FAQ and policy documents,
+product lookup, customer-scoped tools, and LLM orchestration. These are future
+capabilities, not current UI behavior.
 
-### Explicitly Out of Scope
+## Data and policy sources
 
-- Full e-commerce marketplace frontend.
-- Product catalogue browsing and shopping interface.
-- Customer registration and onboarding.
-- Shopping cart and checkout.
-- Payment gateway integration.
-- Real courier or shipping integrations.
-- Real refund processing.
-- Production identity and authentication infrastructure.
+- `data/source/FAQ.md` — sample customer questions and answers.
+- `data/source/Policies.md` — sample policy source of truth.
+- `data/source/Products.json` — synthetic product catalog.
+- `data/source/customer_queries_sample.csv` — original sample query set.
+- `data/eval/queries.csv` — expanded labeled evaluation cases.
 
-Voice-based support may be considered as a future enhancement after the MVP is completed and tested.
+The current fake chat backend does not retrieve or query these sources to
+answer messages. Database records and product details are synthetic.
 
-## 4. Technology Stack
+## Requirements and setup
 
-| Area | Technology |
-|---|---|
-| Programming language | Python |
-| User interface | Streamlit |
-| Database | SQLite |
-| Structured data | JSON |
-| Knowledge base | Markdown documents |
-| AI capabilities | LLM |
-| Knowledge retrieval | Retrieval-Augmented Generation (RAG) |
-| Testing | Pytest |
-| Version control | Git and GitHub |
+- Python 3.13 or newer.
+- [uv](https://docs.astral.sh/uv/).
+- Docker Engine with Docker Compose (optional, for the container run).
 
-Specific LLM providers, embedding models, and vector storage technologies will be finalized during architecture and implementation.
+From the repository root, install the locked project and development
+dependencies:
 
-## 5. High-Level Architecture
-
-```text
-                 CUSTOMER
-                    |
-                    v
-             STREAMLIT CHAT UI
-                    |
-                    v
-          CUSTOMER CONTEXT / SESSION
-                    |
-                    v
-             AI ORCHESTRATOR
-                    |
-          +---------+----------+
-          |         |          |
-          v         v          v
-       RAG       PRODUCT     BACKEND
-      ENGINE     LOOKUP       TOOLS
-          |         |          |
-          v         v          v
-      FAQ /      Products    SQLite
-      Policies   JSON        Database
-          |         |          |
-          +---------+----------+
-                    |
-                    v
-              LLM RESPONSE
-                    |
-                    v
-               CUSTOMER
+```bash
+uv sync
 ```
 
-The architecture will evolve as individual components are implemented and tested.
+## Run locally
 
-## 6. Security and Reliability Principles
-
-Security is a core requirement, not an optional enhancement.
-
-- Customer identity must originate from trusted application context.
-- Customer IDs must never be trusted from user messages or LLM-generated arguments.
-- Customer-specific database queries must enforce ownership filters.
-- Customers must never access another customer's orders, returns, or tickets.
-- The LLM must not receive unrestricted database or SQL access.
-- State-changing operations must go through controlled backend functions.
-- The assistant must never claim an operation succeeded without backend confirmation.
-- Sensitive customer information must not be unnecessarily exposed in logs.
-- Retrieved documents and user messages must be treated as untrusted input.
-
-## 7. Project Structure
-
-```text
-ecommerce-support-assistant/
-│
-├── app/
-│   ├── db/
-│   ├── tools/
-│   ├── rag/
-│   ├── orchestrator/
-│   └── ui/
-│
-├── data/
-│   ├── source/
-│   └── generated/
-│
-├── docs/
-│
-├── tests/
-│
-├── .gitignore
-├── PROJECT_STATUS.md
-├── README.md
-└── requirements.txt
-```
-
-## 8. Dataset
-
-The project uses a provided synthetic dataset containing:
-
-- `FAQ.md` — common customer questions and answers.
-- `Policies.md` — shipping, returns, refunds, cancellation, and warranty policies.
-- `Products.json` — structured product information.
-- `customer_queries_sample.csv` — sample customer support queries.
-- `README_DATASET.md` — dataset documentation.
-
-Synthetic transactional records will be generated for customers, orders, order items, returns, and support tickets.
-
-The supplied FAQ and policy documents are the source of truth for the MVP's support rules.
-
-## 9. Development Methodology
-
-The project will be developed incrementally through approved checkpoints.
-
-1. Project discovery and requirements.
-2. Database design.
-3. Database implementation and authorization testing.
-4. Backend service and tool development.
-5. RAG pipeline implementation.
-6. LLM orchestration.
-7. Streamlit interface.
-8. Integration and end-to-end testing.
-9. Evaluation and documentation.
-10. Final demonstration and deployment preparation.
-
-Each checkpoint must be reviewed and tested before moving to the next.
-
-## 10. Running the Project
-
-From the repository root, start the Streamlit chat with:
+From the repository root:
 
 ```bash
 uv run streamlit run app/ui/streamlit_app.py
 ```
 
-Choose C101 or C102 in the sidebar to use the simulated login. The UI currently uses a local fake backend with canned replies and demo return-choice and confirmation flows; it is not connected to live order, return, policy, or ticket data. Confirming a demo action does not submit a real request.
+Open the local URL printed by Streamlit, then choose C101 or C102 in the
+sidebar. Replies are canned demo text; live order, payment, product, policy,
+return, refund, and ticket data are not connected. Confirming a demo action
+does not submit a real request.
 
-### Run with Docker
+## Run with Docker
 
-From the repository root, run:
+From the repository root:
 
 ```bash
 docker compose up --build
 ```
 
-Open `http://localhost:8501`. The Compose service stores its data and vector-store files in Docker-managed volumes. The current demo uses a fake backend and does not require an API key.
+Open <http://localhost:8501>. Compose defines persistent Docker volumes and
+forwards sample environment settings for a future database/vector-store/LLM
+integration. The current chat does not use those settings and does not require
+an API key.
 
-## 11. Disclaimer
+Stop the service with `Ctrl+C`; use `docker compose down` to stop and remove the
+container while keeping named volumes.
 
-This is an educational capstone project using synthetic data. It is not connected to any real e-commerce company, customer account, payment gateway, or shipping provider.
+## Tests and evaluation smoke run
+
+Run the test suite:
+
+```bash
+uv run python -m pytest
+```
+
+Run the demo-only evaluation harness:
+
+```bash
+uv run python scripts/eval/run_eval.py
+```
+
+It reads the synthetic case CSV, starts a fresh fake session per case, and
+prints JSON replies and expected labels. It does not score answer accuracy,
+safety, hallucinations, or tool-call correctness: the fake backend has no
+real tools or observable tool-call trace. Sample outputs are in
+`data/eval/logs/sample_conversations.jsonl` and are explicitly marked
+`demo_only` / `not_assessed`.
+
+## Security and scope limitations
+
+- The customer selector is simulated and is not production authentication.
+- The UI is not connected to the SQLite repository or real customer records.
+- No real payments, refunds, shipping, cancellations, address changes, returns,
+  or support tickets are performed.
+- The current backend does not implement an LLM, RAG, product lookup, scope
+  guard, or tool-call telemetry.
+- Evaluation cases and sample logs are synthetic. The demo runner verifies
+  only that the fake backend can be called for each case; it does not establish
+  assistant correctness or safety.
+
+Do not enter real personal, order, or payment information.
