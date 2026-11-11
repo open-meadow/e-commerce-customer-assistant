@@ -1,11 +1,18 @@
+"""Streamlit session-state helpers (chats, active chat, UI notices).
+
+These helpers only store and move objects around. They never inspect a backend
+state, so they work with either backend selected in ``client.py``. The backend
+types appear only in annotations and are not imported at runtime.
+"""
+
+from __future__ import annotations
+
 from collections.abc import MutableMapping
-from typing import Any, TypedDict
+from typing import TYPE_CHECKING, Any, TypedDict
 from uuid import uuid4
 
-if __package__:
+if TYPE_CHECKING:
     from .client import ChoiceView, ConversationState, PendingView
-else:
-    from client import ChoiceView, ConversationState, PendingView
 
 SessionState = MutableMapping[Any, Any]
 
