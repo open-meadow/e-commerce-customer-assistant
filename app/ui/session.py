@@ -1,9 +1,12 @@
 from collections.abc import MutableMapping
-from typing import Any
+from typing import Any, TypedDict
+from uuid import uuid4
 
 SessionState = MutableMapping[Any, Any]
 
 AUTHENTICATED_CUSTOMER_ID_KEY = "authenticated_customer_id"
+CHATS_KEY = "chats"
+ACTIVE_CHAT_ID_KEY = "active_chat_id"
 MESSAGES_KEY = "messages"
 CONVERSATION_STATE_KEY = "conversation_state"
 PENDING_VIEW_KEY = "pending_view"
@@ -11,9 +14,21 @@ CHOICE_VIEW_KEY = "choice_view"
 UI_ERROR_KEY = "ui_error"
 UI_NOTICE_KEY = "ui_notice"
 REQUEST_ID_KEY = "request_id"
+NEW_CHAT_TITLE = "New chat"
+
+
+class ChatSession(TypedDict):
+    title: str
+    messages: list[dict[str, str]]
+    conversation_state: object
+    pending_view: object | None
+    choice_view: object | None
+
 
 def initialize_session(session_state: SessionState) -> None:
     session_state.setdefault(AUTHENTICATED_CUSTOMER_ID_KEY, None)
+    session_state.setdefault(CHATS_KEY, {})
+    session_state.setdefault(ACTIVE_CHAT_ID_KEY, None)
     session_state.setdefault(MESSAGES_KEY, [])
     session_state.setdefault(CONVERSATION_STATE_KEY, None)
     session_state.setdefault(PENDING_VIEW_KEY, None)
@@ -29,7 +44,65 @@ def clear_conversation(session_state: SessionState) -> None:
     session_state[CHOICE_VIEW_KEY] = None
     session_state[UI_ERROR_KEY] = None
     session_state[UI_NOTICE_KEY] = None
+    session_state[CHATS_KEY] = {}
+    session_state[ACTIVE_CHAT_ID_KEY] = None
     session_state.pop(REQUEST_ID_KEY, None)
+
+
+def create_chat(
+    session_state: SessionState,
+    conversation_state: object,
+    greeting: str,
+) -> str:
+    initialize_session(session_state)
+    chat_id = uuid4().hex
+    chats: dict[str, ChatSession] = session_state[CHATS_KEY]
+    chats[chat_id] = {
+        "title": NEW_CHAT_TITLE,
+        "messages": [{"role": "assistant", "content": greeting}],
+        "conversation_state": conversation_state,
+        "pending_view": None,
+        "choice_view": None,
+    }
+    select_chat(session_state, chat_id)
+    return chat_id
+
+
+def select_chat(session_state: SessionState, chat_id: str) -> bool:
+    initialize_session(session_state)
+    chats: dict[str, ChatSession] = session_state[CHATS_KEY]
+    if chat_id not in chats:
+        return False
+
+    session_state[ACTIVE_CHAT_ID_KEY] = chat_id
+    session_state[UI_ERROR_KEY] = None
+    session_state[UI_NOTICE_KEY] = None
+    session_state.pop(REQUEST_ID_KEY, None)
+    return True
+
+
+def get_active_chat(session_state: SessionState) -> ChatSession | None:
+    chat_id = session_state.get(ACTIVE_CHAT_ID_KEY)
+    if not isinstance(chat_id, str):
+        return None
+
+    chats: dict[str, ChatSession] = session_state.get(CHATS_KEY, {})
+    return chats.get(chat_id)
+
+
+def append_chat_message(
+    session_state: SessionState,
+    role: str,
+    content: str,
+) -> None:
+    chat = get_active_chat(session_state)
+    if chat is None:
+        raise RuntimeError("no active chat")
+
+    chat["messages"].append({"role": role, "content": content})
+    if role == "user" and chat["title"] == NEW_CHAT_TITLE and content.strip():
+        chat["title"] = content.strip()
+
 
 def set_authenticated_customer_id(
         session_state: SessionState,
