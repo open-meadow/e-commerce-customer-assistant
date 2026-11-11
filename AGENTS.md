@@ -1,41 +1,44 @@
 # Agent guide
 
-Capstone: text customer-support assistant. Synthetic data only. No real store, payments, or shipping. Deadline ~2026-11-13. Status source: `docs/01` and `docs/02` are canonical; `PROJECT_STATUS.md` may be outdated.
+Capstone: text customer-support assistant. Synthetic data only. No real store, payments, or shipping. Deadline ~2026-11-13. `docs/01` and `docs/02` are canonical for database design and checkpoint authorization; `.claude/plans/rest-plan.md` tracks delivery tasks. See `PROJECT_STATUS.md` for the current snapshot and the documented discrepancy between the checkpoint 7–9 status in `docs/02` and files present in this checkout. Do not silently resolve it.
 
 ## Aim
 
-Streamlit chat that answers order, delivery, payment, return, refund, product, and policy questions.
+Target: Streamlit chat for order, delivery, payment, return, refund, product, and policy questions. Current chat behavior is a local fake-backend demo, not a connected AI support assistant.
 
-- RAG over `data/source/FAQ.md` and `Policies.md` (policy source of truth).
-- Product lookup from `data/source/Products.json` (read-only; not RAG; not a DB FK).
-- SQLite tools, not open SQL: `get_order_status`, `create_return_request`, `get_refund_policy`.
-- Simulated login (Streamlit session). Identity is app context, never message or LLM text.
-- Escalation writes `support_tickets`. Cross-customer reads return no row ("not found").
+- Planned: RAG over `data/source/FAQ.md` and `Policies.md` (policy source of truth).
+- Planned: product lookup from `data/source/Products.json` (read-only; not RAG; not a DB FK).
+- Database/repository operations exist, but the chat UI does not call them. The current fake backend performs no real order lookups, returns, ticket writes, or policy retrieval.
+- Simulated login (Streamlit session) is not production authentication. Any future identity must come from application context, never message or LLM text.
 - Out of MVP: marketplace, cart, checkout, real auth, real refunds/couriers, voice (stretch only).
 
-## Built
+## Implemented
 
-Phase 0–1 docs approved. Phase 2 plan approved. Checkpoints 1–6 complete, reviewed, tested, committed, and pushed (207 tests passing at last verification).
+The following are present in this checkout:
 
-- **1** `app/db/connection.py`: `get_connection()` sets and verifies `PRAGMA foreign_keys = ON`, `row_factory = sqlite3.Row`, raises `ConnectionError_`. Default path `data/app.db`. `app/db/__init__.py` re-exports `get_connection`. `main.py` is a smoke call.
-- **2** `app/db/schema.py`: `create_schema(connection)` creates the five tables. It does not open a connection.
-- **3** `tests/test_schema.py`.
-- **4** `app/db/seed_data.py`: deterministic seed, fixed baseline `2026-11-07T00:00:00Z`.
-- **5** `app/db/repository.py`: five customer-scoped read functions.
-- **6** `tests/test_authorization.py`.
-- **7A** Write-function contracts approved, committed, and pushed (`8ce2d43`): `docs/01` §F–§H, `docs/02` §4–§5.
+- Streamlit UI: `app/ui/streamlit_app.py`, session handling, and `app/ui/fake_backend.py` with canned responses and demo-only return-choice/confirmation flows.
+- Database foundation: `app/db/connection.py`, `schema.py`, `seed_data.py`, repository functions, and tests.
+- Docker setup: `Dockerfile`, `docker-compose.yml`, `.dockerignore`, and `.env.example`. The Compose environment values are provisional and unused by the current chat.
+- Safe demo DB initializer: `scripts/init_demo_db.py` and `tests/test_init_demo_db.py`.
+- Evaluation: 70 synthetic cases in `data/eval/queries.csv`, a fake-backend smoke runner in `scripts/eval/run_eval.py`, sample logs, and tests. The runner does not assess correctness, safety, hallucinations, or tool calls.
+- At the B5-1 verification, the full test suite passed (545 tests).
 
-## Not built
+## Not implemented or integrated
 
-Do not treat these as existing. Checkpoints 7–9 are **not authorized**. Do not start them until asked.
+- No real backend orchestration, LLM, RAG, product lookup, tool execution, scope guard, or tool-call telemetry is wired to the chat.
+- No real store, payment, refund, shipping, courier, or customer data integration exists.
+- No production authentication exists.
+- Technical report, presentation deck, and architecture diagram remain pending in B5.
 
-| Checkpoint | Work | Status |
-|---|---|---|
-| 7 | `create_return_request`, `create_support_ticket` in `repository.py` | not started, not authorized |
-| 8 | `tests/test_returns.py`, `tests/test_tickets.py` | not started, not authorized |
-| 9 | Full-suite verification | not started, not authorized |
+### Database checkpoint status discrepancy
 
-Also absent: RAG, LangGraph orchestrator, Streamlit UI, eval set (~60–80; seed CSV has 6 rows), Docker, report, deck. `pyproject.toml` has no runtime deps. `src/ecommerce_support_assistant/` is an unused uv stub.
+`docs/02_database_implementation_plan.md` currently records checkpoint 7
+(write implementation) and checkpoints 8–9 as not started and not authorized.
+However, `app/db/repository.py` contains `create_return_request` and
+`create_support_ticket`, `tests/test_returns.py` and `tests/test_tickets.py`
+are present, and the full test suite passed locally. Treat the code/tests as
+present, but do not infer formal authorization or edit the canonical status
+without Technical Lead direction.
 
 ## Constraints
 

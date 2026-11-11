@@ -1,79 +1,89 @@
 # Project Status
 
 **Project:** AI E-Commerce Customer Support Assistant
-**Deadline:** 12 days from Nov 1, 2026 → due ~Nov 13, 2026
-**Current phase:** Phase 2 — Database Implementation. **Checkpoints 1 and 2 approved. Checkpoint 3 is next and is not started. Do not begin it until asked.**
+**Deadline:** Approximately 2026-11-13
+**Status snapshot:** 2026-11-11
+**Current workstream:** B5 documentation and presentation, on `rohan/documents`
 
-*(Phase numbering note: this line is corrected from the previous revision, which still labeled upcoming work "Phase 1." The docs folder's own numbering is the source of truth — `docs/00_project_discovery.md` = Phase 0, `docs/01_database_design.md` = Phase 1 (approved), `docs/02_database_implementation_plan.md` = Phase 2 (in progress). This file now matches that numbering.)*
+## Product scope and current behavior
 
-## Scope decision (confirmed by student)
-- Text chat via Streamlit — **in scope for MVP**
-- Real-time voice — **deferred / stretch goal only**, built if time remains after MVP is complete, tested, and documented
-- Code is modular throughout specifically so voice can be added later without reworking `tools/`, `db/`, or `orchestrator/`
-- Data model: **single `orders` table** carrying `status`, `payment_status`, `refund_status`, `refund_amount`, `delivered_at` — no separate payment/shipment tables unless a demonstrated requirement emerges. A dedicated `return_requests` table is kept for return lifecycle tracking (customer, order, item, reason, status, timestamp).
+This capstone uses synthetic data only. The runnable Streamlit chat uses
+simulated customer selection (C101/C102) and `app/ui/fake_backend.py`, which
+returns canned demo replies and supports demo-only return-choice and
+confirmation flows. It is not connected to the SQLite repository, a real LLM,
+RAG, product lookup, or customer data. A demo confirmation does not submit a
+real action.
 
-## Completed work
+The SQLite schema, seed, customer-scoped repository, and tests are implemented
+separately. Docker files and a safe demo database initialization script are
+present. The evaluation set contains 70 synthetic labeled cases; its runner
+only exercises the fake backend. Answer quality, tool-call correctness,
+hallucination, and safety results are explicitly not assessed.
 
-**Documentation (Phases 0–2 planning)**
-- Official college brief confirmed (text chatbot, web or CLI, 12-day deadline)
-- Dataset inspected: `FAQ.md`, `Policies.md`, `Products.json`, `customer_queries_sample.csv`, `README_DATASET.md`
-- Intent taxonomy drafted (11 intents)
-- High-level architecture + repo structure proposed
-- Tool contracts drafted for `get_order_status`, `create_return_request`, `get_refund_policy`
-- Discovery report written and revised (`docs/00_project_discovery.md`) — **Phase 0 approved**
-- Database design written and revised across two Technical Lead review rounds, including the single-`orders`-table model, composite foreign keys, corrected enums, and storage conventions (`docs/01_database_design.md`) — **Phase 1 approved**
-- Database implementation plan written and revised (`docs/02_database_implementation_plan.md`) — **approved**
+## Delivery plan
 
-**Project setup**
-- Initial project structure created (`app/`, `app/db/`, `data/`, `docs/`, `data/knowledge_base/`)
-- Dataset files added to the repository
-- Git repository initialized
-- Initial commit created
+| Workstream | Status |
+|---|---|
+| B1 — Streamlit UI integration with local fake backend | Complete |
+| B2 — Docker setup | Complete |
+| B3 — Safe demo database initialization script and tests | Complete |
+| B4 — Evaluation cases and demo-only runner | Complete; all evaluation metrics remain unassessed |
+| B5-1 — README | Complete |
+| B5-2 — Reconcile status and agent guidance | Complete; database checkpoint discrepancy is documented for Technical Lead resolution |
+| B5-3 through B5-6 — Diagram, report, deck, consistency review | Not started |
 
-**Phase 2, Checkpoint 1 — `app/db/connection.py`**
-- `app/__init__.py` and `app/db/__init__.py` created (package markers only)
-- `app/db/connection.py` implemented: centralized `get_connection()` function; executes `PRAGMA foreign_keys = ON;` on every connection; reads the pragma back and verifies it is exactly `1` before returning the connection; sets `row_factory = sqlite3.Row`; translates filesystem and SQLite failures into a dedicated `ConnectionError_` with the original exception chained as cause; the foreign-key-verification failure path raises `ConnectionError_` with no underlying cause, since it is an application-level check, not a wrapped error
-- Two Technical Lead review rounds applied: connection-cleanup failures are now suppressed so they cannot mask the original setup error (`_close_quietly()`), and the `ConnectionError_` docstring accurately distinguishes filesystem-caused, SQLite-caused, and application-detected (no-cause) failures
-- Verified in two separate environments:
-  - **Development sandbox (Linux):** success path, directory-failure path, and the close-masking fix all exercised directly against the real function, with actual output reviewed, including one real bug found and fixed during verification (unhandled `OSError` on directory creation)
-  - **Target environment (Windows, `D:\ecommerce-support-assistant`):** an actual PowerShell smoke test was run by the Technical Lead against the real `get_connection()` function; `PRAGMA foreign_keys` returned `1`; `row_factory` confirmed as `sqlite3.Row`; smoke test passed
-- **Checkpoint 1 is approved and complete.**
+## Database implementation status and discrepancy
 
-**Phase 2, Checkpoint 2 — `app/db/schema.py`**
-- `create_schema(connection)` creates `customers`, `orders`, `order_items`, `return_requests`, and `support_tickets` with the composite foreign keys, CHECK constraints, and indexes from `docs/01_database_design.md` Section C.
-- The function does not call `sqlite3.connect()`. Callers pass a connection from `get_connection()`.
-- Manual check on an in-memory connection from `get_connection()` (`uv run`, `PRAGMA foreign_keys` read back `1`): all five tables were created. A `return_requests` row whose `(order_id, customer_id)` did not match `orders` was rejected with `FOREIGN KEY constraint failed`. No return row was stored.
-- **Checkpoint 2 is approved (2026-11-06).**
+`docs/02_database_implementation_plan.md` is canonical for database
+requirements and sequencing. Its status says checkpoints 1–6 are complete,
+7A (write-function documentation contracts) is approved, and checkpoint 7
+(write implementation) plus checkpoints 8–9 are not started and not
+authorized.
 
-## In progress
-- None. Checkpoint 3 has not been started.
+The current checkout nevertheless contains `create_return_request` and
+`create_support_ticket` in `app/db/repository.py`, along with
+`tests/test_returns.py` and `tests/test_tickets.py`. This conflicts with the
+checkpoint status in `docs/02`. The code and tests are present, but this status
+file does not infer that the work was authorized or silently change the
+canonical checkpoint record. Resolve the discrepancy with the Technical Lead
+before updating `docs/02` or treating those checkpoints as formally approved.
 
-## Pending work
-- **Checkpoint 3 — `test_schema.py`:** automated verification of the schema itself, including the corrected foreign-key-enforcement test. **Not started.**
-- **Checkpoint 4 — `app/db/seed_data.py`:** synthetic customers/orders/items, including the fixed C101/C102/ORD1003 authorization scenario, with `product_id` values validated against `Products.json` (failing loudly on any unknown ID). **Not started.**
-- **Checkpoint 5 — read-only repository functions.** **Not started.**
-- **Checkpoint 6 — `test_authorization.py`** (cross-customer access test; must pass before any orchestration or UI code is written). **Not started.**
-- **Checkpoints 7–11 — write repository functions, return/ticket integrity tests, full-suite verification.** **Not started.**
-- RAG ingestion pipeline — **not started**
-- Orchestrator (LangGraph) implementation — **not started**
-- Streamlit UI — **not started**
-- Evaluation set expansion (6 → ~60–80 queries) — **not started**
-- Docker setup — **not started**
-- Technical report, presentation deck — **not started**
+## Verified implementation and checks
 
-Checkpoints 1 and 2 are approved. Schema tests, seed data, repository functions, RAG, LLM orchestration, and the Streamlit UI are not started.
+- Database foundation: `app/db/connection.py`, `schema.py`, `seed_data.py`,
+  and customer-scoped repository functions exist; see `docs/01` and `docs/02`
+  for canonical design and sequencing.
+- Streamlit UI: `app/ui/`; it imports the local fake backend through
+  `app/ui/client.py`.
+- Docker: `Dockerfile`, `docker-compose.yml`, `.dockerignore`, and
+  `.env.example` are present. Docker Compose passes provisional environment
+  variables that the current chat does not use.
+- Demo database initializer: `scripts/init_demo_db.py`; focused tests are in
+  `tests/test_init_demo_db.py`.
+- Evaluation: `data/eval/queries.csv` (70 cases),
+  `scripts/eval/run_eval.py`, sample logs under `data/eval/logs/`, and focused
+  tests in `tests/test_eval_runner.py`.
+- At the B5-1 verification, `uv run python -m pytest` passed: **545 passed**.
+  `uv sync --check` and `docker compose config --quiet` also passed.
 
-## Open decisions (see `docs/01_database_design.md` Section L)
-1. ~~Confirm no separate payment/shipment tables needed~~ — **Resolved:** single-table model approved.
-2. Confirm simulated-login approach to identity (no real auth system)
-3. Confirm no teacher-provided code/schema exists to incorporate
-4. Confirm synthetic data volume (~5–8 customers, 2–3 orders each)
-5. Non-returnable product category has no current seed product in `Products.json` — still open, `Products.json` not modified
-6. `return_requests.status` and `support_tickets.status`/`priority` enums still need explicit sign-off
+## Remaining work
 
-## Files inspected
-- `Sample_Ecommerce_Capstone_Dataset.zip` → `FAQ.md`, `Policies.md`, `Products.json`, `customer_queries_sample.csv`, `README_DATASET.md`
-- Two "master prompt" documents describing an expanded (voice + full auth) version of this project — treated as aspirational/future scope, not current requirements, per student's explicit decision
+- Ask the Technical Lead to resolve the database checkpoint discrepancy in
+  the canonical plan before changing its recorded authorization status.
+- B5-3: create an architecture diagram that distinguishes implemented
+  components from planned design.
+- B5-4: write the technical report from verified implementation and tests.
+- B5-5: prepare the presentation deck with demo limitations disclosed.
+- B5-6: cross-check documentation and deliverables for consistency.
+- Real backend, LLM/RAG integration, tool execution, and production
+  authentication are not present in the current UI and are not represented as
+  completed work here.
 
-## Next recommended action
-Checkpoint 3 (`tests/test_schema.py`) is the next step. Do not begin it until asked.
+## Sources of truth
+
+- `docs/01_database_design.md` — approved database design.
+- `docs/02_database_implementation_plan.md` — database checkpoint sequence
+  and current recorded status (including the discrepancy above).
+- `.claude/plans/rest-plan.md` — delivery workstreams B1–B5.
+- Source code and test results — evidence of what currently exists and what
+  has been verified.
