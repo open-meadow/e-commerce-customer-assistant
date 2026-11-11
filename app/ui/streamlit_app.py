@@ -6,6 +6,7 @@ if __package__:
     from .client import (
         ChoiceSelection,
         ConfirmationDecision,
+        backend_status,
         handle_message,
         list_login_options,
         start_session,
@@ -31,6 +32,7 @@ else:
     from client import (
         ChoiceSelection,
         ConfirmationDecision,
+        backend_status,
         handle_message,
         list_login_options,
         start_session,
@@ -55,7 +57,10 @@ else:
 
 LOGGER = logging.getLogger(__name__)
 
+# Fallbacks only: a backend error reply carries its own customer-safe text, which
+# is shown in preference to these.
 _ERROR_MESSAGES = {
+    "invalid_request": "That request could not be processed. Please try again.",
     "message_too_long": "Please shorten your message and try again.",
     "rate_limited": "Please wait a moment before sending another message.",
     "unavailable": "The assistant is temporarily unavailable.",
@@ -107,6 +112,25 @@ def _begin_session(
         ]
 
 
+def _require_backend() -> None:
+    """Stop the page with a clear message when the backend cannot serve requests.
+
+    Runs on every rerun before the login selector, so a missing database or a
+    misconfigured provider is explained instead of showing an empty selector.
+    """
+    status = backend_status()
+    if status.ready:
+        return
+
+    st.title("E-commerce customer support")
+    st.error(status.message)
+    if status.code == "unavailable":
+        st.button("Try again")  # any click reruns the script, which checks again
+    else:
+        st.caption("Fix the problem above, then reload this page.")
+    st.stop()
+
+
 def _set_customer_from_sidebar() -> None:
     """Render the simulated login and its customer-scoped chat list."""
     initialize_session(st.session_state)
@@ -119,7 +143,12 @@ def _set_customer_from_sidebar() -> None:
 
     options_by_id = {option.customer_id: option for option in login_options}
     if not options_by_id:
-        st.sidebar.error("No simulated customer login options are available.")
+        status = backend_status()
+        st.sidebar.error(
+            status.message
+            if not status.ready
+            else "No simulated customer login options are available."
+        )
         return
 
     current_customer = st.session_state.get(AUTHENTICATED_CUSTOMER_ID_KEY)
@@ -165,8 +194,16 @@ def _render_sidebar_chats(customer_id: str) -> None:
             st.rerun()
 
 
-def _show_backend_error(reply_error_code: str | None, request_id: str) -> None:
-    """Show a safe error or restart a chat with an expired backend state."""
+def _show_backend_error(
+    reply_error_code: str | None,
+    request_id: str,
+    reply_text: str | None = None,
+) -> None:
+    """Show a safe error or restart a chat with an expired backend state.
+
+    ``reply_text`` is the backend's own customer-safe error text. It is shown in
+    preference to the fixed fallback messages.
+    """
     if reply_error_code == "invalid_session":
         customer_id = st.session_state.get(AUTHENTICATED_CUSTOMER_ID_KEY)
         if isinstance(customer_id, str):
@@ -188,7 +225,7 @@ def _show_backend_error(reply_error_code: str | None, request_id: str) -> None:
         return
 
     if reply_error_code is not None:
-        st.session_state[UI_ERROR_KEY] = _ERROR_MESSAGES.get(
+        st.session_state[UI_ERROR_KEY] = reply_text or _ERROR_MESSAGES.get(
             reply_error_code,
             "The assistant could not complete that request.",
         )
@@ -238,10 +275,16 @@ def _send_backend_request(
         return
 
     chat["conversation_state"] = reply.state
+    if reply.status == "error":
+        # An error reply changes nothing on the backend: keep any open confirmation
+        # or choice on screen, and show the message as a banner, not as a chat turn.
+        _show_backend_error(reply.error_code, reply.request_id, reply.text)
+        return
+
     append_chat_message(st.session_state, "assistant", reply.text)
     chat["pending_view"] = reply.pending
     chat["choice_view"] = reply.choice
-    _show_backend_error(reply.error_code, reply.request_id)
+    _show_backend_error(None, reply.request_id)
 
 
 def _render_actions() -> None:
@@ -253,6 +296,7 @@ def _render_actions() -> None:
     pending = chat["pending_view"]
     if pending is not None:
         st.text(pending.summary)
+        st.caption(f"Expires at {pending.expires_at} (UTC). Use the buttons to answer.")
         confirm_column, cancel_column = st.columns(2)
         if confirm_column.button("Confirm", key=f"confirm-{pending.action_id}"):
             _send_backend_request(
@@ -337,6 +381,7 @@ def _render_chat() -> None:
 def main() -> None:
     """Run one Streamlit app render cycle."""
     initialize_session(st.session_state)
+    _require_backend()
     _set_customer_from_sidebar()
     _render_chat()
 
