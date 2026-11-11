@@ -64,7 +64,9 @@ _Step 6 result: README (current state, run instructions with seeding, `UI_BACKEN
 - `CLAUDE.md` UI section and the "Where the code stands" paragraph; Person B's `docs/architecture.md` and `docs/technical_report.md` mention the fake.
 - `docker-compose.yml`: set `UI_BACKEND=fake` for now so the container keeps working unchanged until the separate Docker task (it lacks `data/source`, a database and the right variable names).
 
-**Step 7. Commit**
+**[DONE] Step 7. Commit**
+
+_Step 7 result: branch `wire-ui-backend`, 7 commits on top of `master`, working tree clean, `git diff master --check` clean, no database, `.env` or `demo/` file tracked, no change under the backend packages, `data/app_d2.db` never created. The remote `origin/wire-ui-backend` exists but is behind the local branch; pushing and merging to `master` are left to the user._
 - A new branch from `master` for Person B, small logical commits (client/session, app behavior, tests, docs), `git diff --check` clean, no database or `.env` files, no push without review.
 
 ## Files
