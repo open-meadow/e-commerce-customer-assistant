@@ -6,7 +6,7 @@ Capstone: a text customer-support assistant (Streamlit chat, RAG over `data/sour
 
 ## Where the code stands
 
-Person A's database layer and backend (`rukum/db`, `rukum/backend`) and Person B's UI, Docker, evaluation and report work are all merged on `master` (merge commit `3b68b12`). **The two halves are not connected yet:** the Streamlit UI talks to a canned in-process fake (`app/ui/fake_backend.py`), not to `app.backend`, and nothing in `app/ui`, `scripts` or Docker reads the SQLite database. The real backend is only exercised by its tests.
+Person A's database layer and backend (`rukum/db`, `rukum/backend`) and Person B's UI, Docker, evaluation and report work are all merged on `master` (merge commit `3b68b12`). **On branch `wire-ui-backend` (not yet merged to `master`) the Streamlit UI talks to the real backend** through `app/ui/client.py`; the plan is `docs/plans/ui_real_backend_plan.md`. `UI_BACKEND=fake` still selects the canned `app/ui/fake_backend.py`. `scripts` and Docker still do not use the database: the Docker image runs the fake (`UI_BACKEND=fake` in `docker-compose.yml`) and the eval runner uses the fake.
 
 ## Commands
 
@@ -43,7 +43,7 @@ Branches: `master` contains everything. Local and remote `rukum/db` and `rukum/b
 ## Architecture
 
 ```
-app/ui/          Streamlit chat (Person B)   -> app/ui/fake_backend.py   (what runs today)
+app/ui/          Streamlit chat (Person B)   -> client.py -> app.backend (default) or fake_backend.py (UI_BACKEND=fake)
 app/backend/     public API for a frontend   -> orchestrator, tools, rag, catalog, llm -> app/db   (tested, not wired to the UI)
 app/db/          SQLite layer + seed
 data/source/     FAQ.md, Policies.md, Products.json (read-only source of truth)
@@ -55,10 +55,10 @@ scripts/         init_demo_db.py (broken), eval/run_eval.py (fake backend only)
 
 ### UI (`app/ui/`)
 
-- `streamlit_app.py` is the entry point: simulated login selector (C101 and C102 only, from the fake), a per-customer chat list in the sidebar, `needs_choice` buttons, Confirm/Cancel for `needs_confirmation`, and error handling by `error_code` (an `invalid_session` restarts the chat). It imports with a package-or-script fallback (`from .client` / `from client`) so it works both under `streamlit run` and as a package.
-- `client.py` re-exports the frontend contract types plus `list_login_options`, `start_session`, `handle_message` **from `fake_backend`**, and keeps a legacy `handle_turn(customer_id, message, history)` bridge that `app/ui/__init__.py` still exports.
-- `fake_backend.py` defines its own frozen dataclasses (`LoginOption`, `ConversationState`, `ChatReply`, `PendingView`, `ChoiceView`, `Citation`, ...) shaped like `app/backend/types.py` but separate classes (its `ConversationState` carries demo flow fields, not an opaque handle). It returns canned text and a demo return-choice then confirmation flow, and writes nothing.
-- `session.py` holds the Streamlit session-state helpers: authenticated customer, a dict of chats (each with messages, `ConversationState`, pending and choice views), active chat, and UI error and notice keys. Chat history is temporary session state.
+- `streamlit_app.py` is the entry point: a startup gate (`backend_status()`: shows a customer-safe message and stops when the database is missing or incompatible or a provider is misconfigured), the simulated login from `list_login_options()` (six customers on the real backend), a per-customer chat list in the sidebar, `needs_choice` buttons, Confirm/Cancel with the pending expiry, and error handling by `error_code` (the banner shows `reply.text`; an `invalid_session` restarts the chat; an error reply leaves open choices intact). It imports with a package-or-script fallback (`from .client` / `from client`).
+- `client.py` picks the backend once at import from `UI_BACKEND` (`real` default, `fake`), re-exports the contract types, `list_login_options`, `start_session`, `handle_message`, and adds `BackendStatus`/`backend_status()` and `BACKEND_MODE`. It puts the project root on `sys.path`. `handle_turn` was removed. To run: seed a database (`python -m app.db.seed_data --db-path demo/demo.db --reference-time <now>`) and set `APP_DB_PATH`.
+- `fake_backend.py` (used only with `UI_BACKEND=fake`, the eval runner and `tests/ui/test_fake_backend.py`) defines its own frozen dataclasses (`LoginOption`, `ConversationState`, `ChatReply`, `PendingView`, `ChoiceView`, `Citation`, ...) shaped like `app/backend/types.py` but separate classes (its `ConversationState` carries demo flow fields, not an opaque handle). It returns canned text and a demo return-choice then confirmation flow, and writes nothing.
+- `session.py` (backend-independent; no backend imports at runtime) holds the Streamlit session-state helpers: authenticated customer, a dict of chats (each with messages, `ConversationState`, pending and choice views), active chat, and UI error and notice keys. Chat history is temporary session state.
 - Connecting the real backend means switching `client.py` to `app.backend`, handling `LLMConfigError` and `check_backend()` at startup, and launching with `python -m streamlit` so `app` is importable. `docs/04_frontend_handover.md` is the contract.
 
 ### Database layer (`app/db/`)
@@ -86,7 +86,7 @@ Conventions: money is integer paise; timestamps are TEXT `YYYY-MM-DDTHH:MM:SSZ` 
 
 ## Tests
 
-`uv run python -m pytest tests -q` collected 990 tests when this file was written: **985 passed, 5 failed** (all five in `tests/test_init_demo_db.py`, see above); nothing skipped.
+`uv run python -m pytest tests -q` on `wire-ui-backend`: **1023 passed, 5 failed** (990 tests when this file was first written; `tests/ui/conftest.py`, `test_client_real.py`, `test_streamlit_app_real.py` and `test_session_decoupled.py` are new) (all five in `tests/test_init_demo_db.py`, see above); nothing skipped.
 
 - `tests/` root: database tests (`test_authorization`, `test_returns`, `test_schema`, `test_tickets`, `test_connection`, `test_clock_validation`, `test_seed`) and backend tests (`test_backend*`, `test_choice_expiry`, `test_components`, `test_issues`, `test_providers`, `test_retrieval*`, `test_return_reason`).
 - `tests/ui/` covers the fake backend and the session helpers; `tests/test_eval_runner.py` covers the eval runner; `tests/test_init_demo_db.py` covers the broken script.

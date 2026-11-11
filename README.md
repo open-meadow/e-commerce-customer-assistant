@@ -6,10 +6,14 @@ connected to a real store, customer account, payment provider, or courier.
 
 ## Current prototype
 
-The runnable Streamlit UI has a **fake backend** with canned responses and
-demo-only return-choice and confirmation flows. Simulated login options are
-C101 and C102. The database schema, seed data, and customer-scoped repository
-are implemented and tested separately, but the UI does not currently use them.
+The Streamlit UI talks to the **real backend** (`app.backend`): order, return,
+policy, product and ticket answers come from the SQLite database and the source
+documents, and writes happen only after an explicit Confirm. The default
+assistant is an offline rule-based stand-in for a language model, so it
+understands a fixed set of phrasings. The simulated login lists the six seeded
+customers (C101 to C106). The database must be created first (see Running the
+Project). For offline UI work, `UI_BACKEND=fake` selects the old canned demo
+backend (C101 and C102 only, no database).
 
 | Area | Current state |
 |---|---|
@@ -162,21 +166,35 @@ Each checkpoint must be reviewed and tested before moving to the next.
 
 ## 10. Running the Project
 
-From the repository root:
+From the repository root, create a demo database once (the parent folder must
+exist; the command refuses to overwrite an existing file). Pass a reference time
+close to the demo day, because return windows are measured from it:
 
 ```bash
-uv run python -m streamlit run app/ui/streamlit_app.py
+mkdir demo
+uv run python -m app.db.seed_data --db-path demo/demo.db --reference-time 2026-11-12T00:00:00Z
 ```
 
-Open the local URL printed by Streamlit, then choose C101 or C102 in the
+Then start the UI, pointing it at that file:
+
+```bash
+APP_DB_PATH=demo/demo.db uv run python -m streamlit run app/ui/streamlit_app.py
+```
+
+On Windows PowerShell set `$env:APP_DB_PATH = "demo/demo.db"` first. If the
+database is missing, or a language-model provider is requested but not
+configured, the page shows a message instead of the login. To run without a
+database, set `UI_BACKEND=fake`.
+
+Open the local URL printed by Streamlit, then choose a customer in the
 sidebar. Use **New chat** to start another conversation or select a listed chat
 to return to it. The chat list is temporary Streamlit session state: switching
 simulated customers clears it, and reloading the page loses it. It is not
 persistent account history.
 
-Replies are canned demo text; live order, payment, product, policy, return,
-refund, and ticket data are not connected. Confirming a demo action does not
-submit a real request.
+Replies come from the backend over synthetic data. Confirming a return or a
+ticket writes a real row to the chosen database; nothing leaves the machine.
+With `UI_BACKEND=fake` replies are canned and confirming writes nothing.
 
 ## Run with Docker
 

@@ -52,9 +52,13 @@ uv run python -m app.db.seed_data --reference-time 2026-11-12T00:00:00Z
 
 Your old `scripts/init_demo_db.py` calls `get_connection(db_path)`, which no longer creates files. Replace it with the command above, or with `get_initialization_connection(path)`, then `create_schema(connection)`, then `seed_database(connection, reference_time)`.
 
-### The existing UI files are obsolete stubs: replace them
+### Status: the UI is wired to the backend
 
-`app/ui/client.py`, `app/ui/session.py` and `app/ui/streamlit_app.py` on `master` are an early stub. **None of them uses `app.backend`.** Do not extend them; rewrite them against the API in Section 4:
+Done on branch `wire-ui-backend` (plan: `docs/plans/ui_real_backend_plan.md`). `app/ui/client.py` re-exports the `app.backend` API by default and adds `backend_status()` (startup gate: not configured, not initialized, incompatible, unavailable). `UI_BACKEND=fake` selects the old canned `app/ui/fake_backend.py` for offline work. `session.py` is backend-independent, `streamlit_app.py` shows the gate, error banners from `reply.text`, the pending expiry, and choice and confirmation buttons. `handle_turn` is removed. Tests: `tests/ui/test_client_real.py`, `tests/ui/test_streamlit_app_real.py`. The text below is the original handover and is kept for the contract:
+
+### Original note: the early UI files (now replaced)
+
+`app/ui/client.py`, `app/ui/session.py` and `app/ui/streamlit_app.py` on `master` were an early stub that did not use `app.backend`. They were rewritten against the API in Section 4:
 
 - `client.py` has `handle_turn(authenticated_customer_id, message, history)`, which returns canned text. That signature does not exist in the backend and must not be kept. Replace it with a thin wrapper over `handle_message(state, ...)`.
 - `session.py` keeps `authenticated_customer_id` and a message list in `st.session_state` and passes the customer ID with every message. The backend never accepts a customer ID with a message: identity is fixed once by `start_session(customer_id)`. Keep only the opaque `ConversationState` (and your own display transcript) in `st.session_state`.
@@ -209,7 +213,7 @@ ChatReply(text, state, status, error_code, pending, choice, citations, request_i
 
 Integration notes from the backend audit:
 
-- There is no database-free fake backend. To develop without a model or a real database, use the real backend with `LLM_PROVIDER=rule_based` and a seeded temporary database (Section 2), or construct `Backend(llm=...)` as `tests/backend_helpers.py` does.
+- The backend itself has no database-free fake; the UI's `UI_BACKEND=fake` is a separate canned demo, not the contract. To develop without a model or a real database against the real backend, use the real backend with `LLM_PROVIDER=rule_based` and a seeded temporary database (Section 2), or construct `Backend(llm=...)` as `tests/backend_helpers.py` does.
 - The backend is one process-wide singleton (`get_backend()`); every Streamlit session and rerun shares it, and each browser session is isolated by its `ConversationState`. Streamlit reloading the script does not reset sessions, but restarting the process does.
 - Idle expiry refreshes on every call that carries a valid state, including calls that return an error such as `message_too_long`.
 - Only typed messages count toward the 60-message limit; confirmations and choices do not.

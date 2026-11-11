@@ -5,6 +5,12 @@
 **Project type:** Educational capstone prototype  
 **Data:** Synthetic only
 
+> **Update (branch `wire-ui-backend`):** the sections below describe the chat as
+> running on the fake backend. The UI is now wired to the real backend by
+> default (`UI_BACKEND=fake` restores the old behaviour); the evaluation runner
+> and Docker image still use the fake. Statements about the fake backend need
+> revising by Person B before the report is final.
+
 ## Abstract
 
 This project is a prototype for a text-based e-commerce customer-support

@@ -4,6 +4,8 @@ services:
       context: .
       dockerfile: Dockerfile
     environment:
+      # The image has no database or data/source yet, so it runs the canned demo UI.
+      UI_BACKEND: fake
       DATABASE_PATH: ${DATABASE_PATH:-data/app.db}
       VECTOR_STORE_DIR: ${VECTOR_STORE_DIR:-data/vector_store}
       LLM_PROVIDER: ${LLM_PROVIDER:-openai}

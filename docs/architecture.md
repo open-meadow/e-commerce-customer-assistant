@@ -1,5 +1,11 @@
 # Project Architecture
 
+> **Update (branch `wire-ui-backend`):** the Streamlit UI now reaches the real
+> backend through `app/ui/client.py` (`UI_BACKEND=real`, the default); the
+> diagram and text below still describe the earlier fake-backend wiring, which
+> remains available with `UI_BACKEND=fake` and is what the evaluation runner and
+> Docker image still use. Person B to redraw the diagram and revise the report.
+
 This diagram distinguishes the current implementation from the target design.
 The target design is not implemented in the runnable chat.
 

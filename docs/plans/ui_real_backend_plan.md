@@ -56,7 +56,9 @@ _Step 5 result (2026-11-11, `demo/demo.db`, launched with `python -m streamlit r
 - Checklist in the browser: C101 asks "Where is my order ORD1001?"; return flow with a typed reason, category buttons, Confirm shows a `RET_` ID; "show my returns"; a second return for the same item is refused; C101 asks for `ORD1003` (C102's) and gets "couldn't find"; typed `cancel` during a choice; a 2,001-character message shows the length banner; "I want to speak to a human agent" then a description gives a ticket proposal; a missing `APP_DB_PATH` file shows the startup message; `LLM_PROVIDER=anthropic` without a key shows the configuration message; restart the app mid-chat and confirm the "session expired, new session started" notice.
 - Spot-check the database read-only afterward (return and ticket rows belong to C101).
 
-**Step 6. Docs and config touched by the switch**
+**[DONE] Step 6. Docs and config touched by the switch**
+
+_Step 6 result: README (current state, run instructions with seeding, `UI_BACKEND`), `docs/04` (status section and the "no fake" line), `CLAUDE.md` (UI section, status, test counts), `docker-compose.yml` (`UI_BACKEND: fake`), and a short update banner on Person B's `docs/architecture.md` and `docs/technical_report.md` (their content is not rewritten; Person B to revise)._
 - `README.md` (Running the Project and "Replies are canned" paragraphs): add the database initialization step, `UI_BACKEND`, and that replies now come from the backend.
 - `docs/04_frontend_handover.md`: remove the "obsolete stubs, replace them" section; record that the wiring is done and how.
 - `CLAUDE.md` UI section and the "Where the code stands" paragraph; Person B's `docs/architecture.md` and `docs/technical_report.md` mention the fake.
