@@ -15,7 +15,7 @@ Streamlit chat that answers order, delivery, payment, return, refund, product, a
 
 ## Built
 
-Phase 0–1 docs approved. Phase 2 plan approved. Checkpoints 1–6 complete, reviewed, tested, committed, and pushed (207 tests passing at last verification).
+Phase 0–1 docs approved. Phase 2 plan approved. Database Checkpoints 1–10 complete per the recorded history and Git (`master` at `3c3626a`, D1 baseline 2026-11-11). **Historical test result: 497 passed** (recorded earlier; the older "207 passing" figure was from Checkpoint 6 and is obsolete). The suite was **not re-run** when this file was updated, so 497 is not a freshly verified result.
 
 - **1** `app/db/connection.py`: `get_connection()` sets and verifies `PRAGMA foreign_keys = ON`, `row_factory = sqlite3.Row`, raises `ConnectionError_`. Default path `data/app.db`. `app/db/__init__.py` re-exports `get_connection`. `main.py` is a smoke call.
 - **2** `app/db/schema.py`: `create_schema(connection)` creates the five tables. It does not open a connection.
@@ -24,18 +24,20 @@ Phase 0–1 docs approved. Phase 2 plan approved. Checkpoints 1–6 complete, re
 - **5** `app/db/repository.py`: five customer-scoped read functions.
 - **6** `tests/test_authorization.py`.
 - **7A** Write-function contracts approved, committed, and pushed (`8ce2d43`): `docs/01` §F–§H, `docs/02` §4–§5.
+- **7** `create_return_request` and `create_support_ticket` in `app/db/repository.py` (`6a2c11a`).
+- **8** `tests/test_returns.py` and `tests/test_tickets.py` (`0f27739`).
+- **9** Full-suite verification (historical 497 passed, see above). **10** Read-only repository inspection.
+- **11A** `docs/03_backend_architecture.md` Revision 3.2 is the approved architecture baseline (design only; nothing in it is implemented).
 
-## Not built
+## Not built, pending, or in progress
 
-Do not treat these as existing. Checkpoints 7–9 are **not authorized**. Do not start them until asked.
+Do not treat these as existing. Do not start a checkpoint that has not been authorized.
 
-| Checkpoint | Work | Status |
-|---|---|---|
-| 7 | `create_return_request`, `create_support_ticket` in `repository.py` | not started, not authorized |
-| 8 | `tests/test_returns.py`, `tests/test_tickets.py` | not started, not authorized |
-| 9 | Full-suite verification | not started, not authorized |
-
-Also absent: RAG, LangGraph orchestrator, Streamlit UI, eval set (~60–80; seed CSV has 6 rows), Docker, report, deck. `pyproject.toml` has no runtime deps. `src/ecommerce_support_assistant/` is an unused uv stub.
+- **D2 (pending):** a dedicated `reason_category` column on `return_requests` is approved in principle, but it is **not implemented** and its design amendment is not made. Today `create_return_request` validates `reason_category` to choose the window and does not store it.
+- **Backend (not built):** `app/tools`, `app/rag`, `app/orchestrator` and `app/backend` do not exist beyond empty directories or design text in `docs/03`. No LLM provider is chosen.
+- **UI (partial, other person's work):** `app/ui/` holds a first Streamlit app with stub replies. It is not connected to a backend.
+- **Also absent:** RAG, orchestrator, eval set (~60–80; seed CSV has 6 rows), Docker, report, deck. `src/ecommerce_support_assistant/` is an unused uv stub.
+- **Current next task:** D1 documentation baseline (this reconciliation), then D2.
 
 ## Constraints
 

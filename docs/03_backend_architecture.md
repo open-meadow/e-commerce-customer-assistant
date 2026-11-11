@@ -1,7 +1,7 @@
 # Backend Architecture — AI E-Commerce Customer Support Assistant
 
 **Phase:** 3 — Backend architecture and contracts
-**Status:** Checkpoint 11A, Revision 3.2 (2026-11-10). This is a documentation draft. It is not approved until the Technical Lead reviews the final diff. No backend code described here exists yet, and Checkpoint 11B onward is not authorized.
+**Status:** Revision 3.2 (2026-11-10) is the **approved architecture baseline**. It was approved by Person A in the project review. The approval is recorded in this metadata by documentation baseline D1 (2026-11-11), which changed no design content. The baseline is **pending one amendment**: the later decision to add a dedicated `reason_category` column to `return_requests` is approved in principle but needs a formal design amendment in Checkpoint D2. Until D2, Sections 5.3.1 and 7.4 and open item 9 (the reason-prefix convention, which assumes the category is not stored) stay as written. No backend code described here exists yet, and Checkpoint 11B onward is not authorized.
 **Revision history (all dated 2026-11-10):**
 - **Revision 1:** initial draft with the four Technical Lead decisions D1–D4.
 - **Revision 2:** responded to the Technical Lead's review of Revision 1. Added the server-side pending-action store, `prechecks_passed`, customer-selected return categories, session inactivity expiry, the read-only health check, the restored D4 limits, and the Conversation Scope Guard proposal.

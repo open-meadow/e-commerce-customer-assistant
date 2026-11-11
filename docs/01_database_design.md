@@ -1,8 +1,18 @@
 # Database Design — AI E-Commerce Customer Support Assistant
 
 **Phase:** 1 — Database Design
-**Status:** Phase 1 design approved. Checkpoint 2 (`app/db/schema.py`) implements Section C and was approved on 2026-11-06. Checkpoint 7A (the write-function contracts in Sections F, G, and H) is approved and was committed and pushed in `8ce2d43`. Those functions are not implemented; Checkpoint 7 implementation has not started and is not authorized.
-**Scope of this document:** design only. No application code, migrations, seed scripts, UI, RAG, LangGraph, or voice work is included, per the Phase 1 task boundary. Checkpoint 7A changes the write contracts only; it does not change Section C.
+**Status:** Phase 1 design approved. Checkpoint 2 (`app/db/schema.py`) implements Section C and was approved on 2026-11-06. Checkpoint 7A (the write-function contracts in Sections F, G, and H) is approved and was committed and pushed in `8ce2d43`. Those functions are **implemented** (`6a2c11a`, `app/db/repository.py`) and tested (`0f27739`). Database Checkpoints 1–10 are complete. See "Implementation status" below. A dedicated `reason_category` column is approved in principle but is **not implemented and not yet formally amended into this document**; it is pending Checkpoint D2 (Section F, note on `reason_category`).
+**Scope of this document:** design. It was written under the Phase 1 task boundary (no application code, migrations, seed scripts, UI, RAG, LangGraph, or voice work); that sentence describes the original task, not the current repository, which now contains the implementation described below. Checkpoint 7A changed the write contracts only; it did not change Section C.
+
+**Implementation status (documentation baseline D1, 2026-11-11, reconciled with the code on `master` at `3c3626a`).** This block reports what exists in `app/db/`. It adds no design decision.
+- **Tables (`app/db/schema.py`, `create_schema`):** the five tables in Section C (`customers`, `orders`, `order_items`, `return_requests`, `support_tickets`), with the composite foreign keys, CHECK constraints and indexes described in Section C, including the partial unique index `uq_active_return_per_item` on `return_requests (item_id)` where `status IN ('Requested','Approved')`. There is no `reason_category` column, no schema-version marker and no migration mechanism.
+- **Connection (`app/db/connection.py`):** `get_connection(db_path=data/app.db)` sets `PRAGMA foreign_keys = ON`, reads it back and requires `1`, sets `sqlite3.Row`, and raises `ConnectionError_` on any failure. It creates the parent directory and an empty database file if missing. The default path is relative to the working directory. It sets no timeout or journal mode.
+- **Seed (`app/db/seed_data.py`, `seed_database(connection, reference_time=None)`):** deterministic synthetic data for 6 customers (C101–C106), 15 orders and 16 order items, with all 15 `order_date` values and the six non-null `delivered_at` values represented as offsets from the reference time (`None` means the fixed baseline `2026-11-07T00:00:00Z`). It seeds no return requests and no support tickets.
+- **Reads (`app/db/repository.py`):** `list_customer_orders`, `get_order`, `get_order_items`, `get_customer_returns`, `get_customer_tickets`. Each takes `authenticated_customer_id` and filters on it in SQL, so another customer's records are indistinguishable from nonexistent ones. Database errors propagate to the caller.
+- **Writes (`app/db/repository.py`):** `create_return_request(authenticated_customer_id, order_id, item_id, reason, *, reason_category, reference_time=None)` and `create_support_ticket(authenticated_customer_id, issue_type, description, order_id=None, conversation_summary=None)`, with the contracts in Sections F, G and H. Each runs in `BEGIN IMMEDIATE`, reports `created` only after `COMMIT`, maps database and connection failures to a generic `failed` result, and rolls back and re-raises other exceptions.
+- **Return eligibility as implemented:** the window is measured from `orders.delivered_at` to the normalized reference time and is inclusive: 48 hours for `damaged` and `wrong_product`, 168 hours for `standard`. A NULL, future or malformed `delivered_at` is ineligible. Ownership, item match and the duplicate check run before the window check. Category-based non-returnable enforcement is not implemented (Section L, item 1).
+- **`reason_category` today:** it is a required, keyword-only, validated argument that selects the window. The repository **does not persist it**: only the free-text `reason` is stored.
+- **Tests:** `tests/test_schema.py`, `tests/test_authorization.py`, `tests/test_returns.py` and `tests/test_tickets.py` exist. A full-suite result of **497 passed** is recorded in the project history. It is a historical result and was **not re-run** when this baseline was written.
 
 ---
 
@@ -322,7 +332,7 @@ A return request must satisfy three joined conditions before it is created. Foll
    - A boundary is inclusive. Elapsed time of exactly 48 hours, or exactly 168 hours for `standard`, is eligible. Elapsed time is negative when `delivered_at` is later than the reference time; that request is ineligible. A NULL `delivered_at` is ineligible. All three ineligible cases use the `outside_window` result. There is no separate outcome for them.
    - Category-based non-returnable enforcement is not part of this contract. `Policies.md` §2 names categories that are non-returnable, but `Products.json` has no returnability metadata. This checkpoint does not invent a `non_returnable` result or change the schema or catalog (Section L).
 
-**Approved repository contract (Checkpoint 7A).** Not yet implemented. Schema columns and constraints in Section C are unchanged. `reason_category` is not stored; the free-text `reason` is stored in the existing `reason` column. `requested_at` is the normalized reference time, written by this function as `YYYY-MM-DDTHH:MM:SSZ`, so the stored timestamp and the eligibility comparison use the same instant. The column default (`strftime('%Y-%m-%dT%H:%M:%SZ', 'now')`) remains in the schema for other writers.
+**Approved repository contract (Checkpoint 7A).** Implemented in `6a2c11a` (`create_return_request` in `app/db/repository.py`) and tested in `0f27739`. Schema columns and constraints in Section C are unchanged. `reason_category` is not stored; the free-text `reason` is stored in the existing `reason` column. `requested_at` is the normalized reference time, written by this function as `YYYY-MM-DDTHH:MM:SSZ`, so the stored timestamp and the eligibility comparison use the same instant. The column default (`strftime('%Y-%m-%dT%H:%M:%SZ', 'now')`) remains in the schema for other writers.
 
 ```text
 create_return_request(authenticated_customer_id, order_id, item_id, reason, *, reason_category, reference_time=None)
@@ -368,6 +378,8 @@ Exact result dictionaries:
 
 `failed` is the generic database-failure result. It carries no SQLite message, SQL text, or exception type. A business rejection rolls the transaction back and returns its dictionary. No partial row remains. Transaction and exception rules are in Section H.
 
+**Pending change, approved in principle, not implemented (Checkpoint D2).** A dedicated `reason_category` column on `return_requests` has been approved as a direction, with the allowed values `damaged`, `wrong_product` and `standard`, so that the category is persisted instead of discarded. Its exact definition, the enforcement point for a maximum `reason` length of 1,000 characters, the migration strategy, and the amendments to Sections C, F and K have **not** been approved or made. Until D2 completes, the contract and implementation described in this section are the current ones. This note is a record of a pending decision, not a design amendment.
+
 ---
 
 ## G. Support Ticket Integrity
@@ -376,7 +388,7 @@ Exact result dictionaries:
 - `support_tickets.order_id` is optional (a ticket can be general, e.g., "how do I contact support").
 - **When `order_id` is a non-empty string**, the same ownership check from Section E runs first at the application layer: `SELECT 1 FROM orders WHERE customer_id = :auth_id AND order_id = :order_id`. If this returns no row, the ticket is still created, but **without** the order reference (`order_id` stored as `NULL`). A nonexistent order and an unowned order produce the same stored row and the same result dictionary. The function does not attach another customer's order ID.
 
-**Approved repository contract (Checkpoint 7A).** Not yet implemented. Section C is unchanged.
+**Approved repository contract (Checkpoint 7A).** Implemented in `6a2c11a` (`create_support_ticket` in `app/db/repository.py`) and tested in `0f27739`. Section C is unchanged.
 
 ```text
 create_support_ticket(authenticated_customer_id, issue_type, description, order_id=None, conversation_summary=None)
@@ -586,7 +598,7 @@ The same logic applies to `return_requests(item_id, order_id)` against `order_it
 - `product_id` validation against `Products.json` remains application-layer only, not a database FK.
 - Simulated authentication is still simulated — composite FKs strengthen internal consistency, not the authentication layer itself.
 - No teacher-provided schema/code has been reviewed, since none has been supplied.
-- Two new implementation risks introduced by this revision (FK pragma must be set on every connection; eligibility logic must accept an injectable reference time) are documented but not yet implemented — both are correctness-critical for Phase 2.
+- Two new implementation risks introduced by this revision (FK pragma must be set on every connection; eligibility logic must accept an injectable reference time) are documented but not yet implemented — both are correctness-critical for Phase 2. *(D1 note, 2026-11-11: this is the Round 2 report as written at the time. Both risks are now addressed in code: `get_connection()` sets and verifies the pragma on every connection, and `create_return_request` takes an injectable `reference_time`.)*
 
 ### 5. Confirmation
 

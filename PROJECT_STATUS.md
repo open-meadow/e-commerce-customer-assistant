@@ -2,7 +2,9 @@
 
 **Project:** AI E-Commerce Customer Support Assistant
 **Deadline:** 12 days from Nov 1, 2026 → due ~Nov 13, 2026
-**Current phase:** Phase 2 — Database Implementation. **Checkpoints 1 and 2 approved. Checkpoint 3 is next and is not started. Do not begin it until asked.**
+**Current phase:** Database completion (Checkpoint D series). Database Checkpoints 1–10 are complete per the recorded history and Git (`master` at `3c3626a`). **The current task is D1, the documentation baseline** (this reconciliation). The `reason_category` column (D2) is approved in principle but not implemented. Do not begin D2 or any later checkpoint until asked.
+
+*(Status baseline D1, 2026-11-11. The body below was written during Checkpoints 1 and 2. Where it says a checkpoint is "not started", the "Checkpoint status as of D1" section below is the current statement.)*
 
 *(Phase numbering note: this line is corrected from the previous revision, which still labeled upcoming work "Phase 1." The docs folder's own numbering is the source of truth — `docs/00_project_discovery.md` = Phase 0, `docs/01_database_design.md` = Phase 1 (approved), `docs/02_database_implementation_plan.md` = Phase 2 (in progress). This file now matches that numbering.)*
 
@@ -45,23 +47,27 @@
 - Manual check on an in-memory connection from `get_connection()` (`uv run`, `PRAGMA foreign_keys` read back `1`): all five tables were created. A `return_requests` row whose `(order_id, customer_id)` did not match `orders` was rejected with `FOREIGN KEY constraint failed`. No return row was stored.
 - **Checkpoint 2 is approved (2026-11-06).**
 
+## Checkpoint status as of D1 (2026-11-11)
+- **Complete:** Checkpoint 3 (`tests/test_schema.py`), 4 (`app/db/seed_data.py`), 5 (read functions), 6 (`tests/test_authorization.py`), 7A (write contracts, `8ce2d43`), 7 (write functions, `6a2c11a`), 8 (`tests/test_returns.py`, `tests/test_tickets.py`, `0f27739`), 9 (full-suite verification) and 10 (read-only inspection).
+- **Test result:** **497 passed is a historical result** recorded earlier. It was not re-run for the D1 baseline and is not freshly verified.
+- **Backend architecture:** `docs/03_backend_architecture.md` Revision 3.2 is the approved baseline, pending one amendment for the `reason_category` column (D2). It is design only.
+- **Not built:** `app/tools`, `app/rag`, `app/orchestrator`, the backend service, the LLM adapter and RAG. `app/ui/` is an early Streamlit app with stub replies.
+- **Pending (D2):** a dedicated `reason_category` column on `return_requests`. Approved in principle, not implemented, not yet documented as a design amendment.
+
 ## In progress
-- None. Checkpoint 3 has not been started.
+- D1 documentation baseline (documentation only).
 
 ## Pending work
-- **Checkpoint 3 — `test_schema.py`:** automated verification of the schema itself, including the corrected foreign-key-enforcement test. **Not started.**
-- **Checkpoint 4 — `app/db/seed_data.py`:** synthetic customers/orders/items, including the fixed C101/C102/ORD1003 authorization scenario, with `product_id` values validated against `Products.json` (failing loudly on any unknown ID). **Not started.**
-- **Checkpoint 5 — read-only repository functions.** **Not started.**
-- **Checkpoint 6 — `test_authorization.py`** (cross-customer access test; must pass before any orchestration or UI code is written). **Not started.**
-- **Checkpoints 7–11 — write repository functions, return/ticket integrity tests, full-suite verification.** **Not started.**
+- Database Checkpoints 3–10 are complete (see "Checkpoint status as of D1" above). No database checkpoint from the original plan remains pending.
+- **D2 — `reason_category` column on `return_requests`:** approved in principle, **not started**, not yet documented as a design amendment.
 - RAG ingestion pipeline — **not started**
 - Orchestrator (LangGraph) implementation — **not started**
-- Streamlit UI — **not started**
+- Streamlit UI — **early stub only** (`app/ui/`, stub replies, not connected to a backend)
 - Evaluation set expansion (6 → ~60–80 queries) — **not started**
 - Docker setup — **not started**
 - Technical report, presentation deck — **not started**
 
-Checkpoints 1 and 2 are approved. Schema tests, seed data, repository functions, RAG, LLM orchestration, and the Streamlit UI are not started.
+Database Checkpoints 1–10 are complete. RAG, LLM orchestration, the tool layer and the backend service are not started. The Streamlit UI is an early stub.
 
 ## Open decisions (see `docs/01_database_design.md` Section L)
 1. ~~Confirm no separate payment/shipment tables needed~~ — **Resolved:** single-table model approved.
@@ -76,4 +82,4 @@ Checkpoints 1 and 2 are approved. Schema tests, seed data, repository functions,
 - Two "master prompt" documents describing an expanded (voice + full auth) version of this project — treated as aspirational/future scope, not current requirements, per student's explicit decision
 
 ## Next recommended action
-Checkpoint 3 (`tests/test_schema.py`) is the next step. Do not begin it until asked.
+D1 (documentation baseline) is the current task. After it is reviewed, the next step is D2 (`reason_category` design amendment and implementation plan). Do not begin D2 until asked.
