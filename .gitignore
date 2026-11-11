@@ -36,3 +36,12 @@ htmlcov/
 # OS
 .DS_Store
 Thumbs.db
+
+# Databases: never committed (data/app.db legacy, data/app_d2.db default, demo copies, sidecars)
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+
+# Generated review bundles (not part of the repository)
+CHANGES_BUNDLE*.md

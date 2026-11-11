@@ -6,7 +6,7 @@ Capstone: a text customer-support assistant (Streamlit chat, RAG over `data/sour
 
 ## Commands
 
-This is a **uv** project on Python 3.13 with no runtime dependencies (only `pytest` in the dev group). Do not use pip or create a separate venv. Run everything from the repository root: imports (`from app.db...`) and the default database path `data/app.db` are cwd-relative.
+This is a **uv** project on Python 3.13. The database layer uses only the standard library; the one runtime dependency in `pyproject.toml` is `streamlit` (Person B's UI) and the dev group has `pytest`. Do not use pip or create a separate venv. Run everything from the repository root: imports (`from app.db...`) and relative `APP_DB_PATH` values resolve from the project root.
 
 ```bash
 uv run python -m pytest tests/ -q
@@ -18,24 +18,28 @@ uv run python -m pytest tests/test_returns.py::TestClassName::test_name -q
 
 Use `python -m pytest`, not bare `pytest`, so the repo root is on `sys.path`. There is no linter, formatter, coverage tool, `conftest.py` or pytest config.
 
-**Never open, seed, reset or write `data/app.db`.** It is gitignored and holds a stray test ticket. Two traps: `python -m app.db.seed_data` and `main.py` both call `get_connection()` against the real path.
+**All database work happens on branch `rukum/db`** (remote `origin/rukum/db`), not `master`.
+
+**Never open, seed, reset, migrate or write `data/app.db`** (the legacy database, protected: no connection factory opens it). The application's database is `data/app_d2.db` by default or whatever `APP_DB_PATH` names. **Do not create or seed `data/app_d2.db` unless the Technical Lead asks**; tests use temporary databases only. Normal startup never creates a database: the health check reports `not_initialized` until an operator runs the seed command.
 
 ## Architecture
 
-The database layer is the only backend code that exists. `app/tools`, `app/rag` and `app/orchestrator` are empty directories. `app/ui/` holds an early Streamlit app with stub replies (not connected to a backend). `src/ecommerce_support_assistant/` is an unused uv stub that `pyproject.toml` builds. The backend, tools, LLM and RAG are specified only in `docs/03_backend_architecture.md` (tracked design, Revision 3.2, the approved baseline pending the `reason_category` amendment in D2). Do not treat anything in it as implemented, and do not start a checkpoint that has not been authorized.
+Implemented on this branch: the D2 database layer (`app/db/`). The backend, tools, RAG and LLM layer are **not part of this commit**; they will be committed on a new `rukum/backend` branch, to be created from the final `rukum/db` HEAD (design in `docs/03_backend_architecture.md`). `app/ui/` is still an early Streamlit app with stub replies (Person B's work, not connected). `src/ecommerce_support_assistant/` is an unused uv stub that `pyproject.toml` builds.
 
 Database layer (`app/db/`):
-- `connection.get_connection(db_path)` is the only way to open a connection: it enforces and verifies `PRAGMA foreign_keys = ON`, sets `sqlite3.Row`, and raises `ConnectionError_`. Never call `sqlite3.connect()` elsewhere. It also creates the parent directory and an empty file when missing.
-- `schema.create_schema(connection)` builds five tables (`customers`, `orders`, `order_items`, `return_requests`, `support_tickets`) with composite foreign keys and the partial unique index `uq_active_return_per_item`. It takes a connection and never opens one.
-- `seed_data.seed_database(connection, reference_time=None)` is deterministic and not idempotent (raises if tables are non-empty). `None` means the fixed baseline `2026-11-07T00:00:00Z`; all order dates are offsets from the reference time. `product_id` values are validated against `data/source/Products.json`, which is read-only.
-- `repository.py` is the authorization boundary. Every function takes `authenticated_customer_id` (from trusted app context, never message or LLM text) and filters on it in SQL, so cross-customer reads return "not found". Reads open their own connection by calling `get_connection()` with no arguments, and propagate `sqlite3.Error`. The two writes (`create_return_request`, `create_support_ticket`) use `BEGIN IMMEDIATE`, report `created` only after COMMIT, map database errors to a generic `failed`, and re-raise non-database exceptions after rollback. Wrong types raise `TypeError`; invalid values raise `ValueError`.
-- `reason_category` (`damaged`, `wrong_product`, `standard`) selects the return window (48h, 48h, 168h, inclusive) and is **not stored** today. A dedicated column is approved in principle but not yet documented or implemented.
+- Three connection factories in `connection.py`; never call `sqlite3.connect()` elsewhere. `get_connection(db_path=None)` opens an existing, initialized, current-version database read-write and never creates a file. `get_readonly_connection` opens read-only. `get_initialization_connection(db_path)` is the only creator and refuses the protected `data/app.db`. The path comes from `APP_DB_PATH` (default `<project>/data/app_d2.db`; the legacy `data/app.db` is protected and refused by every factory). The schema version is `PRAGMA user_version = 1`; there is no legacy migration (fresh databases only).
+- `schema.create_schema(connection)` builds the five tables with canonical-timestamp, exact-text and consistency CHECKs, the persisted `reason_category` column and `uq_active_return_per_item`. `health.check_database_health()` reports `ready`, `not_initialized`, `schema_incompatible` or `unavailable` and never raises.
+- `repository.py` is the authorization boundary: every function takes `authenticated_customer_id` and filters on it in SQL. Reads call `get_connection()` per call. Writes (`create_return_request`, `create_support_ticket`) use `BEGIN IMMEDIATE`, recheck eligibility inside the transaction, and return compact results (`{"outcome","return_id"}` and `{"outcome":"created","ticket_id"}`). Database failures raise typed `DatabaseError` subclasses (`app/db/errors.py`), not a generic `failed` result. `check_return_eligibility` is the read-only advisory twin. `list_customers_for_login` feeds the login selector only.
+- `seed_data.seed_database(connection, reference_time=None)` is deterministic and not idempotent. The command is `python -m app.db.seed_data [--db-path PATH] [--reference-time T]`; without `--db-path` it uses the application's path (`APP_DB_PATH`, default `data/app_d2.db`). The parent directory must already exist, and it refuses the protected `data/app.db` and any existing database.
+- `reason_category` (`damaged`, `wrong_product`, `standard`) selects the return window (48h, 48h, 168h, inclusive) and is stored. Return reasons are limited to 1,000 characters; ticket description and summary to 2,000. Text is validated exactly and never modified.
+
+Not on this branch: `app/backend`, `app/orchestrator`, `app/tools`, `app/rag`, `app/llm` and `app/catalog` do not exist here. They will be committed on a new branch, `rukum/backend`, to be created from the final `rukum/db` HEAD.
 
 Conventions: money is integer paise; timestamps are TEXT `YYYY-MM-DDTHH:MM:SSZ` (UTC); `orders.status` values come from `FAQ.md` Q1.4.
 
 ## Tests
 
-Four files under `tests/`. Tests never use the real database: they build temp databases with the real `create_schema` and `seed_database`, and monkeypatch `repository.get_connection` to point at them. `test_returns.py` and `test_tickets.py` also have an autouse fixture that patches `sqlite3.connect` to fail if the real path is opened (a string comparison from the cwd). `test_authorization.py` only `os.stat`s `data/app.db` to assert it is unchanged. Follow this pattern for any new database test.
+`uv run python -m pytest tests/test_authorization.py tests/test_returns.py tests/test_schema.py tests/test_tickets.py tests/test_clock_validation.py tests/test_connection.py tests/test_seed.py -q` (**412 passed** across the 7 database test files on 2026-11-12). `tests/conftest.py` has an autouse guard that fails any test that opens `data/app.db` or `data/app_d2.db`, controls the database clock (`set_now`), builds seeded temp databases (`temp_db`, which also sets `APP_DB_PATH`) and provides `protected_sentinel` for protected-path tests (a temporary stand-in file plus a mocked low-level opener; never launch a subprocess with a real protected path). Follow these patterns for new tests.
 
 ## Document authority
 

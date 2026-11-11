@@ -1,5 +1,7 @@
-from app.db import get_connection
+"""Project entry stub. The application is started through Streamlit.
+
+This file deliberately does nothing with the database.
+"""
 
 if __name__ == "__main__":
-    print("HEllo World")
-    get_connection()
+    print("Run the app with: uv run python -m streamlit run app/ui/streamlit_app.py")

@@ -2,9 +2,9 @@
 
 **Project:** AI E-Commerce Customer Support Assistant
 **Deadline:** 12 days from Nov 1, 2026 → due ~Nov 13, 2026
-**Current phase:** Database completion (Checkpoint D series). Database Checkpoints 1–10 are complete per the recorded history and Git (`master` at `3c3626a`). **The current task is D1, the documentation baseline** (this reconciliation). The `reason_category` column (D2) is approved in principle but not implemented. Do not begin D2 or any later checkpoint until asked.
+**Current phase:** Database completion (Checkpoint D series). Database Checkpoints 1–10 are merged. D1 (documentation baseline) is `d980594` on `rukum/db`. **D2 (contract) and D3–D8 (database implementation and regression) are implemented in this commit; D9 (independent review) is pending.** The backend will be committed on a new branch, `rukum/backend`, to be created from the final `rukum/db` HEAD (it does not exist yet). All database work uses branch `rukum/db`.
 
-*(Status baseline D1, 2026-11-11. The body below was written during Checkpoints 1 and 2. Where it says a checkpoint is "not started", the "Checkpoint status as of D1" section below is the current statement.)*
+*(The body below was written during Checkpoints 1 and 2 and is a historical record: its statements about `get_connection()` and a "not started" checkpoint describe that time. The "Status as of 2026-11-12" section at the end is the current statement.)*
 
 *(Phase numbering note: this line is corrected from the previous revision, which still labeled upcoming work "Phase 1." The docs folder's own numbering is the source of truth — `docs/00_project_discovery.md` = Phase 0, `docs/01_database_design.md` = Phase 1 (approved), `docs/02_database_implementation_plan.md` = Phase 2 (in progress). This file now matches that numbering.)*
 
@@ -47,39 +47,13 @@
 - Manual check on an in-memory connection from `get_connection()` (`uv run`, `PRAGMA foreign_keys` read back `1`): all five tables were created. A `return_requests` row whose `(order_id, customer_id)` did not match `orders` was rejected with `FOREIGN KEY constraint failed`. No return row was stored.
 - **Checkpoint 2 is approved (2026-11-06).**
 
-## Checkpoint status as of D1 (2026-11-11)
-- **Complete:** Checkpoint 3 (`tests/test_schema.py`), 4 (`app/db/seed_data.py`), 5 (read functions), 6 (`tests/test_authorization.py`), 7A (write contracts, `8ce2d43`), 7 (write functions, `6a2c11a`), 8 (`tests/test_returns.py`, `tests/test_tickets.py`, `0f27739`), 9 (full-suite verification) and 10 (read-only inspection).
-- **Test result:** **497 passed is a historical result** recorded earlier. It was not re-run for the D1 baseline and is not freshly verified.
-- **Backend architecture:** `docs/03_backend_architecture.md` Revision 3.2 is the approved baseline, pending one amendment for the `reason_category` column (D2). It is design only.
-- **Not built:** `app/tools`, `app/rag`, `app/orchestrator`, the backend service, the LLM adapter and RAG. `app/ui/` is an early Streamlit app with stub replies.
-- **Pending (D2):** a dedicated `reason_category` column on `return_requests`. Approved in principle, not implemented, not yet documented as a design amendment.
+## Status as of 2026-11-12 (database)
 
-## In progress
-- D1 documentation baseline (documentation only).
+- **Database:** Checkpoints 1–10 are merged. The D2 contract (D3 connections, D4 schema, D5 writes, D6 reads, D7 seed, D8 regression) is **implemented** in this commit: three connection factories, `APP_DB_PATH`, `user_version = 1`, persisted `reason_category`, exact-text validation, canonical timestamps, eligibility outcomes, `RET_`/`TKT_` identifiers, typed errors, `check_database_health`, `list_customers_for_login`, and a seed CLI that refuses `data/app.db`. The default database path is `data/app_d2.db` (override: `APP_DB_PATH`); the legacy `data/app.db` is protected and never opened. The database does not exist until an operator runs `python -m app.db.seed_data` (parent directory must exist); the health check reports `not_initialized` until then. `data/app_d2.db` has not been created.
+- **Tests:** `uv run python -m pytest tests/test_authorization.py tests/test_returns.py tests/test_schema.py tests/test_tickets.py tests/test_clock_validation.py tests/test_connection.py tests/test_seed.py -q` gives **412 passed** (7 database test files, run 2026-11-12). Per file: test_authorization 29, test_clock_validation 63, test_connection 55, test_returns 100, test_schema 83, test_seed 24, test_tickets 58. The legacy 497-test suite was replaced. No test opens `data/app.db` or `data/app_d2.db` (an autouse guard enforces this; protected-path tests use a temporary sentinel and a mocked opener).
+- **Not on this branch:** the backend (`app/tools`, `app/backend`, `app/orchestrator`, `app/rag`, `app/llm`, `app/catalog`) will be committed on a new branch, `rukum/backend`, to be created from the final `rukum/db` HEAD. `app/ui/` is an early Streamlit stub that is not connected to a backend.
+- **Review state:** D9 independent review has not happened.
 
 ## Pending work
-- Database Checkpoints 3–10 are complete (see "Checkpoint status as of D1" above). No database checkpoint from the original plan remains pending.
-- **D2 — `reason_category` column on `return_requests`:** approved in principle, **not started**, not yet documented as a design amendment.
-- RAG ingestion pipeline — **not started**
-- Orchestrator (LangGraph) implementation — **not started**
-- Streamlit UI — **early stub only** (`app/ui/`, stub replies, not connected to a backend)
-- Evaluation set expansion (6 → ~60–80 queries) — **not started**
-- Docker setup — **not started**
-- Technical report, presentation deck — **not started**
-
-Database Checkpoints 1–10 are complete. RAG, LLM orchestration, the tool layer and the backend service are not started. The Streamlit UI is an early stub.
-
-## Open decisions (see `docs/01_database_design.md` Section L)
-1. ~~Confirm no separate payment/shipment tables needed~~ — **Resolved:** single-table model approved.
-2. Confirm simulated-login approach to identity (no real auth system)
-3. Confirm no teacher-provided code/schema exists to incorporate
-4. Confirm synthetic data volume (~5–8 customers, 2–3 orders each)
-5. Non-returnable product category has no current seed product in `Products.json` — still open, `Products.json` not modified
-6. `return_requests.status` and `support_tickets.status`/`priority` enums still need explicit sign-off
-
-## Files inspected
-- `Sample_Ecommerce_Capstone_Dataset.zip` → `FAQ.md`, `Policies.md`, `Products.json`, `customer_queries_sample.csv`, `README_DATASET.md`
-- Two "master prompt" documents describing an expanded (voice + full auth) version of this project — treated as aspirational/future scope, not current requirements, per student's explicit decision
-
-## Next recommended action
-D1 (documentation baseline) is the current task. After it is reviewed, the next step is D2 (`reason_category` design amendment and implementation plan). Do not begin D2 until asked.
+- Person A: D9 review of this database commit; the backend on a new `rukum/backend` branch (to be created from the final `rukum/db` HEAD); choose the LLM provider.
+- Person B: Streamlit UI against the backend once it exists, Docker, evaluation set expansion (6 to about 60–80 queries), report, deck.

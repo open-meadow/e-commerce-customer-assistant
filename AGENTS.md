@@ -15,9 +15,9 @@ Streamlit chat that answers order, delivery, payment, return, refund, product, a
 
 ## Built
 
-Phase 0–1 docs approved. Phase 2 plan approved. Database Checkpoints 1–10 complete per the recorded history and Git (`master` at `3c3626a`, D1 baseline 2026-11-11). **Historical test result: 497 passed** (recorded earlier; the older "207 passing" figure was from Checkpoint 6 and is obsolete). The suite was **not re-run** when this file was updated, so 497 is not a freshly verified result.
+Phase 0–1 docs approved. Phase 2 plan approved. Database Checkpoints 1–10 complete and merged to `master`. The D2 database contract (D3–D8) is implemented on `rukum/db`; D9 (independent review) is pending. **Database test result: 412 passed** across the 7 database test files (`uv run python -m pytest tests/test_authorization.py tests/test_returns.py tests/test_schema.py tests/test_tickets.py tests/test_clock_validation.py tests/test_connection.py tests/test_seed.py -q`, 2026-11-12). The older 497 and 207 figures are obsolete. The backend will be committed on a new branch, `rukum/backend`, to be created from the final `rukum/db` HEAD (it does not exist yet).
 
-- **1** `app/db/connection.py`: `get_connection()` sets and verifies `PRAGMA foreign_keys = ON`, `row_factory = sqlite3.Row`, raises `ConnectionError_`. Default path `data/app.db`. `app/db/__init__.py` re-exports `get_connection`. `main.py` is a smoke call.
+- **1** `app/db/connection.py` (rewritten for D2): three factories, `APP_DB_PATH`, default `data/app_d2.db`, `user_version` checks, typed errors; the legacy `data/app.db` is protected and never opened. `main.py` only prints the run command.
 - **2** `app/db/schema.py`: `create_schema(connection)` creates the five tables. It does not open a connection.
 - **3** `tests/test_schema.py`.
 - **4** `app/db/seed_data.py`: deterministic seed, fixed baseline `2026-11-07T00:00:00Z`.
@@ -26,25 +26,27 @@ Phase 0–1 docs approved. Phase 2 plan approved. Database Checkpoints 1–10 co
 - **7A** Write-function contracts approved, committed, and pushed (`8ce2d43`): `docs/01` §F–§H, `docs/02` §4–§5.
 - **7** `create_return_request` and `create_support_ticket` in `app/db/repository.py` (`6a2c11a`).
 - **8** `tests/test_returns.py` and `tests/test_tickets.py` (`0f27739`).
-- **9** Full-suite verification (historical 497 passed, see above). **10** Read-only repository inspection.
+- **9** Full-suite verification (the 497-test suite was replaced by the D2 database suite: 412 passed, see above). **10** Read-only repository inspection.
 - **11A** `docs/03_backend_architecture.md` Revision 3.2 is the approved architecture baseline (design only; nothing in it is implemented).
 
 ## Not built, pending, or in progress
 
 Do not treat these as existing. Do not start a checkpoint that has not been authorized.
 
-- **D2 (pending):** a dedicated `reason_category` column on `return_requests` is approved in principle, but it is **not implemented** and its design amendment is not made. Today `create_return_request` validates `reason_category` to choose the window and does not store it.
-- **Backend (not built):** `app/tools`, `app/rag`, `app/orchestrator` and `app/backend` do not exist beyond empty directories or design text in `docs/03`. No LLM provider is chosen.
+- **Implemented on this branch (D3–D8; D9 independent review pending):** the D2 database contract: three connection factories, `APP_DB_PATH` (default `data/app_d2.db`), `user_version = 1`, persisted `reason_category`, exact-text validation, canonical timestamps, eligibility outcomes, typed errors, health check, `list_customers_for_login`, and the explicit seed command.
+- **Backend (not on this branch):** `app/tools`, `app/rag`, `app/orchestrator`, `app/backend`, `app/llm` and `app/catalog` do not exist here. They will be committed on a new branch, `rukum/backend`, to be created from the final `rukum/db` HEAD (design in `docs/03`). No LLM provider is chosen on this branch.
 - **UI (partial, other person's work):** `app/ui/` holds a first Streamlit app with stub replies. It is not connected to a backend.
-- **Also absent:** RAG, orchestrator, eval set (~60–80; seed CSV has 6 rows), Docker, report, deck. `src/ecommerce_support_assistant/` is an unused uv stub.
-- **Current next task:** D1 documentation baseline (this reconciliation), then D2.
+- **Open for Person B:** Docker, evaluation set (~60–80; seed CSV has 6 rows), report, deck. Person B's unmerged branches use `DATABASE_PATH` and `get_connection(db_path)`; they must move to `APP_DB_PATH` and the seed command. `src/ecommerce_support_assistant/` is an unused uv stub.
+- **Current state:** the D2 database work is on `rukum/db`; D9 review is pending. `data/app.db` has not been opened or modified, and `data/app_d2.db` has not been created.
 
 ## Constraints
 
 - This is a **uv** project. Run Python with `uv run`. Do not create a separate venv or use pip.
 - SQLite is Python’s standard-library `sqlite3` module (confirmed via `uv run`; library 3.50.4). It is not a `pyproject.toml` dependency. Do not `uv add` a SQLite package.
 - Five tables: `customers`, `orders`, `order_items`, `return_requests`, `support_tickets`. No payment or shipment tables. Design: `docs/01` §C.
-- Every connection via `get_connection()`. Never `sqlite3.connect()` elsewhere.
+- Every connection via the three factories in `app/db/connection.py`. Never `sqlite3.connect()` elsewhere. `APP_DB_PATH` selects the database; only the initialization factory creates files and it refuses `data/app.db`.
+- **All database work happens on branch `rukum/db`** (remote `origin/rukum/db`). Do not commit database work on `master`, and do not merge `rukum/db` into `master` without explicit authorization.
+- Never open, read, seed, reset, migrate or delete `data/app.db`. It is a legacy pre-D2 database (`user_version` 0, never stamped) and is protected in code: no connection factory opens it. The application's default database is `data/app_d2.db` (override with `APP_DB_PATH`); do not create or seed it unless the Technical Lead asks. Initialization is an explicit, separately authorized operator operation (`python -m app.db.seed_data`); there is no migration engine (M2).
 - Money: INTEGER paise. Timestamps: TEXT ISO-8601 UTC.
 - `orders.status`: Processing, Packed, Shipped, Out for Delivery, Delivered, Cancelled, Returned (`FAQ.md` Q1.4).
 - Repository functions take `authenticated_customer_id` and filter in SQL. Composite FKs backstop consistency, not authorization.
