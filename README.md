@@ -58,9 +58,14 @@ uv run streamlit run app/ui/streamlit_app.py
 ```
 
 Open the local URL printed by Streamlit, then choose C101 or C102 in the
-sidebar. Replies are canned demo text; live order, payment, product, policy,
-return, refund, and ticket data are not connected. Confirming a demo action
-does not submit a real request.
+sidebar. Use **New chat** to start another conversation or select a listed chat
+to return to it. The chat list is temporary Streamlit session state: switching
+simulated customers clears it, and reloading the page loses it. It is not
+persistent account history.
+
+Replies are canned demo text; live order, payment, product, policy, return,
+refund, and ticket data are not connected. Confirming a demo action does not
+submit a real request.
 
 ## Run with Docker
 
