@@ -1,4 +1,4 @@
-from app.ui.client import ChoiceView, ConversationState, PendingView
+from app.ui.fake_backend import ChoiceView, ConversationState, PendingView
 from app.ui.session import (
     ACTIVE_CHAT_ID_KEY,
     AUTHENTICATED_CUSTOMER_ID_KEY,
