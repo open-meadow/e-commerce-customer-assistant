@@ -1,0 +1,209 @@
+"""FAQ and policy retrieval.
+
+Design and honest limits
+------------------------
+* Source documents: ``data/source/FAQ.md`` (one chunk per Q&A) and
+  ``data/source/Policies.md`` (one chunk per numbered section). They are
+  the source of truth for support rules and are never modified.
+* Retrieval is **lexical BM25 implemented in pure Python**. There are no
+  embeddings and no vector database in this MVP. The ``KnowledgeBase``
+  interface (``search(query, k)``) is what a vector store would replace.
+  This is a documented gap against the "embeddings + vector DB" idea in
+  the assignment brief, chosen to avoid heavy dependencies and a
+  provider decision.
+* The index is rebuilt in memory at start-up, so there is nothing to
+  persist and no stale index.
+* Retrieved text is **untrusted data**. Callers must present it to a
+  model as quoted reference material, never as instructions.
+* A query with no meaningful overlap returns no hits, and the caller must
+  say it cannot confirm rather than invent a policy.
+"""
+
+from __future__ import annotations
+
+import math
+import re
+from dataclasses import dataclass
+from functools import lru_cache
+from pathlib import Path
+from typing import Iterable, Optional
+
+from app.db.connection import PROJECT_ROOT
+
+SOURCE_DIR = PROJECT_ROOT / "data" / "source"
+
+
+class KnowledgeBaseError(Exception):
+    """The FAQ or policy source is missing, unreadable or contains no usable entries.
+
+    Callers must say they cannot confirm an answer. They must never fall back to
+    invented policy text.
+    """
+
+_TOKEN_RE = re.compile(r"[a-z0-9\u20b9]+")
+_STOP = frozenset("""a an the is are was were be to of for in on at by with from and or not
+no it its this that these those do does did can could will would should i you your my me we
+our they them their what which who how when where why if then than so as but about any some
+there here please tell long take takes much many get need want""".split())
+_QA_RE = re.compile(r"\*\*(Q\d+\.\d+):\s*(.*?)\*\*\s*\n\s*A:\s*(.*?)(?=\n\s*\n|\Z)", re.S)
+_SECTION_RE = re.compile(r"^##\s+(\d+\.\s+.+?)\s*$", re.M)
+_K1 = 1.5
+_B = 0.75
+
+
+@dataclass(frozen=True)
+class Chunk:
+    """One retrievable unit with its citation."""
+
+    source: str
+    section: str
+    title: str
+    text: str
+
+
+@dataclass(frozen=True)
+class SearchHit:
+    chunk: Chunk
+    score: float
+
+
+_SUFFIXES = ("ations", "ation", "ings", "ing", "ed", "es", "s", "e")
+
+# Small, hand-written domain vocabulary bridge. The store documents say "within
+# 7 days", "charges" and "business days" where customers say "window", "cost"
+# and "timeline". Each rule fires only when the query also names its topic
+# ("window" means "within 7 days" for returns but "3-6 business days" for
+# delivery), so a word in one topic never pulls in the passage of another. An
+# expansion counts at half weight and never replaces the customer's own words.
+# This is a keyword aid, not semantic search.
+_RETURN_TOPIC = ("return", "returns", "returned", "returnable", "replace", "replacement", "exchange",
+                 "damaged", "wrong")
+_DELIVERY_TOPIC = ("delivery", "deliver", "delivered", "shipping", "shipment", "shipped", "ship",
+                   "courier", "dispatch")
+_REFUND_TOPIC = ("refund", "refunds", "reimbursement")
+_WINDOW_WORDS = ("window", "deadline", "period", "timeframe", "timeline", "duration")
+
+# (query words that trigger, topic words one of which must also be in the query, expansions)
+_BRIDGE = (
+    (_WINDOW_WORDS, _RETURN_TOPIC, ("within", "days", "eligible")),
+    (_WINDOW_WORDS, _DELIVERY_TOPIC, ("business", "days")),
+    (_WINDOW_WORDS, _REFUND_TOPIC, ("within", "business", "days")),
+    (("cost", "costs", "fee", "fees"), _DELIVERY_TOPIC, ("charge", "fee")),
+)
+_EXPANSION_WEIGHT = 0.5
+
+
+def _stem(token: str) -> str:
+    """Light suffix stripping so charge/charges and cancel/cancelled/cancellation meet."""
+    for suffix in _SUFFIXES:
+        if token.endswith(suffix) and len(token) - len(suffix) >= 4:
+            token = token[: -len(suffix)]
+            break
+    if len(token) >= 5 and token[-1] == token[-2] and token[-1] not in "aeiou":
+        token = token[:-1]  # cancell -> cancel
+    return token
+
+
+def tokenize(text: str) -> list[str]:
+    return [_stem(t) for t in _TOKEN_RE.findall(text.lower()) if t not in _STOP]
+
+
+def query_weights(query: str) -> dict[str, float]:
+    """Query terms with weights: the customer's words at 1.0, expansions at 0.5."""
+    weights: dict[str, float] = {}
+    raw = set(_TOKEN_RE.findall(query.lower()))
+    for term in tokenize(query):
+        weights[term] = 1.0
+    for triggers, topic, expansions in _BRIDGE:
+        fired = raw.intersection(triggers)
+        if fired and raw.intersection(topic):
+            # The generic word ("timeline", "window") is a stand-in for the facts the
+            # documents state in other words, so it must not out-vote the topic word.
+            for word in fired:
+                for term in tokenize(word):
+                    weights[term] = min(weights.get(term, _EXPANSION_WEIGHT), _EXPANSION_WEIGHT)
+            for extra in expansions:
+                for term in tokenize(extra):
+                    weights.setdefault(term, _EXPANSION_WEIGHT)
+    return weights
+
+
+def load_chunks(source_dir: Optional[Path] = None) -> list[Chunk]:
+    """Parse the FAQ into Q&A chunks and the policies into section chunks.
+
+    ``source_dir`` defaults to ``SOURCE_DIR`` looked up at call time, so tests can
+    point it at a temporary folder.
+
+    Raises:
+        KnowledgeBaseError: a source file is missing or unreadable, or either source
+            yields no entries. Nothing is guessed or substituted.
+    """
+    source_dir = SOURCE_DIR if source_dir is None else Path(source_dir)
+    try:
+        faq = (source_dir / "FAQ.md").read_text(encoding="utf-8")
+        policies = (source_dir / "Policies.md").read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        raise KnowledgeBaseError("the FAQ or policy source could not be read") from exc
+    faq_chunks: list[Chunk] = []
+    for match in _QA_RE.finditer(faq):
+        number, question, answer = match.groups()
+        faq_chunks.append(Chunk("FAQ.md", number, question.strip(),
+                                f"{question.strip()} {answer.strip()}"))
+    policy_chunks: list[Chunk] = []
+    headings = list(_SECTION_RE.finditer(policies))
+    for index, heading in enumerate(headings):
+        end = headings[index + 1].start() if index + 1 < len(headings) else len(policies)
+        body = policies[heading.end():end].replace("---", "").strip()
+        title = heading.group(1).strip()
+        policy_chunks.append(Chunk("Policies.md", title, title, f"{title}. {body}"))
+    if not faq_chunks or not policy_chunks:
+        raise KnowledgeBaseError("the FAQ or policy source contains no usable entries")
+    return faq_chunks + policy_chunks
+
+
+class KnowledgeBase:
+    """In-memory BM25 index over a list of chunks."""
+
+    def __init__(self, chunks: Iterable[Chunk]) -> None:
+        self.chunks = list(chunks)
+        self._docs = [tokenize(c.text) + tokenize(c.title) for c in self.chunks]
+        self._avg = (sum(len(d) for d in self._docs) / len(self._docs)) if self._docs else 0.0
+        document_frequency: dict[str, int] = {}
+        for doc in self._docs:
+            for term in set(doc):
+                document_frequency[term] = document_frequency.get(term, 0) + 1
+        total = len(self._docs)
+        self._idf = {
+            term: math.log(1 + (total - df + 0.5) / (df + 0.5))
+            for term, df in document_frequency.items()
+        }
+
+    def search(self, query: str, k: int = 3, min_score: float = 1.0) -> list[SearchHit]:
+        """Return up to *k* chunks scoring at least *min_score*, best first."""
+        weights = query_weights(query) if isinstance(query, str) else {}
+        if not weights or not self.chunks:
+            return []
+        hits: list[SearchHit] = []
+        for chunk, doc in zip(self.chunks, self._docs):
+            length = len(doc) or 1
+            score = 0.0
+            matched_own_word = False
+            for term, weight in weights.items():
+                frequency = doc.count(term)
+                if frequency:
+                    matched_own_word = matched_own_word or weight == 1.0
+                    norm = frequency * (_K1 + 1) / (
+                        frequency + _K1 * (1 - _B + _B * length / (self._avg or 1))
+                    )
+                    score += weight * self._idf.get(term, 0.0) * norm
+            # A passage that matches only the vocabulary bridge, and none of the
+            # customer's own words, is not a hit ("the window of my bedroom").
+            if matched_own_word and score >= min_score:
+                hits.append(SearchHit(chunk, score))
+        hits.sort(key=lambda h: (-h.score, h.chunk.source, h.chunk.section))
+        return hits[:k]
+
+
+@lru_cache(maxsize=1)
+def default_knowledge_base() -> KnowledgeBase:
+    return KnowledgeBase(load_chunks())
