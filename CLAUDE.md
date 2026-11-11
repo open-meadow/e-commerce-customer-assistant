@@ -6,7 +6,7 @@ Capstone: a text customer-support assistant (Streamlit chat, RAG over `data/sour
 
 ## Commands
 
-This is a **uv** project on Python 3.13. The database layer uses only the standard library; the one runtime dependency in `pyproject.toml` is `streamlit` (Person B's UI) and the dev group has `pytest`. Do not use pip or create a separate venv. Run everything from the repository root: imports (`from app.db...`) and relative `APP_DB_PATH` values resolve from the project root.
+This is a **uv** project on Python 3.13. The backend uses only the standard library; the one runtime dependency in `pyproject.toml` is `streamlit` (Person B's UI) and the dev group has `pytest`. Do not use pip or create a separate venv. Run everything from the repository root: imports (`from app.db...`) and relative `APP_DB_PATH` values resolve from the project root.
 
 ```bash
 uv run python -m pytest tests/ -q
@@ -16,15 +16,15 @@ uv run python -m pytest tests/ -q
 uv run python -m pytest tests/test_returns.py::TestClassName::test_name -q
 ```
 
-Use `python -m pytest`, not bare `pytest`, so the repo root is on `sys.path`. There is no linter, formatter, coverage tool, `conftest.py` or pytest config.
+Use `python -m pytest`, not bare `pytest`, so the repo root is on `sys.path`. There is no linter, formatter, coverage tool or pytest config. Shared fixtures live in `tests/conftest.py`.
 
-**All database work happens on branch `rukum/db`** (remote `origin/rukum/db`), not `master`.
+**All database work happens on branch `rukum/db`** (remote `origin/rukum/db`, at `7dfd2f0`), not `master`. Backend work happens on branch `rukum/backend`, created from `7dfd2f0` and not yet pushed.
 
 **Never open, seed, reset, migrate or write `data/app.db`** (the legacy database, protected: no connection factory opens it). The application's database is `data/app_d2.db` by default or whatever `APP_DB_PATH` names. **Do not create or seed `data/app_d2.db` unless the Technical Lead asks**; tests use temporary databases only. Normal startup never creates a database: the health check reports `not_initialized` until an operator runs the seed command.
 
 ## Architecture
 
-Implemented on this branch: the D2 database layer (`app/db/`). The backend, tools, RAG and LLM layer are **not part of this commit**; they will be committed on a new `rukum/backend` branch, to be created from the final `rukum/db` HEAD (design in `docs/03_backend_architecture.md`). `app/ui/` is still an early Streamlit app with stub replies (Person B's work, not connected). `src/ecommerce_support_assistant/` is an unused uv stub that `pyproject.toml` builds.
+The D2 database layer is committed and pushed (`rukum/db`, `7dfd2f0`). The backend, tools, RAG and LLM layer are implemented in the working tree of `rukum/backend` and are **uncommitted**: see `docs/03_backend_architecture.md` for the design and `docs/04_frontend_handover.md` for the public contract Person B builds against. `app/ui/` is still an early Streamlit app with stub replies (Person B's work, not connected). `src/ecommerce_support_assistant/` is an unused uv stub that `pyproject.toml` builds.
 
 Database layer (`app/db/`):
 - Three connection factories in `connection.py`; never call `sqlite3.connect()` elsewhere. `get_connection(db_path=None)` opens an existing, initialized, current-version database read-write and never creates a file. `get_readonly_connection` opens read-only. `get_initialization_connection(db_path)` is the only creator and refuses the protected `data/app.db`. The path comes from `APP_DB_PATH` (default `<project>/data/app_d2.db`; the legacy `data/app.db` is protected and refused by every factory). The schema version is `PRAGMA user_version = 1`; there is no legacy migration (fresh databases only).
@@ -33,16 +33,18 @@ Database layer (`app/db/`):
 - `seed_data.seed_database(connection, reference_time=None)` is deterministic and not idempotent. The command is `python -m app.db.seed_data [--db-path PATH] [--reference-time T]`; without `--db-path` it uses the application's path (`APP_DB_PATH`, default `data/app_d2.db`). The parent directory must already exist, and it refuses the protected `data/app.db` and any existing database.
 - `reason_category` (`damaged`, `wrong_product`, `standard`) selects the return window (48h, 48h, 168h, inclusive) and is stored. Return reasons are limited to 1,000 characters; ticket description and summary to 2,000. Text is validated exactly and never modified.
 
-Not on this branch: `app/backend`, `app/orchestrator`, `app/tools`, `app/rag`, `app/llm` and `app/catalog` do not exist here. They will be committed on a new branch, `rukum/backend`, to be created from the final `rukum/db` HEAD.
+Backend (`app/backend`, `app/orchestrator`, `app/tools`, `app/rag`, `app/llm`, `app/catalog`):
+- `app.backend` is the only module the frontend imports (`list_login_options`, `start_session`, `handle_message`, `check_backend`, types). Sessions are in-memory (single process, one lock); the `ConversationState` handle is a bearer credential. The LLM can only propose tool calls, text and an issue-relation label; the engine validates all of it and owns every state change. Writes happen only after an explicit `ConfirmationDecision` on a pending action that is bound to its session, expires after 10 minutes and can be claimed once. Return reasons are the customer's own message, stored exactly (never the LLM's argument); choice menus expire after 10 minutes and typed `cancel` cancels the open prompt.
+- The default LLM is the offline `RuleBasedLLM` (a deterministic stand-in, not a language model). `OpenAICompatibleClient` and `AnthropicClient` are written against the public API shapes and have **not** been run against a live service. RAG is lexical BM25 over `FAQ.md` and `Policies.md` (no embeddings, no vector store).
 
 Conventions: money is integer paise; timestamps are TEXT `YYYY-MM-DDTHH:MM:SSZ` (UTC); `orders.status` values come from `FAQ.md` Q1.4.
 
 ## Tests
 
-`uv run python -m pytest tests/test_authorization.py tests/test_returns.py tests/test_schema.py tests/test_tickets.py tests/test_clock_validation.py tests/test_connection.py tests/test_seed.py -q` (**412 passed** across the 7 database test files on 2026-11-12). `tests/conftest.py` has an autouse guard that fails any test that opens `data/app.db` or `data/app_d2.db`, controls the database clock (`set_now`), builds seeded temp databases (`temp_db`, which also sets `APP_DB_PATH`) and provides `protected_sentinel` for protected-path tests (a temporary stand-in file plus a mocked low-level opener; never launch a subprocess with a real protected path). Follow these patterns for new tests.
+`uv run python -m pytest tests -q` (**939 passed** on 2026-11-11 with the code in this working tree). `tests/conftest.py` has an autouse guard that fails any test that opens `data/app.db` or `data/app_d2.db`, controls the database clock (`set_now`) and the backend clock (`bnow`), builds seeded temp databases (`temp_db`, which also sets `APP_DB_PATH`) and provides `protected_sentinel` for protected-path tests (a temporary stand-in file plus a mocked low-level opener; never launch a subprocess with a real protected path). Backend tests use `tests/backend_helpers.py` (`Client`, `ScriptedLLM`). Adapter tests mock `urllib.request.urlopen` and are **not** live provider verification. Follow these patterns for new tests.
 
 ## Document authority
 
-Order: user-approved decisions, then `docs/01_database_design.md`, `docs/02_database_implementation_plan.md`, `PROJECT_STATUS.md`, `AGENTS.md`, then code. If code conflicts with an approved document, report the conflict instead of choosing. The status statements in `docs/01`, `docs/02`, `AGENTS.md` and `PROJECT_STATUS.md` were reconciled with the code in the D1 documentation baseline (2026-11-11). Database Checkpoints 1–10 are done and merged into `master`. The recorded 497-passed test result is historical, not freshly verified. Still verify against files and Git rather than trusting any status text.
+Order: user-approved decisions, then `docs/01_database_design.md`, `docs/02_database_implementation_plan.md`, `PROJECT_STATUS.md`, `AGENTS.md`, then code. If code conflicts with an approved document, report the conflict instead of choosing. The status statements in `docs/01`, `docs/02`, `AGENTS.md` and `PROJECT_STATUS.md` were last reconciled with the code on 2026-11-11 (database commit `7dfd2f0`; backend work uncommitted on `rukum/backend`). Database Checkpoints 1–10 are done and merged into `master`; D2 (D3–D8) is committed and pushed on `rukum/db`. The recorded 497-passed result is historical. Still verify against files and Git rather than trusting any status text.
 
 `data/source/FAQ.md` and `Policies.md` are the policy source of truth. `support@example.com` in them is a placeholder and must not be presented to customers as a real channel.

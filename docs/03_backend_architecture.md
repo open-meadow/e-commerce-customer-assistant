@@ -1,15 +1,17 @@
 # Backend Architecture — AI E-Commerce Customer Support Assistant
 
 **Phase:** 3 — Backend architecture and contracts
-**Status:** Revision 3.2 (2026-11-10) is the **approved architecture baseline**. It was approved by Person A in the project review. The approval is recorded in this metadata by documentation baseline D1 (2026-11-11), which changed no design content. The baseline is **pending one amendment**: the later decision to add a dedicated `reason_category` column to `return_requests` is approved in principle but needs a formal design amendment in Checkpoint D2. Until D2, Sections 5.3.1 and 7.4 and open item 9 (the reason-prefix convention, which assumes the category is not stored) stay as written. No backend code described here exists yet, and Checkpoint 11B onward is not authorized.
+**Status:** Revision 3.2 (2026-11-10) is the **approved architecture baseline**. It was approved by Person A in the project review. The approval is recorded in this metadata by documentation baseline D1 (2026-11-11), which changed no design content. **D2 contract freeze (approved by Person A in the master handover, 2026-11-11):** the contracts that change this baseline are recorded in Sections 1.1, 5.3, 5.4, 6, 7, 8.6, 8.9, 8.10, 9.6, 10.2, 15, 16, 17 and 18: persisted `reason_category` with no reason prefix; the new eligibility outcomes and precedence; the 2,000-code-point ticket text limits and the five-value issue-type allowlist; LLM-generated ticket summaries with a deterministic fallback; the support-issue lifecycle; `user_version` 0/1/>1 with a fresh-database-only policy; three connection factories; and the read projections. All other Revision 3.2 decisions are unchanged. **Implementation status (2026-11-11):** the D2 database layer and the backend described here are implemented in the `rukum/db` working tree (uncommitted). Section 19 records what the code does, including every place it differs from this design. The commit awaits Technical Lead review.
 **Revision history (all dated 2026-11-10):**
 - **Revision 1:** initial draft with the four Technical Lead decisions D1–D4.
 - **Revision 2:** responded to the Technical Lead's review of Revision 1. Added the server-side pending-action store, `prechecks_passed`, customer-selected return categories, session inactivity expiry, the read-only health check, the restored D4 limits, and the Conversation Scope Guard proposal.
 - **Revision 3:** responded to the review of Revision 2. Removed the placeholder support address, preserved the full 1,000-character reason input, separated atomic claim, at-most-once dispatch, idempotent execution and recoverable result, added atomic state transitions, the dedicated read-only health connection and the diagnostic, the clarification context, `get_my_tickets`, the session bearer-handle note, and the verified seed timing.
 - **Revision 3.1:** responded to the review of Revision 3. Corrected the ambiguous-message test wording, added the atomic write-capacity reservation, and added the WAL-mode and sidecar precondition for the health check.
 - **Revision 3.2:** responded to the review of Revision 3.1. Protects in-flight reservations during session cleanup, corrects the busy-timeout wording, and updates this metadata.
+- **D1 (2026-11-11):** metadata only. Recorded Revision 3.2 as the approved baseline.
+- **D2 contract freeze (2026-11-11):** reconciled the design with the contracts approved in the master handover (see the Status line). Documentation only at the time; implemented since (Section 19).
 
-**Scope of this document:** design only. No application code, tests, schema, seed behavior, database content, dependencies, LLM, RAG, or Streamlit code is created or changed by this checkpoint.
+**Scope of this document:** written as design only (no code was created by that checkpoint; the code now exists and Section 19 records it). At that checkpoint no application code, tests, schema, seed behavior, database content, dependencies, LLM, RAG, or Streamlit code is created or changed by this checkpoint.
 **Inputs:** `docs/00_project_discovery.md`, `docs/01_database_design.md`, `docs/02_database_implementation_plan.md`, `AGENTS.md`, the Checkpoint 10 inspection report, the four Technical Lead decisions in Section 1, and the Technical Lead's Revision 1 review.
 
 **Relationship to the database documents.** `docs/01` and `docs/02` remain canonical for the database, the repository, and the approved write contracts. This document builds on them and does not change them. The only addition it requires to the repository layer is one new read-only operation (Section 6), which needs matching amendments to `docs/01` Section F and `docs/02` Section 4 in a separately approved change. Where this document and `docs/01` or `docs/02` disagree, report the conflict instead of choosing silently.
@@ -33,10 +35,12 @@
 
 | Field | Approved maximum |
 |---|---|
-| Return reason | 1,000 characters |
-| Ticket description | 4,000 characters |
+| Return reason | 1,000 Unicode code points |
+| Ticket description | 2,000 Unicode code points (D2 freeze; was 4,000) |
 | Conversation summary | 2,000 characters |
-| Issue type | 100 characters |
+| Issue type | Exact allowlist: `order`, `return`, `payment`, `product`, `general` (D2 freeze; was 100 characters) |
+
+**D2 contract freeze changes to D4 (2026-11-11, master handover).** The D4 statement that free-text limits are enforced "at the tool/application boundary first" and that the "database schema [is] not changed" no longer holds. The **return reason** limit (1,000 Unicode code points) is enforced at the tool boundary, in the repository and by SQLite `CHECK` constraints. The **ticket description** and **conversation summary** limits are 2,000 code points each, with the same three-layer enforcement and exact-text preservation. The ticket description limit was 4,000 and is now 2,000 per the handover. The **issue type** is an exact allowlist instead of a free-text field of up to 100 characters. See `docs/01` Sections C and G.
 
 ### 1.2 Goals
 - One stable backend entry point for the future Streamlit frontend, which stays independent of repository and database details.
@@ -66,7 +70,7 @@ Orchestrator (later) ── LLM + intent routing; sees tool schemas only
 Tool layer (app/tools) ── ctx-bound, validated, normalized results (Section 5)
         │                    │                      │
         ▼                    ▼                      ▼
-Repository (app/db)     Product catalog         RAG retriever (later)
+Repository (app/db)     Product catalog         BM25 retriever (done)
         │               (Products.json)         (FAQ.md, Policies.md)
         ▼
 SQLite via get_connection()
@@ -74,14 +78,14 @@ SQLite via get_connection()
 
 ### 2.1 Dependency rules
 1. The frontend imports only `app.backend` (its functions and its public result types). It must not import `app.db`, `app.tools`, `app.orchestrator`, `app.rag`, `sqlite3`, or read `data/` files.
-2. Only `app.tools` (including its non-LLM session helpers, such as the login directory in Section 18, item 15) imports `app.db.repository`. The bootstrap command in Section 9 imports only `app.db.connection`, `app.db.schema` and `app.db.seed_data`. The health check in Section 9.4 uses only a dedicated read-only connection from `app.db.connection` and, if approved, a narrow internal demo-readiness diagnostic. It never uses `get_connection()`, the tool layer, or a customer-scoped repository function. No other module runs SQL, and no module except `app.db.connection` calls `sqlite3.connect()`.
+2. Only `app.tools` (including its non-LLM session helpers, such as the login directory in Section 18, item 15) imports `app.db.repository`. The bootstrap command in Section 9 imports only `app.db.connection`, `app.db.schema` and `app.db.seed_data`. The health check in Section 9.4 uses only a dedicated read-only connection from `app.db.connection`. It never uses `get_connection()`, the tool layer, or a customer-scoped repository function. No other module runs SQL, and no module except `app.db.connection` calls `sqlite3.connect()`.
 3. The orchestrator and the LLM reach data only through registered tools. The LLM never receives a connection, a cursor, SQL, a customer ID, or a repository function.
 4. Dependencies point downward only. The repository knows nothing about tools, the backend, or the LLM.
 5. Public backend types are plain frozen dataclasses of strings, numbers, booleans, lists and tuples. They carry no `sqlite3.Row`, no repository dict, and no internal exception.
 6. The scope guard (Section 13) runs inside the backend service, before the orchestrator. It imports no repository, tool, or LLM module and performs no I/O.
 
 ### 2.2 Proposed module layout
-Nothing below exists yet. Names are proposals for approval. The README already lists `tools/`, `rag/`, `orchestrator/`, and `ui/`; `backend/` and `catalog/` are additions.
+These modules now exist (Section 19 records what the code does). Names below were proposals that were approved. The README lists `tools/`, `rag/`, `orchestrator/`, and `ui/`; `backend/` and `catalog/` are additions.
 
 ```text
 app/
@@ -90,7 +94,7 @@ app/
   tools/          # CustomerContext, tool registry, validation, outcomes (Section 5)
   catalog/        # read-only Products.json loader and lookup      (Section 12)
   orchestrator/   # LLM + routing (later checkpoint)
-  rag/            # retrieval over FAQ/Policies (later checkpoint)
+  rag/            # lexical BM25 retrieval over FAQ/Policies (current); embeddings and a vector store are DEFERRED, not implemented
   db/             # existing repository layer; one new read (Section 6)
   ui/             # Streamlit, owned by the frontend developer
 ```
@@ -159,7 +163,7 @@ handle_message(
 
 | Type | Fields | Notes |
 |---|---|---|
-| `LoginOption` | `customer_id`, `display_name` | Simulated login selector only. Needs the customer directory read in Section 18, item 15. |
+| `LoginOption` | `customer_id`, `display_name` | Simulated login selector only. Fed by the approved repository read `list_customers_for_login()`, which returns `customer_id` and the database field `name` (the backend maps `name` to `display_name`). See `docs/01` Section E, D2 amendment, and Section 18, item 15. |
 | `StartSessionResult` | `ok: bool`, `state: ConversationState \| None`, `greeting: str`, `error_code: str \| None` | `error_code` is `unknown_customer` or `unavailable`. On failure `state` is `None`. |
 | `ConversationState` | opaque | A handle created by the backend and stored unmodified by the frontend (for example in `st.session_state`). It identifies a server-side session record (Section 11). It is not a source of authority: copying it grants nothing the original did not have, and it holds no pending action. The frontend never reads or edits it. |
 | `ConfirmationDecision` | `action_id: str`, `accepted: bool` | Produced by a confirm or cancel button. Typed replies work too (Section 8.3). |
@@ -167,7 +171,7 @@ handle_message(
 | `ChatReply` | `text: str`, `state: ConversationState`, `status: str`, `error_code: str \| None`, `pending: PendingView \| None`, `choice: ChoiceView \| None`, `citations: tuple[Citation, ...]`, `request_id: str` | See below. |
 | `PendingView` | `action_id: str`, `kind: str`, `summary: str`, `expires_at: str` | What the frontend shows next to confirm and cancel buttons. `action_id` is the random identifier of the server-side pending action (Section 8.1). |
 | `ChoiceView` | `prompt_id: str`, `question: str`, `options: tuple[ChoiceOption, ...]` | A fixed set of options. `ChoiceOption` is `option_id` and `label`. |
-| `Citation` | `source: str`, `section: str` | Source document and section for policy answers (filled once RAG exists). |
+| `Citation` | `source: str`, `section: str` | Source document and section for policy answers (filled by the BM25 policy retrieval). |
 
 `ChatReply.status` is one of `ok`, `needs_choice`, `needs_confirmation`, `error`. `ChatReply.error_code` is empty unless the status is `error`. At most one of `pending` and `choice` is set.
 
@@ -195,7 +199,7 @@ Processing order for a call. Each step either finishes the call or passes contro
 
 ```text
 check_backend() -> BackendHealth      # status: "ready" | "not_initialized"
-                                      #         | "stale_demo_data" | "unavailable"
+                                      #         | "schema_incompatible" | "unavailable"
 ```
 
 Lets the frontend show a banner. It takes no customer or session argument and has no customer identity. It is strictly read-only: it never creates, seeds, resets, repairs or otherwise changes a database file, a directory, or any other part of the filesystem. It checks that the file exists before opening anything, opens an existing file only through a dedicated read-only connection (never `get_connection()`), and keeps its demo-readiness diagnostic separate from the customer-facing tools. See Section 9.4.
@@ -240,27 +244,33 @@ ToolResult(
 ```
 
 ### 5.3 Input normalization, limits and counters (D4)
-These limits are enforced in the tool and backend layer before any repository call. The repository write contracts and the schema are unchanged. Lengths are counted in characters after sanitization.
+These limits are enforced in the tool and backend layer before any repository call. Lengths are counted in Unicode code points. **D2 contract freeze:** the return `reason`, the ticket `description` and the ticket `conversation_summary` are also enforced by the repository and by SQLite `CHECK` constraints on the D2 schema (Section 1.1). Other limits are enforced only here.
 
 #### 5.3.1 Approved limits (D4)
 
 | Input | Rule | Approved limit |
 |---|---|---|
-| `reason` (return), customer-supplied text | Required, stripped. The limit applies to the customer's own text only. | 1–1,000 characters |
-| `description` (ticket) | Required, stripped | 1–4,000 characters |
-| `conversation_summary` | Built by the backend, not the LLM (Section 8.5). Omitted when empty. | 1–2,000 characters, or omitted |
-| `issue_type` (ticket) | Required, stripped. Baseline is validated free text. | 1–100 characters |
+| `reason` (return) | Required string, preserved exactly. The customer's explanation is the only thing stored in `reason`. Python `.strip()` decides blankness. NUL and lone surrogates rejected. NFC normalization, if applied by this layer, happens before the length check. **D2:** also enforced by the repository and SQLite | 1–1,000 Unicode code points |
+| `description` (ticket) | Required string, built by the orchestrator from the relevant original customer messages (Section 8.10). Nonblank by `.strip()`, NUL and lone surrogates rejected, exact text preserved. **D2:** also enforced by the repository and SQLite | 1–2,000 Unicode code points |
+| `conversation_summary` | Produced by the separate summarization step or the deterministic fallback (Section 8.9), then validated. Same rules as `description` | 1–2,000 Unicode code points |
+| `issue_type` (ticket) | Required. Exact, case-sensitive allowlist: `order`, `return`, `payment`, `product`, `general`. The LLM may propose it and the backend validates it. Missing or invalid values are rejected, not written | allowlist |
 
-**Customer text versus backend metadata.** The approved 1,000-character limit belongs to the text the customer supplies. The backend never reduces it for internal metadata. If the category is encoded into the existing `reason` column (Section 7.4), the prefix `[damaged] `, `[wrong_product] ` or `[standard] ` is backend-generated metadata. It does not count against the customer's 1,000-character allowance. The longest prefix, `[wrong_product] `, is 16 characters, so the longest stored `reason` string is **1,016 characters** (a 1,000-character customer reason plus the prefix). Neither the schema nor the repository write contract limits the length of `reason` (the repository checks only that it is a non-blank string), so the longer stored string needs no change to either. This checkpoint changes neither.
+**Return reason (D2 contract; implemented).** The category is stored in its own column, `return_requests.reason_category`, and `reason` stores **only the customer's explanation, exactly as accepted**. No category prefix is ever stored, and the repository does not strip, normalize or truncate. The Revision 3.2 prefix convention and its 1,016-character stored maximum are removed. The limit counts Unicode code points (the same as Python `len()` and, for NUL-free text, SQLite `length()`), not bytes and not grapheme clusters.
 
-**Approved enum.** `reason_category` takes exactly the values `damaged`, `wrong_product` and `standard`. These values, and the windows they select, already belong to the approved Checkpoint 7A repository contract (`docs/01` Section F) and are not proposals here. What is proposed is only the customer-facing selection workflow in Section 7 (who sets the value and how), not the existence or meaning of the values.
+The limit is enforced at three layers (`docs/01` Section C, D2 schema contract):
+1. **Tool/application boundary** (this section): failures are `invalid_input`.
+2. **Repository:** a non-string raises `TypeError`; NUL, a lone surrogate, a value blank by `.strip()` or a value over the limit raises `ValueError`.
+3. **SQLite:** `CHECK` constraints for `typeof = 'text'`, no NUL, the length limit and non-empty after trimming the six ASCII whitespace characters.
+
+Python `.strip()` is authoritative. SQLite's narrow whitespace set is a backstop and is not claimed to equal Python's Unicode whitespace rules.
+
+**Approved enum.** `reason_category` takes exactly the values `damaged`, `wrong_product` and `standard`. These values, and the windows they select, already belong to the approved Checkpoint 7A repository contract (`docs/01` Section F) and are not proposals here. Under the D2 amendment they are also persisted and constrained in the database. The customer selects the category and the LLM never selects or assigns it (Section 7). What remains a proposal is only the detailed selection workflow in Section 7.
 
 #### 5.3.2 Separate proposals (not approved)
 Each of the following is an additional or stricter rule that requires Technical Lead approval. None of them overrides a limit in 5.3.1.
 
 | Input | Proposal | Status |
 |---|---|---|
-| `issue_type` | Restrict to the enum in Section 10.2, instead of validated free text of up to 100 characters. If not approved, the baseline in 5.3.1 applies. | **[Proposed]** |
 | Customer chat message | Required text, at most 2,000 characters | **[Proposed]** |
 | `order_id`, `item_id` | Strip whitespace, uppercase, must match `[A-Z0-9_-]+`, 1–20 characters. Otherwise `invalid_input`. | **[Proposed]** |
 | Product search query | Required, stripped, 1–100 characters | **[Proposed]** |
@@ -292,22 +302,22 @@ Order and item IDs are normalized only for convenience ("ord1001" becomes "ORD10
 |---|---|---|---|
 | `list_my_orders` | none | `list_customer_orders` | Summaries only: order ID, status, order date, total. |
 | `get_order_status` | `order_id` | `get_order`, `get_order_items`, catalog | Status, delivery date, payment status, refund status and amount, items with product names. |
-| `get_my_returns` | none | `get_customer_returns` | Return ID, order and item, status, date. No `reason` text. |
-| `get_my_tickets` **[Proposed]** | none | `get_customer_tickets` | See Section 5.5. No `description` and no `conversation_summary`. |
-| `start_return_request` | `order_id`, `item_id`, `reason` | Stores a return draft in the session record | No `reason_category` argument. Returns `needs_choice` so the customer selects the category (Section 7). Never writes. |
+| `get_my_returns` | none | `get_customer_returns` | At most 10 recent returns for the trusted customer, ordered by `requested_at` descending (the `return_id` tie-break is an open item). Exactly these fields: `return_id`, `order_id`, `item_id`, `status`, `requested_at`, `reason_category`. Never `reason` and never `customer_id`. Built by an explicit allowlist projection in the backend |
+| `get_my_tickets` | none | `get_customer_tickets` | See Section 5.5. At most 10 recent tickets. Exactly these fields: `ticket_id`, `issue_type`, `order_id`, `status`, `priority`, `created_at`. No `customer_id`, `description` or `conversation_summary` |
+| `start_return_request` | `order_id`, `item_id` | Stores a return draft in the session record | No `reason` and no `reason_category` argument (a `reason` the model sends anyway is ignored). The stored reason is always the customer's own message (Section 19.2); the customer then selects the category (Section 7). Never writes. |
 | `start_support_ticket` | `issue_type`, `description`, `order_id` (optional) | Stages a pending action | Never writes. Returns `needs_confirmation` (Section 8). |
 | `get_refund_policy` | `order_id` (optional) | policy source, plus `get_order` when `order_id` is given | Policy facts with citations, and that order's refund status and amount if supplied. |
 | `lookup_product` | `query` or `product_id` | catalog | Section 12. |
-| `search_policies` | `query` | RAG retriever | Reserved. Contract defined in the RAG checkpoint. |
+| `search_policies` | `query` | BM25 retriever (`app/rag/retriever.py`) | **Implemented.** Lexical BM25 over `FAQ.md` (one chunk per Q&A) and `Policies.md` (one chunk per section); returns at most 3 passages with their source and section, or none. Embeddings and a vector store are deferred. |
 
-### 5.5 `get_my_tickets` (proposed)
+### 5.5 `get_my_tickets` (approved by Person A, 2026-11-11)
 The repository already has `get_customer_tickets(authenticated_customer_id)`, which returns the authenticated customer's tickets, most recent first, with the keys `ticket_id`, `customer_id`, `order_id`, `issue_type`, `description`, `conversation_summary`, `status`, `priority` and `created_at`. A customer who created a ticket needs to be able to ask about it later, and `get_my_returns` has no ticket counterpart. This proposal adds one tool. It is an additive use of an existing repository operation and does not change that operation or its contract.
 
 Requirements:
 - **No arguments.** There is no customer ID, ticket ID or filter argument. Identity comes only from the injected `CustomerContext`, and the tool calls `get_customer_tickets(ctx.customer_id)`. A call that carries any argument is rejected with `invalid_input` (Section 3.2).
 - **Minimum fields returned to the LLM:** `ticket_id`, `issue_type`, `order_id` (the linked order reference, or none), `status`, `priority` and `created_at`. Nothing else.
 - **Never returned:** the stored `description` and `conversation_summary`, and the `customer_id`. These are customer- and LLM-written text that could carry injected instructions (Section 5.1), so the tool drops them in the tool layer before building the result.
-- **Size bound.** Only the most recent tickets are returned, up to a limit **[Proposed]** of 10, with the total count, so a long list cannot inflate the LLM context.
+- **Size bound.** Only the most recent tickets are returned, up to a limit of 10 (approved), with the total count, so a long list cannot inflate the LLM context.
 - **Behavior.** The customer can ask whether a ticket they created is open, in progress, resolved or closed, using the stored `status`. The assistant reports only what the record says. It does not predict resolution times, promise follow-up or describe actions taken by support staff that the record does not show.
 - **Failures.** `sqlite3.Error` or `ConnectionError_` is caught in the tool layer and returned as `unavailable`, with no database text (Section 15).
 - **Isolation.** Another customer's tickets are never returned, because the repository filters by `customer_id` in SQL. A customer who asks about another customer's ticket ID gets the same reply as for a nonexistent one, because the tool offers no way to look up a ticket by ID.
@@ -330,27 +340,30 @@ check_return_eligibility(
     item_id,
     *,
     reason_category,
-    reference_time=None,
 ) -> dict
 ```
 
-Read-only. It takes the same inputs, applies the same validation, and uses the same time-window rules as `create_return_request` (`docs/01` Section F), but never writes. The function name follows D1. Its successful outcome is deliberately named `prechecks_passed`, not `eligible`, because it does not establish full eligibility (Section 6.3). An alternative function name, `check_return_prechecks`, is listed in Section 18, item 13. It follows the same check order, stopping at the first rejection:
+Read-only and advisory. It takes no caller-supplied time: it captures one UTC `now` from the shared `utc_now()` clock inside one short read transaction and evaluates against one consistent snapshot (`docs/01` Section F, D2 return contract). It never writes. The function name follows D1. The success outcome is `eligible`, which is a **preliminary** result and not a guarantee (Section 6.3). The precedence, stopping at the first failure, is:
 
-1. Validate inputs (before any connection).
-2. Order ownership. Nonexistent and unowned both give `not_found`.
-3. Item belongs to the order, otherwise `item_mismatch`.
-4. An active return for the item (`Requested` or `Approved`) gives `duplicate`.
-5. Time window from `delivered_at` and `reason_category`, with inclusive boundaries and the same handling of NULL, future and malformed timestamps as the write.
+1. Validate arguments and the category (before any connection).
+2. Look up the order with trusted customer scope. A missing or unowned order gives `order_not_found`, with no existence disclosure.
+3. The order status must be exactly `Delivered`, otherwise `order_status_ineligible`. `Returned`, `Cancelled` and every other status are ineligible.
+4. The item must belong to the order, otherwise `item_not_found`.
+5. An active return (`Requested` or `Approved`) gives `active_return_exists`.
+6. The window: `outside_return_window`. A `Delivered` order with no `delivered_at` gives `delivery_timestamp_missing`. A persisted timestamp that is malformed raises `DatabaseDataIntegrityError`.
+7. Otherwise `eligible`.
 
-Validation and reference-time rules are exactly those in `docs/01` Section F: wrong types raise `TypeError`, invalid values raise `ValueError` (including an invalid `reason_category`), `reference_time=None` reads the real UTC clock exactly once, a supplied time must be timezone-aware and is normalized to UTC and truncated to whole seconds.
+Windows are inclusive (`now <= expiry`): `damaged` 48 hours, `wrong_product` 48 hours, `standard` 168 hours. Wrong types raise `TypeError` and invalid values raise `ValueError`.
 
-### 6.2 Proposed result contract
+### 6.2 Result contract
 
 ```text
 {
-  "outcome": "prechecks_passed" | "not_found" | "item_mismatch"
-             | "outside_window" | "duplicate" | "failed",
+  "outcome": "eligible" | "order_not_found" | "order_status_ineligible"
+             | "item_not_found" | "active_return_exists"
+             | "outside_return_window" | "delivery_timestamp_missing",
   "reason_category": "damaged" | "wrong_product" | "standard",
+  "order_status": <owned order's status> | None,
   "window_hours": 48 | 168 | None,
   "delivered_at": "YYYY-MM-DDTHH:MM:SSZ" | None,
   "window_closes_at": "YYYY-MM-DDTHH:MM:SSZ" | None,
@@ -361,45 +374,43 @@ Validation and reference-time rules are exactly those in `docs/01` Section F: wr
 }
 ```
 
-The field `window_closes_at` replaces the Revision 1 name `eligible_until`, because the time is the end of the time window and not a promise of eligibility.
+`reason_category` is the validated input echoed in every returned result. `order_status` is set only when the order exists **and is owned by the customer**, and is `None` for `order_not_found`, so it discloses nothing about a missing or unowned order. The window fields are set only when the window was evaluated. Database failures are typed exceptions (Section 15), not a result.
 
-**`reason_category` in every outcome.** `reason_category` is the validated input, echoed back in every returned result, including `not_found`, `item_mismatch`, `duplicate` and `failed`. It is validated before any database access, so it is always one of the three enum values in a returned result, and it discloses nothing about stored data or other customers. When validation fails, nothing is returned, because the function raises `TypeError` or `ValueError` as the write does. The echo lets the caller keep the category with the result without re-deriving it, and it never replaces or changes the category.
+| Outcome | `order_status` | `window_hours` | `delivered_at` | `window_closes_at` | `evaluated_at` | `window_reason` | `existing_return_status` |
+|---|---|---|---|---|---|---|---|
+| `eligible` | set | set | set | set | set | `None` | `None` |
+| `outside_return_window`, expired | set | set | set | set | set | `expired` | `None` |
+| `outside_return_window`, delivery after now | set | set | set | set | set | `delivery_after_reference` | `None` |
+| `delivery_timestamp_missing` | set | set | `None` | `None` | set | `delivery_not_recorded` | `None` |
+| `active_return_exists` | set | `None` | `None` | `None` | `None` | `None` | set |
+| `order_status_ineligible`, `item_not_found` | set | `None` | `None` | `None` | `None` | `None` | `None` |
+| `order_not_found` | `None` | `None` | `None` | `None` | `None` | `None` | `None` |
 
-| Outcome | `window_hours` | `delivered_at` | `window_closes_at` | `evaluated_at` | `window_reason` | `existing_return_status` |
-|---|---|---|---|---|---|---|
-| `prechecks_passed` | set | set | set | set | `None` | `None` |
-| `outside_window`, expired | set | set | set | set | `expired` | `None` |
-| `outside_window`, delivery in the future | set | set | set | set | `delivery_after_reference` | `None` |
-| `outside_window`, `delivered_at` NULL or malformed | set | `None` | `None` | set | `delivery_not_recorded` | `None` |
-| `duplicate` | `None` | `None` | `None` | `None` | `None` | set |
-| `not_found`, `item_mismatch`, `failed` | `None` | `None` | `None` | `None` | `None` | `None` |
+A delivery time later than the captured `now` also violates the timestamp integrity rule (`docs/01` Section C, D2 schema contract, point 3). How such a persisted value is reported (`outside_return_window` with `delivery_after_reference`, or `DatabaseDataIntegrityError`) is settled at D6. The write path returns only the compact outcome and no `order_status` (Section 6.4).
 
-`window_hours` is set only when the window was actually evaluated. `window_reason` exists only on this read; the write's contract and result are unchanged and still return only `outside_window`. Only the owner's own data is ever returned, so no field discloses anything about another customer. A database failure gives the generic `failed` result with no database text, the same convention as `create_return_request` (Section 18, item 14 lists the alternative).
-
-### 6.3 What `prechecks_passed` means, and what it does not
-`prechecks_passed` establishes exactly four facts at the moment of the check:
+### 6.3 What `eligible` means, and what it does not
+`eligible` establishes exactly these facts at the moment of the check:
 
 1. The order belongs to the authenticated customer.
-2. The item belongs to that order.
-3. There is no active duplicate return (`Requested` or `Approved`) for the item.
-4. The applicable delivery-time window, 48 hours for `damaged` and `wrong_product` or 168 hours for `standard`, has not closed.
+2. The order's status is exactly `Delivered`.
+3. The item belongs to that order.
+4. There is no active duplicate return (`Requested` or `Approved`) for the item.
+5. The delivery timestamp is present and valid, and the applicable window (48 hours for `damaged` and `wrong_product`, 168 hours for `standard`) has not closed.
 
-It does **not** establish that the item is returnable under every policy condition. The product catalog and the repository do not represent non-returnable product categories, and nothing checks the product's condition, packaging, or the other conditions in `Policies.md` Section 2 (`docs/01` Section L, item 1). The final review of a return is outside this system.
+It does **not** establish that the item is returnable under every policy condition. The product catalog and the repository do not represent non-returnable product categories, and nothing checks the product's condition, packaging or the other conditions in `Policies.md` Section 2 (`docs/01` Section L, item 1). The final review of a return is outside this system.
 
 Requirements that follow:
-- Customer-facing text for `prechecks_passed` says that the **preliminary checks** or **time-window checks** passed, names what they covered, and states that policy conditions still apply. It never says or implies that the item is eligible, approved, accepted, guaranteed, or definitely returnable. The templates in Section 7.5 are the only permitted wording.
-- The tool result sent to the LLM carries the code `prechecks_passed` and a fixed note that forbids "eligible" or "approved" wording.
+- Customer-facing text for `eligible` says that the **preliminary checks** or **time-window checks** passed, names what they covered, and states that policy conditions still apply. It never says or implies that the item is definitely eligible, approved, accepted or guaranteed, even though the outcome code is named `eligible`. The templates in Section 7.5 are the only permitted wording.
+- The tool result sent to the LLM carries the code `eligible` and a fixed note that forbids "approved" or "guaranteed" wording and requires the preliminary-check wording.
 
 ### 6.4 Relationship to `create_return_request`
-- The check is **advisory**. Time passes and other sessions act between a check and a create. The final `create_return_request` write remains authoritative. It re-validates every rule inside its own `BEGIN IMMEDIATE` transaction. A check that returned `prechecks_passed` can still be followed by `outside_window` or `duplicate` at create time, and the backend must handle that (Section 8.4).
-- The time-window rules must have a single source of truth. The implementation checkpoint extracts the window table and window evaluation so the check and the write share them. Any change to `create_return_request` code in that checkpoint must leave all 290 existing return and ticket tests (188 in `tests/test_returns.py`, 102 in `tests/test_tickets.py`) unchanged and passing.
-- This is an additive operation. It does not change the approved write contracts, outcomes, result shapes, ID formats or transaction behavior.
+- The check is **advisory**. Time passes and other sessions act between a check and a create. The write remains authoritative and independently rechecks every rule inside its own `BEGIN IMMEDIATE` transaction with one captured timestamp. A check that returned `eligible` can still be followed by any ineligible outcome at create time, and the backend must handle that (Section 8.4).
+- The write result stays compact: `{"outcome": "created", "return_id": "RET_<32 lowercase hex>"}` or `{"outcome": <ineligible outcome>, "return_id": None}`. It never carries `order_status`. If the backend needs a status-specific message after a rejected write, it calls the existing customer-scoped `get_order()`.
+- The eligibility rules have a single source of truth, shared by the check and the write. Shared evaluators never begin or commit a transaction, and public repository methods own their transactions. No LLM or network call occurs inside a transaction.
+- Applying this contract requires updating the legacy return and ticket tests (outcome names, identifier formats, the removed `reference_time` parameter, result shapes) without weakening any assertion (`docs/02` Section 8, item 8).
 
-### 6.5 Required later amendments (not made now)
-These are required before implementation and must be approved and committed separately. `docs/01` and `docs/02` are not modified by this checkpoint.
-- **`docs/01` Section F:** add `check_return_eligibility` with the contract in 6.1, the result in 6.2, the meaning and limits of `prechecks_passed` in 6.3, and the statement that `create_return_request` remains authoritative.
-- **`docs/02` Section 4:** add the function to the repository interface and the implementation sequencing, the shared window helper, and the parity and read-only tests listed in Section 16.
-- Both documents also need the `list_customers_for_login` text if Section 18, item 15 is approved.
+### 6.5 Where the contract is recorded
+The repository contracts are in `docs/01` Sections C, F and G (D2 contract freeze) and `docs/02` Section 4. The login directory read, `list_customers_for_login()`, returns `customer_id` and `name` and is in `docs/01` Section E.
 
 ### 6.6 Known limitation (unchanged)
 Category-based non-returnable enforcement is still an MVP limitation (`docs/01` Section L, item 1). Where the customer asks about non-returnable categories, the assistant quotes `Policies.md` Section 2 and offers a support ticket. It does not state a returnability verdict for a specific product.
@@ -427,7 +438,7 @@ The category decides the time window. The repository trusts `reason_category`, a
 
 ### 7.4 Stored reason and the confirmation preview
 - The selected category is shown in the confirmation preview (Section 8.2) in words, for example "Reason category: Damaged or defective item (48-hour window)". The customer sees it before approving.
-- The category is not a repository field. The tool boundary prefixes the stored reason with it, for example `[damaged] <customer reason>`, so support staff can see it. The prefix is backend-generated metadata, not customer input. It does not consume the customer's approved 1,000-character allowance, and the longest stored string is 1,016 characters (Section 5.3.1). Customer text is always validated before the prefix is added, and the prefix is never taken from customer or LLM text. This is a tool-layer convention only; the repository stores the reason as given and its contract and the schema are unchanged. The prefix convention is a proposal for approval (Section 18, item 9).
+- **D2 contract freeze (approved by Person A; implemented): the category is persisted in its own column.** `create_return_request` stores the selected category in `return_requests.reason_category`, and `reason` holds **only the customer's own explanation, exactly as accepted**. The tool layer **never prefixes** the reason with the category, and no `[damaged]`, `[wrong_product]` or `[standard]` text is ever added. Support staff and the backend read paths see the category from its column. What the LLM-visible read tools expose is defined in Section 5.4. The customer's reason may use the full 1,000 Unicode code points (Section 5.3.1). The Revision 3.2 prefix convention is removed. The column is implemented.
 - Photo evidence (`FAQ.md` Q3.4) cannot be uploaded here. The assistant says so and suggests a ticket where the customer wants support to follow up.
 
 ### 7.5 Outcome-to-message mapping: return prechecks and return creation
@@ -435,21 +446,22 @@ These apply to `check_return_eligibility` and to the result of `create_return_re
 
 | Outcome | Meaning | Customer-facing meaning | Writes? |
 |---|---|---|---|
-| `prechecks_passed` (check) | The four facts in Section 6.3 hold now | "The preliminary checks passed: this item is in an order on your account, there is no open return for it, and it is inside the `<48-hour / 7-day>` window, which closes `<time> UTC`. Other return conditions still apply." Then show the confirmation preview. Never "eligible" or "approved" | no |
-| `created` | Row committed | "Your return request `<RET-…>` has been recorded with status Requested." States what the system did not do (Section 10.4). | yes |
-| `not_found` | Order not on this account, or does not exist | "I couldn't find that order on your account." Identical for nonexistent and unowned orders | no |
-| `item_mismatch` | Item not in that (owned) order | "That item isn't part of order `<ORDER>`." Offers the order's actual items | no |
-| `outside_window`, `expired` | The window closed | "The `<48-hour / 7-day>` window for this category closed on `<time> UTC`." Where the category is `damaged` or `wrong_product` and the 7-day window is still open, offer the choice prompt again (Section 7.3). Offer a ticket | no |
-| `outside_window`, `delivery_after_reference` | The recorded delivery time is later than now | "The delivery time recorded for this order is later than the current time, so I can't check a return window." Offer a ticket | no |
-| `outside_window`, `delivery_not_recorded` | `delivered_at` is NULL or malformed | "I can't find a valid delivery time recorded for this order, so I can't check the time window." May state the order's recorded status. Offer a ticket. Never says the order "has not been delivered" or "is not delivered" | no |
-| `duplicate` | Active return already exists for the item | "You already have a return request for this item" with its status. Offer to look at returns. No second request | no |
-| `failed` | Database or connection failure | "Something went wrong and I couldn't complete that. Nothing was submitted." Offer a ticket or a retry. Never claims success | no (or rolled back) |
+| `eligible` (check) | The five facts in Section 6.3 hold now | "The preliminary checks passed: this item is in an order on your account, the order is marked delivered, there is no open return for it, and it is inside the `<48-hour / 7-day>` window, which closes `<time> UTC`. Other return conditions still apply." Then show the confirmation preview. Never "definitely eligible" or "approved" | no |
+| `created` | Row committed | "Your return request `<RET_…>` has been recorded with status Requested." States what the system did not do (Section 10.4) | yes |
+| `order_not_found` | Order not on this account, or does not exist | "I couldn't find that order on your account." Identical for nonexistent and unowned orders | no |
+| `order_status_ineligible` | The owned order's status is not `Delivered` | Chosen by the order's status (from the check's `order_status`, or from `get_order()` after a rejected write): in transit (`Processing`, `Packed`, `Shipped`, `Out for Delivery`): "This order hasn't been delivered yet, so I can't start a return." `Cancelled`: "This order was cancelled, so a return doesn't apply." `Returned`: "This order has already been returned, so I can't start another return for it." Never says a `Returned` order was not delivered. Offer a ticket where useful | no |
+| `item_not_found` | The item is not in that (owned) order | "That item isn't part of order `<ORDER>`." Offers the order's actual items | no |
+| `active_return_exists` | An active return already exists for the item | "You already have a return request for this item" with its status. No second request | no |
+| `outside_return_window`, `expired` | The window closed | "The `<48-hour / 7-day>` window for this category closed on `<time> UTC`." Where the category is `damaged` or `wrong_product` and the 7-day window is still open, offer the choice prompt again (Section 7.3). Offer a ticket | no |
+| `outside_return_window`, `delivery_after_reference` | The recorded delivery time is later than now | "The delivery time recorded for this order is later than the current time, so I can't check a return window." Offer a ticket | no |
+| `delivery_timestamp_missing` | A `Delivered` order has no delivery time | "I can't find a valid delivery time recorded for this order, so I can't check the time window." Offer a ticket. Never says the order "has not been delivered" | no |
+| database error (typed exception) | Infrastructure, integrity or constraint failure (Section 15) | "Something went wrong and I couldn't complete that. Nothing was submitted." Offer a ticket or a retry. Never claims success. No SQL, path or stack trace | no |
 
 Notes:
-- A missing or malformed `delivered_at` means only that a valid delivery timestamp is not recorded. It can occur for an order that is in transit, for a delivered order whose timestamp is missing, or for corrupted data. The assistant does not infer which.
-- In the write path (`create_return_request`), the repository returns the single outcome `outside_window` and no detail. The backend maps it to a neutral message: "I can't confirm that this item is still inside its return window, so nothing was submitted." It does not reuse a detail from an earlier check, which may be stale, and it does not guess a specific cause. It may offer to run the check again.
-- The repository returns `created` only after `COMMIT`, so a `failed` result means no return was recorded. The reply says so.
-- `reason_category` accompanies every outcome in the check (Section 6.2). In customer text the category appears only where it helps, for example in the window message.
+- A missing delivery timestamp on a `Delivered` order is a data integrity safeguard, not a normal state. The assistant does not infer why it is missing.
+- In the write path the repository returns only the compact outcome. For a status-based rejection the backend calls `get_order()` to choose the wording. It does not reuse a detail from an earlier check, which may be stale, and it never guesses a cause.
+- The repository returns `created` only after `COMMIT`, so a typed database error means no return was recorded. The reply says so.
+- `reason_category` accompanies every check result (Section 6.2). In customer text the category appears only where it helps, for example in the window message.
 
 ---
 
@@ -479,7 +491,7 @@ PendingAction(
     consumed_at: <UTC> | None,
     reservation: "held" | "committed" | "released" | None,   # write-capacity slot, Section 8.4
     outcome: str | None,    # repository outcome code, set after the write; None if unknown
-    result_id: str | None,  # RET-… or TKT-… after `created`
+    result_id: str | None,  # RET_… or TKT_… after `created`
 )
 ```
 
@@ -496,9 +508,9 @@ The `PendingView` shown to the customer is built from the record's `summary`. Th
 
 **Ticket preview** shows all of the following, exactly as they will be stored:
 1. the issue type;
-2. the description text;
+2. the description text, which is the exact original customer messages the orchestrator selected (Section 8.10);
 3. the order reference the customer supplied, if any, together with a note that whether it is linked to the customer's account is checked only when the ticket is created;
-4. the full conversation summary that will be recorded with the ticket, or a statement that none will be recorded.
+4. the conversation summary that will be recorded, which is the validated summarizer output or the labeled fallback text (Section 8.9).
 
 ### 8.3 Return flow and decisions
 
@@ -513,9 +525,9 @@ The `PendingView` shown to the customer is built from the record's `summary`. Th
         │
  backend calls check_return_eligibility with that category
         │
-        ├─ not prechecks_passed ──► explain (Section 7.5); no pending action
+        ├─ not eligible ──► explain (Section 7.5); no pending action
         │
-        ▼ prechecks_passed
+        ▼ eligible
  stage PendingAction in the store ──► reply status "needs_confirmation"
         │      (preview includes the selected category)
         ▼
@@ -540,10 +552,10 @@ Runs only on a valid accepted decision. The order of steps is fixed. In particul
 1. **Claim and reserve capacity, atomically.** Call `claim(action_id, customer_id, session_id, now)` on the store. In **one** indivisible critical section it succeeds only if all of these hold: the action exists, `status == "pending"`, its `customer_id` and `session_id` equal those of the current session, `now < expires_at`, and the session has write capacity for the action's kind, that is `committed + reserved < cap` (Section 5.3.3). On success it sets `status = "consumed"`, `consumed_at = now` and `reservation = "held"`, and increments the session's `reserved` count for that kind by one. On failure it changes nothing, except in the capacity case below, and returns the reason (`unknown`, `wrong_owner`, `expired`, `consumed`, `cancelled`, `rate_limited`). Exactly one of any number of concurrent requests for the same action can succeed. Every other request, whether it arrives at the same instant or later, fails the claim.
 2. If the claim failed, reply as in Section 8.3 and **do not write**. Stop. If the only reason was capacity (`rate_limited`), the action is set to `cancelled` in the same critical section, so it is never left `consumed` without a write, and the reply is `rate_limited`.
 3. No lock is held from here until step 5. No repository, SQLite or LLM call is ever made while a lock is held.
-4. Call the repository write with arguments taken **only** from the claimed record's frozen `params`. The confirmation message, the decision's other fields, and the LLM contribute nothing to the arguments. `reference_time` is supplied explicitly from the injected clock (Section 9.5) and read once.
+4. Call the repository write with arguments taken **only** from the claimed record's frozen `params`. The confirmation message, the decision's other fields, and the LLM contribute nothing to the arguments. The repository captures one UTC timestamp for the operation after it begins its transaction (Section 6.4).
 5. **Finalize, atomically, in a `finally` that always runs** once the repository call returns or raises. In one critical section:
    - the repository outcome is `created`: record the outcome and result ID, increment the session's **committed** count for the kind, decrement its **reserved** count, and set `reservation = "committed"`;
-   - any other outcome (`not_found`, `item_mismatch`, `outside_window`, `duplicate`, `failed`): record the outcome, decrement the **reserved** count, set `reservation = "released"`, and do **not** increment the committed count;
+   - any other outcome (any ineligible outcome, or a typed database error): record the outcome, decrement the **reserved** count, set `reservation = "released"`, and do **not** increment the committed count;
    - an unexpected exception from the call: the approved repository contract rolls back before re-raising, so nothing was committed. Treat it as a non-`created` outcome (outcome unset, reservation released), then let the backend boundary handle the exception (Section 15).
 
    Because the finalize step is in a `finally`, no exception path leaves a reservation held while the process is alive. The outcome record is a separate step from the SQLite write in step 4 and is **not** atomic with it (Section 8.5).
@@ -556,7 +568,7 @@ Runs only on a valid accepted decision. The order of steps is fixed. In particul
 
 **Session end or expiry while a write is in flight.** Ending or expiring a session does not discard a reservation that is still held. The session record stays on the server as a non-active record until its outstanding reservations are finalized (Section 11.2), and the consumed action stays available so that the finalize step in step 5 can record the outcome and commit or release the reservation. The session handle is invalid from the moment the session ends or expires, so the record accepts no new customer request. Pending, unclaimed actions of that session are invalidated at once. Only the already claimed, in-flight write is allowed to finish.
 
-For returns, the repository re-checks every rule inside its transaction. If the window closed or another session created a return since the check, the customer receives the `outside_window` or `duplicate` message and nothing is written. The reply never claims a return exists unless the outcome was `created`.
+For returns, the repository re-checks every rule inside its transaction. If the window closed, the order's status changed away from `Delivered`, or another session created a return since the check, the customer receives the matching ineligible message (for example `outside_return_window`, `order_status_ineligible` or `active_return_exists`) and nothing is written. The reply never claims a return exists unless the outcome was `created`.
 
 ### 8.4.1 Atomicity of all state transitions
 Atomic `claim` is not the only transition that must be consistent under concurrency. Every transition below changes the pending-action store (and, where stated, the session record), and each must be one indivisible step. Two concurrent requests must never observe or produce a state that no sequential order of the same requests could produce.
@@ -597,19 +609,18 @@ A consumed action is never reused or retried by the backend. A claim that succee
 **Explicit MVP limitation.** The single-process MVP does **not** have crash-safe idempotency. It has an atomic claim and at-most-once dispatch within one process lifetime. It has no idempotent business execution and no recoverable result. The record in step 5 of Section 8.4 and the SQLite write in step 4 are two separate durable-or-not operations, so a crash between them loses the link between the action and the business record. A lost reply, and for tickets a duplicate ticket on retry, are known and accepted limitations of the demo.
 
 ### 8.6 Support tickets
-- `start_support_ticket` validates the issue type, description and optional order ID (Section 5.3), builds the `conversation_summary`, stages a pending action, and returns `needs_confirmation` with the preview in Section 8.2.
-- The summary is built by the backend from structured state: the issue type, order IDs the customer mentioned that tool lookups confirmed, and a truncated tail of the customer's own recent in-scope messages. It never includes raw tool output or LLM text, and is capped at 2,000 characters (Section 5.3.1). The customer sees the full summary before approving.
-- An order ID the customer supplies is checked for ownership only inside `create_support_ticket`, as `docs/01` Section G requires. An unowned or nonexistent order produces a general ticket with no order link, and the reply is the same in both cases: "I've logged your ticket. I wasn't able to link it to a specific order, so a support agent will follow up for the order details." It never says the order belongs to someone else.
+- `start_support_ticket` validates the issue type (against the allowlist), the description built by the orchestrator (Section 8.10) and the optional order ID, obtains the summary (Section 8.9), stages a pending action, and returns `needs_confirmation` with the preview in Section 8.2. The summarization call happens **before** staging and before any database transaction.
+- An order ID the customer supplies is checked for ownership only inside `create_support_ticket`, as `docs/01` Section G requires. A nonexistent or unowned order produces a general ticket with `order_id = NULL`, and the reply is the same in both cases. It never says the order belongs to someone else.
+- The repository result for a ticket is only `{"outcome": "created", "ticket_id": "TKT_<32 lowercase hex>"}`. It does not say whether the order was linked, so the reply never claims a link. A customer can see the linked order later through `get_my_tickets`.
 
 Ticket outcome mapping:
 
 | Outcome | Customer-facing meaning |
 |---|---|
-| `created`, order linked | "Your ticket `<TKT-…>` has been created and linked to order `<ORDER>`." |
-| `created`, not linked (no order, or unowned or nonexistent order) | "Your ticket `<TKT-…>` has been created." Add the linking sentence above only when the customer supplied an order ID that was not linked |
-| `failed` | "I couldn't create the ticket. Nothing was recorded. Please contact customer support." No address or other contact detail is given (Section 4.5). |
+| `created` | "Your ticket `<TKT_…>` has been created." No claim about order linkage. If the customer supplied an order reference, the reply may add that a support agent will confirm the order details |
+| database error (typed exception) | "I couldn't create the ticket. Nothing was recorded. Please contact customer support." No contact detail is given (Section 4.5) |
 
-Ticket creation has no duplicate, rejection, or eligibility outcome in the repository. The session cap (Section 5.3.3) is the only rejection, and it is a tool-layer `rate_limited` result.
+Ticket creation has no duplicate or eligibility outcome in the repository. The session cap (Section 5.3.3) is the only rejection, and it is a tool-layer `rate_limited` result.
 
 ### 8.7 In-memory store: requirements and limitations
 This checkpoint adds no database table and no schema change. The first implementation may therefore keep the pending-action store (and the session registry, Section 11) in process memory. That is acceptable for the single-process demo only, and only if all of these hold:
@@ -660,12 +671,51 @@ This approach needs a new repository write contract or a new optional parameter,
 
 Open items 1 and 2 in Section 18 ask the Technical Lead to choose between the in-memory MVP and a durable design, and to decide the idempotency strategy.
 
+
+### 8.9 Ticket conversation summary (D2 contract freeze; approved by Person A, 2026-11-11; implemented)
+- **Roles.** `description` is the original issue text taken from the relevant customer messages (Section 8.10). It is not LLM-rewritten and contains no invented claims. `conversation_summary` is a concise, factual context note for a human agent, generated by the LLM in a separate step. Neither field controls identity, authorization, ticket status or priority.
+- **Order of operations.** The orchestrator selects the relevant context and calls a dedicated summarization operation **before** the repository creates the ticket. No LLM or network call ever occurs while a database transaction is open.
+- **Allowed input.** Only the current support issue and its relevant customer messages, authorized order, payment, return and refund facts, actions confirmed as completed, and unresolved questions. Excluded: unrelated history, other customers' content, system or developer prompts, credentials and session handles, and unnecessary personal or payment information. Confirmed facts are distinguished from unresolved claims.
+- **Isolation.** A dedicated, tool-free call: no database or backend tools and no external APIs. Customer messages and retrieved material are untrusted data, and instructions inside them are not executed. The summarizer produces only a factual support summary and does not invent completed actions, refunds, replacements, cancellations, guarantees or resolutions.
+- **Format.** Plain text, not JSON. The headings, in exactly this order and with irrelevant sections omitted: `Customer Issue`, `Relevant Context`, `Actions Already Taken`, `Current Status`. Attempted actions are distinguished from actions that succeeded.
+- **Validation.** String type; nonblank after `.strip()`; at most 2,000 code points; no NUL or lone surrogate; only the four approved headings in the approved order. Structural validation cannot prove factual grounding, which is enforced through input selection and instructions.
+- **Fallback.** If summarization fails, times out or returns invalid content: no automatic LLM retry; use deterministic application-controlled text that includes a bounded excerpt of the validated issue description and states clearly that automatic summarization was unavailable; keep the complete description in `description`; keep the fallback under 2,000 code points; apply the same validation; and do not block ticket creation because summarization failed.
+
+### 8.10 Support issues and ticket description (D2 contract freeze; approved by Person A, 2026-11-11; implemented)
+**Orchestrator-owned state.** The LLM may propose a classification. It cannot mutate state, decide authorization, or silently resolve or abandon an issue. The orchestrator validates every label and owns every transition.
+
+- **Capacity.** At most two tracked issues per conversation: one active and one suspended. A third issue requires the customer to explicitly choose which existing issue to abandon.
+- **Starting an issue.** The customer reports a product, order, payment, return, delivery or other problem; requests a support action such as cancellation or a return; or explicitly asks for escalation or a ticket. An informational question (for example about the return policy or shipping time) does not start an issue. If a problem becomes apparent later, the context starts then and includes only relevant messages from that point.
+- **Same versus new issue.** "My earbuds are not working" followed by "the left side has no sound" can be the same issue. "My earbuds are not working" followed by "I was charged twice" is a distinct issue, and the two are never combined into one ticket.
+- **Switching.** When a distinct new issue arrives while one is active, the active issue is preserved and, if the choice is not already explicit, the customer is asked whether to continue or switch. Switching suspends the current issue and makes the new one active. Messages and ticket descriptions are kept separate by issue.
+- **Third issue.** With both slots occupied, ask which existing issue to abandon, remove only the issue the customer selects, keep the other, and start the new issue as active. Nothing is silently overwritten, discarded or merged. Abandoning an issue does not mean it was resolved.
+- **Promotion.** When the active issue ends (a ticket was created, the customer confirmed resolution, or the customer abandoned it), the suspended issue becomes active automatically. The assistant acknowledges the previous action and asks whether to continue with the promoted issue, and does not assume it is resolved.
+- **Abandoned issues.** They are removed from the tracked contexts, the transcript is unchanged, and they are never restored automatically. If the customer raises that problem again, a fresh context starts from newly relevant messages, without silently importing the old ones.
+- **Lifecycle.** Active and suspended contexts are cleared on logout, customer switch and session expiration. Suspension starts no separate timeout.
+- **When an issue ends.** Only when a ticket is created successfully, the customer explicitly confirms resolution, or the customer explicitly abandons it. An assistant remark such as "this should fix it" does not end it. If ticket creation fails, the active context is kept for an explicit retry.
+
+**Five-way classification (when an active issue exists).** The LLM may label an incoming message `same_issue`, `new_issue`, `related_but_unclear`, `unrelated` or `switch_to_suspended_issue`.
+
+| Label | Required orchestrator behavior |
+|---|---|
+| `same_issue` | Append the original customer message to the active issue context |
+| `new_issue` | Begin the new-issue and switch flow, preserving the current context |
+| `related_but_unclear` | Ask for clarification and do not combine contexts automatically |
+| `unrelated` | Do not append to either issue and continue normal conversation handling |
+| `switch_to_suspended_issue` | Suspend the active issue, promote the suspended issue, and append the message to the promoted issue |
+
+If the reference to the suspended issue is unclear, ask which issue is meant. The classifier runs only when an active issue exists. With none, a recognizable new issue creates a context directly, and a clear request for a suspended issue promotes it. It is not called for ordinary conversation or informational FAQ questions. If its output is malformed, missing or unknown, neither context changes, the message is not appended to either, the customer is asked to clarify, only a safe error reference is logged, and there is no automatic retry.
+
+**Description selection.** The description uses only relevant original customer messages from the current active issue and current conversation. Exact text is preserved in chronological order, joined by exactly one newline with no labels and no blank lines. Assistant, system, developer, unrelated and prior-session messages are excluded, and the transcript is never altered. The orchestrator selects the messages. The LLM may help judge relevance but cannot rewrite a source message, and the repository does not choose relevance. If the selection exceeds 2,000 code points, the most recent relevant messages are prioritized, complete messages are kept where possible, and order is preserved. A single message longer than 2,000 code points keeps its first 999 code points, one ellipsis character and its last 1,000 code points (2,000 in total), and the original message stays unchanged in the conversation history.
+
 ---
 
 ## 9. Demo data and database initialization (D2)
 
+> **Implementation note (2026-11-11).** The initialization design below is implemented as the command `python -m app.db.seed_data [--db-path PATH] [--reference-time T]` (`app/db/seed_data.py`, function `main`), not as a function named `initialize_demo_database`. `--reference-time` is optional and defaults to the fixed baseline `2026-11-07T00:00:00Z`; the command never reads the clock. Without `--db-path` it uses the application's configured path (`APP_DB_PATH`, default `data/app_d2.db`). The parent directory must already exist. The protected `data/app.db` and any existing database are refused before anything is opened. Where the text below says the reference time is mandatory, the code differs: an operator who wants current-time demo data must pass `--reference-time`.
+
 ### 9.1 Problem being solved
-The seed is anchored at `2026-11-07T00:00:00Z`, while `create_return_request(reference_time=None)` uses the real clock. As real time passes, the seeded Delivered orders leave their return windows (ORD1001, delivered 2026-11-04, leaves the 7-day window at 2026-11-11T00:00:00Z). The demo needs seed dates relative to the real current time.
+The seed is anchored at `2026-11-07T00:00:00Z`, while the legacy `create_return_request(reference_time=None)` uses the real clock (under the D2 contract the repository uses its shared `utc_now()` clock). As real time passes, the seeded Delivered orders leave their return windows (ORD1001, delivered 2026-11-04, leaves the 7-day window at 2026-11-11T00:00:00Z). The demo needs seed dates relative to the real current time. *(Update 2026-11-11: the seed command accepts `--reference-time`; see the implementation note at the start of Section 9.)*
 
 ### 9.2 Initialization contract (proposed)
 A bootstrap operation, run explicitly and never at application startup:
@@ -691,7 +741,7 @@ Verified behavior that this design relies on:
 - It runs its own atomic transaction.
 
 Therefore:
-- Initialization opens the connection with `get_connection(db_path)`, calls `create_schema` and then `seed_database(connection, reference_time=...)` with the supplied aware datetime. It does not change `seed_database`.
+- Initialization is an **explicit, operator-controlled operation** (`docs/01` Section I, D2 amendment), not a normal connection. It opens the target database through the initialization path, which alone may create a missing database file (normal connections fail if the file is missing, Section 9.6). It then calls `create_schema` (the D2 schema, `user_version = 1`, once implemented) and `seed_database(connection, reference_time=...)` with the supplied aware datetime. It does not change `seed_database`. Today's code (schema version 1) still uses `get_connection(db_path)` for this.
 - `reference_time` is mandatory and has no default. It must be a timezone-aware UTC instant supplied by the caller. The command-line wrapper obtains "now" once from the real clock, prints it, and passes it in. Passing it explicitly keeps the behavior reproducible and auditable.
 - `seed_database(None)` is untouched and keeps its fixed `2026-11-07T00:00:00Z` baseline. Existing tests keep using it.
 - The seed's required scenario is preserved: C101 owns ORD1001 (Delivered, inside the 7-day window relative to `reference_time`) and ORD1002, C102 owns ORD1003. Section 9.2.1 records the verified result: every seeded order timestamp is relative to `reference_time`. This document does not change the seed.
@@ -717,7 +767,7 @@ Verified facts:
 | ORD1012 | C106 | T0 − 360h | closed | closed |
 
 Consequences for the demo:
-- A database initialized at T0 keeps its main `standard` scenarios for about 4 to 5.5 days. The 48-hour `damaged` scenario (ORD1005) lasts only **12 hours** after T0. A health check that watches only ORD1001 would still report fresh after that scenario has lapsed. The diagnostic in Section 9.4 therefore reports the two scenario families separately.
+- A database initialized at T0 keeps its main `standard` scenarios for about 4 to 5.5 days. The 48-hour `damaged` scenario (ORD1005) lasts only **12 hours** after T0. The internal demo-readiness diagnostic that would have reported this was dropped (Section 9.4.4), so operators re-initialize a fresh demo database before each demo.
 - The required seed scenario (C101 owns ORD1001 Delivered inside the 7-day window, and ORD1002; C102 owns ORD1003) holds for any timezone-aware `reference_time`, because the offsets do not depend on its value. The customer and item assignments are fixed and do not depend on it.
 - This verification covers the current source. A later change to `seed_data.py` could break these properties, so the implementation checkpoint adds a test that seeds with an arbitrary reference time and asserts these offsets (Section 16).
 
@@ -741,12 +791,12 @@ Reset is a different command from initialization, and it is never run automatica
 2. **Pre-open file safety checks (no SQLite).** Before SQLite opens anything, apply the journal-mode precondition in 9.4.3: read the first 100 bytes of the file in binary mode to check the SQLite header and the journal-mode version bytes, and stat the `-wal`, `-shm` and `-journal` sidecar paths. If the file is not a rollback-journal database, or any sidecar exists, return `unavailable` without opening it. These are plain read-only filesystem operations.
 3. **Dedicated read-only connection.** Only if the pre-open checks pass, open it with the read-only connection described in 9.4.3. It is not the ordinary factory.
 4. If the required tables are missing, return `not_initialized`.
-5. If the tables exist, run the demo-readiness diagnostic (9.4.4).
+5. If the tables exist, read `user_version` and classify the state (9.4.5).
 6. Any unexpected error, including failure to open the file read-only, returns `unavailable` and is logged. Nothing is repaired, deleted, recovered or recreated.
 
 The stat and the open are not one atomic step. If the file is removed between them, the read-only open fails and the result is `unavailable` or `not_initialized`. It never creates a file. If a file appears between them, the check only reads it. Likewise a file could be converted to WAL mode by another process after the pre-open checks. The project never does this (9.4.3), so this window is a documented residual risk and not a supported scenario.
 
-#### 9.4.3 Read-only connection design (future connection-layer change, not implemented)
+#### 9.4.3 Read-only connection design (implemented as `get_readonly_connection`)
 The architecture needs one additional function in the existing connection module, `app/db/connection.py`, named here `get_readonly_connection(db_path)`. It is a separate, approved, later change. It is not made by this checkpoint, and it changes neither `get_connection()` nor its callers. Requirements:
 
 - It opens the database in **SQLite read-only URI mode**: `sqlite3.connect(<file URI>, uri=True)` where the URI is the resolved path followed by `?mode=ro`. For example, a `pathlib` file URI with the `mode=ro` query. The path must be properly percent-encoded for a URI, and the implementation must be tested on Windows, which is the project's development platform.
@@ -768,28 +818,28 @@ The architecture needs one additional function in the existing connection module
 - It is used only for health checks and other explicitly read-only operator diagnostics. Customer-facing repository functions keep using `get_connection()`.
 - It lives in the connection module, so the existing rule that `sqlite3.connect()` is called only in that module still holds. `AGENTS.md` and `docs/02` currently say that every connection goes through `get_connection()`. The wording needs a separately approved amendment to allow this one additional factory (Section 18, item 4).
 
-#### 9.4.4 Demo-readiness diagnostic and customer identity
-`check_backend()` takes no customer or session argument, so it has no authenticated customer. It therefore must not call customer-scoped repository functions such as `get_order`. Faking a `CustomerContext` for `C101` to satisfy their authorization would be an identity bypass, and it is forbidden. The design separates the two concerns:
-
-- A **backend or operator health diagnostic** is not a customer-facing order lookup. It is a separate internal operation with no connection to the tool layer.
-- It may inspect only **fixed synthetic demo-readiness markers**. It runs one narrowly scoped read-only query for the delivery timestamps of the fixed demo order IDs (`ORD1001` for the 7-day scenario and `ORD1005` for the 48-hour scenario, Section 9.2.1), using the read-only connection from 9.4.3.
-- It **accepts no customer ID**, no order ID and no other input from the frontend, the LLM or the customer. The marker IDs are constants in code.
-- It returns only a small status structure, for example whether each scenario's window is still open relative to the injected clock. It never returns rows, customer data, names, or timestamps to the frontend.
-- It is not registered as a tool, is not importable by `app.tools` or the orchestrator, and its result is never shown to a customer as order information. The frontend sees only the `BackendHealth` status and an operator-facing message.
-- It does not construct a `CustomerContext` and does not call, wrap or relax the customer-scoped repository functions or their authorization (`docs/01` Section E).
-
-This is one repository-layer read that is not scoped to an authenticated customer, like the login directory in Section 18, item 15. It requires an explicit decision and amendments before implementation. The alternative is to drop the `stale_demo_data` status, so `check_backend()` reports only `ready`, `not_initialized` and `unavailable`, and demo freshness is handled by the operator running the reset command before a demo. Section 18, item 5 asks the Technical Lead to choose.
+#### 9.4.4 Demo-readiness diagnostic: deferred
+The internal demo-readiness diagnostic (a narrow read of fixed demo orders to report `stale_demo_data`) was considered in Revision 3.2 and is **deferred and dropped from the MVP** by the master handover. `check_backend()` therefore has no `stale_demo_data` status and takes no customer or session argument. Demo freshness is handled by the operator re-initializing a fresh demo database with an explicit reference time (Section 9.3).
 
 #### 9.4.5 Statuses
-- `not_initialized`: the file does not exist, or the required tables are missing. The backend tells the operator which command to run. It does not create or seed anything.
-- `stale_demo_data` (only if the diagnostic in 9.4.4 is approved): the database is initialized, but one of the two fixed demo scenarios has lapsed relative to the current time. The status names which one, for the operator. It is advisory only. The app keeps working. The operator is told to run the reset command before a demo.
-- `ready`.
-- `unavailable`: the check itself could not complete, for example because the read-only open failed.
+- `not_initialized`: the file is missing, or the database is empty with no schema. Nothing is created.
+- `ready`: `user_version = 1` and the database is accessible.
+- `schema_incompatible`: with a safe reason. `outdated` for existing tables at `user_version = 0` (a legacy pre-D2 database), and `future` for `user_version` greater than 1.
+- `unavailable`: the read-only connection or the check itself failed, including WAL and sidecar risks (Section 9.4.3).
 
 The existing `main.py` calls `get_connection()` and can create an empty database file (Section 17, item 4). The health check must not follow that pattern.
 
 ### 9.5 Clock injection
-The tool layer receives a `Clock` (a callable returning an aware UTC datetime). In production it is the real clock. Tests inject a fixed clock. The tool layer passes `reference_time=clock()` explicitly to the repository, once per operation. This does not change the repository's `reference_time=None` behavior, which stays real-clock by default as approved. The session registry and pending-action store (Sections 8 and 11) use the same clock for expiry.
+The repository owns a shared DB-layer clock provider, `utc_now()` (`docs/01` Section C, D2 schema contract, point 5). Production callers and LLM tools cannot supply timestamps, and tests control time only by monkeypatching `utc_now()`, with no persistent global override. The tool layer therefore no longer passes a time to the repository. The session registry and pending-action store (Sections 8 and 11) use an injectable clock for expiry, separate from the repository clock. `seed_database(connection, reference_time=None)` keeps its fixed baseline `2026-11-07T00:00:00Z`.
+
+### 9.6 Schema version, database path and connections (D2 contract freeze; approved by Person A, 2026-11-11; implemented)
+The authoritative contract is `docs/01` Section I, D2 amendment. This section states what the backend architecture relies on.
+
+- **Versions (`PRAGMA user_version`):** 0 is uninitialized when there are no tables and legacy or unknown when tables exist; 1 is the current D2 schema; greater than 1 is a future schema and fails closed. Legacy databases were never stamped, so they are "legacy pre-D2" at `user_version = 0`. New schema creation stamps 1 in the same transaction.
+- **Fresh database only (M2).** There is no legacy migration in the MVP. A legacy database is rejected and preserved unchanged, and a missing or empty database is created only through the controlled initialization factory.
+- **Three factories in `app/db/connection.py`:** `get_connection()` (`mode=rw`, never creates, verifies foreign keys, checks `user_version` on every connection), `get_readonly_connection()` (`mode=ro`, `query_only`, health only) and `get_initialization_connection()` (`mode=rwc`, the only creation path). Normal and read-only connections never initialize a database.
+- **Path:** `APP_DB_PATH`; default `<project-root>/data/app_d2.db` (the legacy `data/app.db` is protected: no factory opens it and nothing migrates it); absolute values as given; relative values from the project root; tests supply temporary paths. The SQLite lock-wait timeout is 5.0 seconds and bounds lock waiting only, consistent with Section 8.4.
+- **Health:** unchanged in approach from Revision 3.2 (Section 9.4) with the statuses in 9.4.5. A request that reaches a normal connection to an incompatible or missing database fails closed with a typed exception, which the backend maps to `unavailable` for reads and to a safe failure for writes. Nothing is created, migrated or altered.
 
 ---
 
@@ -798,8 +848,8 @@ The tool layer receives a `Clock` (a callable returning an aware UTC datetime). 
 ### 10.1 Rule
 The assistant never says or implies that an unsupported action was done, started or scheduled. It states plainly what policy says, states what it cannot do itself, and offers a support ticket where a human can help. It does not offer a ticket when the answer is simply "not possible", for example a cancellation after shipment, where the policy says to return the item after delivery if eligible.
 
-### 10.2 Ticket issue types **[Proposed]**
-`order_status`, `delivery_delay`, `payment_issue`, `refund_issue`, `return_issue`, `cancellation_request`, `address_change`, `warranty_claim`, `replacement_request`, `courier_pickup`, `product_question`, `other`. This is the optional enum restriction in Section 5.3.2. Without approval, `issue_type` stays validated free text of 1–100 characters (Section 5.3.1). The repository stores `issue_type` as free text and is unchanged either way.
+### 10.2 Ticket issue types (approved allowlist)
+`issue_type` is one of the exact, case-sensitive values `order`, `return`, `payment`, `product`, `general` (`docs/01` Section G, D2 ticket contract). The LLM may propose a value and the backend validates it. Missing or invalid values are rejected. `general` is an explicit catch-all, not a substitute for invalid input. The mapping used in the table below is a suggestion for the backend: warranty and replacement requests use `product` or `return` as appropriate, courier pickup uses `return`, and refund or payment questions use `payment`. The allowlist replaces the 12-value proposal of earlier revisions.
 
 ### 10.3 What the assistant may and may not say
 
@@ -807,11 +857,11 @@ The assistant never says or implies that an unsupported action was done, started
 |---|---|---|---|---|
 | Cancel an order | `Policies.md` §3, `FAQ.md` Q5.1 | Cancellation is allowed until shipment; after shipment it is not possible and an eligible item can be returned after delivery. States the order's actual status. | "I've cancelled your order", or that cancellation is in progress | Yes while the order is before shipment (`Processing` or `Packed`); no once shipped or delivered |
 | Change a shipping address | `FAQ.md` Q1.3 | Address changes are possible only before shipment, through support or the account dashboard. | "I've updated your address" | Yes while `Processing`; no once shipped |
-| Warranty claim | `Policies.md` §4, `FAQ.md` Q6.1 | Most electronics have a 6–24 month manufacturer warranty; claims may need the invoice and serial or IMEI. | That a claim is filed, approved or covered, or the warranty period for a specific product | Yes (`warranty_claim`) |
-| Replacement | `FAQ.md` Q3.2 | A replacement can be requested in the store's own flow; this assistant can only record a return request. | "I've arranged a replacement" | Yes (`replacement_request`) |
-| Courier pickup | `FAQ.md` Q3.2 | The store's courier partner schedules pickups for eligible returns. | "A pickup is scheduled", a date, or a courier name | Yes (`courier_pickup`) |
-| Refund processing | `Policies.md` §2, `FAQ.md` Q3.3 | Refunds are processed after quality check, typically 3–7 business days. States the order's `refund_status` and amount from the database. | "Your refund has been issued", or a date | Yes (`refund_issue`) when the customer disputes timing |
-| Payment reversal | `Policies.md` §5, `FAQ.md` Q4.3 | Failed payments typically reverse within 3–7 business days; share the transaction reference with support if not credited. | That the money has been or will be returned | Yes (`payment_issue`) |
+| Warranty claim | `Policies.md` §4, `FAQ.md` Q6.1 | Most electronics have a 6–24 month manufacturer warranty; claims may need the invoice and serial or IMEI. | That a claim is filed, approved or covered, or the warranty period for a specific product | Yes (`product`) |
+| Replacement | `FAQ.md` Q3.2 | A replacement can be requested in the store's own flow; this assistant can only record a return request. | "I've arranged a replacement" | Yes (`return`) |
+| Courier pickup | `FAQ.md` Q3.2 | The store's courier partner schedules pickups for eligible returns. | "A pickup is scheduled", a date, or a courier name | Yes (`return`) |
+| Refund processing | `Policies.md` §2, `FAQ.md` Q3.3 | Refunds are processed after quality check, typically 3–7 business days. States the order's `refund_status` and amount from the database. | "Your refund has been issued", or a date | Yes (`payment`) when the customer disputes timing |
+| Payment reversal | `Policies.md` §5, `FAQ.md` Q4.3 | Failed payments typically reverse within 3–7 business days; share the transaction reference with support if not credited. | That the money has been or will be returned | Yes (`payment`) |
 | Photo evidence upload | `FAQ.md` Q3.4 | Photos cannot be uploaded in this assistant; support may ask for them. | "Photos received" | Optional |
 | Non-returnable item question | `Policies.md` §2 | Quotes the named non-returnable categories. | A returnability verdict for a specific product beyond what the prechecks report | Yes when unclear |
 
@@ -1070,8 +1120,8 @@ Not logged by default: message text, return reasons, ticket descriptions, summar
 | Boundary validation | Wrong type, bad format, over limit, unknown field | `ToolResult` `invalid_input`; nothing executed |
 | Session check | Missing, ended, or idle-expired session | `invalid_session`; nothing executed (Section 11.2) |
 | Pending-action claim | Unknown, wrong owner, expired, consumed, cancelled | Plain reply per Section 8.3; nothing written |
-| Repository read | `sqlite3.Error` or `ConnectionError_` (reads propagate) | Tool layer catches and returns `unavailable`. No database text is exposed |
-| Repository write or prechecks | `failed` outcome | Mapped per Sections 7.5 and 8.6 |
+| Repository read | A typed database exception (operational error, incompatible or missing database, or `DatabaseDataIntegrityError`) | Tool layer catches it and returns `unavailable` (or an integrity-specific safe code). No database text, path or stack trace is exposed |
+| Repository write or eligibility check | A typed exception (`DatabaseConstraintError`, an operational error, or an incompatible database); ineligible outcomes are results, not errors | Business outcomes are mapped per Sections 7.5 and 8.6. Typed exceptions become a safe customer message and a logged safe reference. Nothing is claimed as recorded |
 | Repository | `TypeError` or `ValueError` | Should not occur after boundary validation. If it does, it is an internal defect: logged, reported to the customer as `internal`, never as a business outcome |
 | Anywhere else | Unexpected exception | Logged with the request ID. The frontend call returns `status="error"`, `error_code="internal"`. If the failure happens after a successful claim, the action stays consumed (Section 8.5). Repository-level behavior (rollback then re-raise) is unchanged, and this top-level guard exists only at the backend boundary |
 | Health check | Any unexpected failure | `unavailable`; nothing created or changed |
@@ -1082,15 +1132,20 @@ The reads' raising behavior is deliberately not changed here. The tool layer is 
 
 ## 16. Testing strategy for later implementation checkpoints
 
-All tests use temporary databases, never `data/app.db`, with the same path-guard fixture pattern as `tests/test_returns.py`. No test calls an LLM. The scope guard tests are in Section 13.7.
+All tests use temporary databases, never `data/app.db` or the default `data/app_d2.db`. An autouse guard in `tests/conftest.py` fails any test that opens either path. Protected-path behavior is tested with a temporary sentinel file and a mocked low-level opener (`protected_sentinel`); no test launches the seed command or any subprocess with a real protected path. No test calls an LLM. The scope guard tests are in Section 13.7.
 
-- **Prechecks parity:** for a matrix of inputs, `check_return_eligibility` returns `prechecks_passed` exactly when `create_return_request` on a fresh database returns `created`, and otherwise reports the same outcome, with matching boundaries. `reason_category` is echoed in every outcome, including `not_found` and `failed`.
+- **Eligibility parity:** for a matrix of states, `check_return_eligibility` returns `eligible` exactly when `create_return_request` on an identical fresh database returns `created`, and otherwise reports the same ineligible outcome, including the status-first precedence and inclusive boundaries. `reason_category` is echoed in every check result, and `order_status` appears only for an owned order.
 - **Prechecks read-only:** the check never changes any table, including on failure paths.
-- **Prechecks wording:** no customer-facing template for `prechecks_passed` contains "eligible", "approved", "guaranteed" or "definitely"; templates state that preliminary or time-window checks passed.
+- **Eligibility wording:** the customer-facing template for `eligible` states that the preliminary or time-window checks passed and that other conditions still apply, and never contains "definitely", "approved", "guaranteed" or any promise that the item is returnable.
 - **Delivery timestamp wording:** a NULL or malformed `delivered_at` never produces "not delivered" wording, and future-dated deliveries produce the dedicated message.
 - **Category selection:** the LLM-visible tools accept no `reason_category`; a free-text description does not set it; a free-text reply while the prompt is open re-asks; the selected category appears in the confirmation preview; a changed category requires a new selection and a new confirmation.
 - **Context and identity:** tool schemas contain no customer identifier fields. Extra arguments are rejected. A cross-customer order ID gives the same result as a nonexistent one.
-- **Boundary limits:** length, character-set, enum and sanitization cases for every input in Section 5.3, with the approved limits tested at the boundary (reason 1,000, description 4,000, summary 2,000, issue type 100). A customer reason of exactly 1,000 characters is accepted with each of the three categories, a 1,001-character reason is rejected, the stored string is the prefix plus the customer text, and the longest stored `reason` is 1,016 characters. The prefix never comes from customer or LLM text.
+- **Boundary limits:** length, character-set, enum and sanitization cases for every input in Section 5.3, with the approved limits tested at the boundary (reason 1,000, description 4,000, summary 2,000, issue type 100). A customer reason of exactly 1,000 characters is accepted with each of the three categories, a 1,001-character reason is rejected at the tool boundary, in the repository (`ValueError`) and by the SQLite `CHECK`, and the stored `reason` is exactly the stripped customer text, at most 1,000 characters, with **no** category prefix. The category is stored only in `reason_category`. (D2 amendment; the 1,016-character prefix test of Revision 3.2 is removed.)
+- **Status-based ineligibility:** for `Returned`, `Cancelled` and the in-transit statuses, both the check and the write give `order_status_ineligible` before the item and duplicate checks; the customer text is chosen from the order status (from the check's `order_status`, or `get_order()` after a rejected write), and the text for a `Returned` order never says the order was not delivered; a `Delivered` order with no delivery timestamp gives `delivery_timestamp_missing`; a malformed persisted timestamp raises `DatabaseDataIntegrityError`.
+- **Login directory:** `list_login_options` shows exactly the `customer_id` and `name` supplied by `list_customers_for_login()`, in its deterministic order, with no email or phone, and the function is never registered as an LLM tool.
+- **Schema, path and health behavior:** a missing, empty, legacy (`user_version` 0 with tables) or future (`user_version` greater than 1) database is reported as `not_initialized` or `schema_incompatible` (reasons `outdated` or `future`) without creating, migrating or altering anything; an inaccessible database is `unavailable`; the backend never calls initialization on a normal request.
+- **Read projections:** `get_my_returns` returns at most 10 returns with exactly `return_id`, `order_id`, `item_id`, `status`, `requested_at` and `reason_category` and never `reason` or `customer_id`; `get_my_tickets` returns at most 10 tickets with exactly `ticket_id`, `issue_type`, `order_id`, `status`, `priority` and `created_at`.
+- **Summarization and issues (Sections 8.9 and 8.10):** the summarizer runs before the ticket write and never inside a transaction; the four headings and their order, the 2,000-code-point limit, the NUL and surrogate checks and the deterministic fallback are validated; the description is the exact selected customer messages joined by single newlines, with the 999 + ellipsis + 1,000 truncation for an over-long single message; the two-issue limit, the five classification labels, promotion, abandonment and clearing on logout, customer switch and expiry behave as specified; a malformed classifier output changes nothing and asks the customer to clarify.
 - **Contact details:** no customer-facing template, tool note or fixed reply contains an email address, telephone number or URL, and no template contains `example.com`. Outcome templates that refer the customer elsewhere say "Please contact customer support."
 - **Ticket history (`get_my_tickets`):** the tool takes no arguments and rejects any argument; it calls the repository only with the context customer; it returns only `ticket_id`, `issue_type`, `order_id`, `status`, `priority` and `created_at`, never `description`, `conversation_summary` or `customer_id`; a customer sees only their own tickets and cannot reach another customer's ticket by ID; a customer with no tickets gets an empty result, not an error; more than the return bound is truncated with the total count; `sqlite3.Error` and `ConnectionError_` become `unavailable`; a ticket created in the same session appears afterward with its stored status.
 - **Session handle:** handles are random, distinct, at least 128 bits, and contain no customer ID; an unknown, expired or ended handle is rejected on every call with `invalid_session`; logout and expiry revoke it; logs and error text contain only `session_ref`, never the handle or a full action identifier.
@@ -1107,7 +1162,7 @@ All tests use temporary databases, never `data/app.db`, with the same path-guard
   - the state transitions in Section 8.4.1 are atomic: concurrent staging leaves exactly one pending action; a decline racing a claim has exactly one winner; an expiry sweep racing a claim never lets an expired action run or expires a consumed one; ending a session makes every action of that session unclaimable; the outcome is recorded at most once;
   - the in-memory lock is never held across a repository call;
   - a test that crashes the write after the claim documents the MVP limitation: the action stays consumed, the outcome is unset, its write-capacity reservation is released, and no automatic retry happens. It does not assert idempotency, because the MVP has none.
-- **Counters:** committed write counters increment only after `created`, not after `failed`, `duplicate`, `outside_window`, or an unconfirmed attempt; per-turn counters reset each turn; per-session counters do not.
+- **Counters:** committed write counters increment only after `created`, not after an ineligible outcome, a typed database error, or an unconfirmed attempt; per-turn counters reset each turn; per-session counters do not.
 - **Concurrent write-cap enforcement (write-capacity reservation).** A test with a controllable fake for the repository write (one that can be paused and then released or failed) and an injected cap:
   1. Bring the session to one slot below the cap (for example 2 committed tickets with a cap of 3).
   2. Start the first action's write and pause it after the claim has succeeded and before the repository call completes. Assert that `reserved` is 1 and `committed` is still 2.
@@ -1138,11 +1193,11 @@ All tests use temporary databases, never `data/app.db`, with the same path-guard
   - a database path that does not exist cannot be created by the read-only connection, and no parent directory is created;
   - an unreadable or corrupt file yields `unavailable` and is left untouched;
   - `get_connection` is not called in any branch (patched to fail), and the check takes no customer, session or order argument;
-  - the demo-readiness diagnostic (if approved) uses only fixed marker IDs, returns no rows or customer data, is not importable from the tool layer, and reports the 7-day and 48-hour scenarios separately.
+  - the four health states are exactly those in Section 9.4.5 (`not_initialized`, `ready`, `schema_incompatible` with reasons `outdated` and `future`, and `unavailable`), and no `stale_demo_data` state exists.
 - **Outcome catalogue:** every outcome in Sections 7.5, 8.6 and 10 maps to its template, and failure never produces success wording.
 - **Ticket preview:** shows the issue type, description, supplied order reference, and the full summary that will be recorded, exactly matching the stored parameters.
 - **Frontend independence:** an automated import check that `app.backend` public types and the frontend-facing module import no `sqlite3` or `app.db`.
-- **Bootstrap:** initialization requires an explicit reference time, refuses a non-empty database, seeds windows relative to the supplied time, and never runs automatically. Existing `seed_database(None)` tests stay unchanged.
+- **Bootstrap:** initialization requires an explicit reference time, refuses a non-empty database, seeds windows relative to the supplied time, and never runs automatically. Existing `seed_database(None)` tests stay unchanged. *(Implemented with an optional `--reference-time`; see the implementation note at the start of Section 9.)*
 - **Seed timing:** seeding with an arbitrary timezone-aware reference time T0 produces every `order_date` and `delivered_at` at the offsets in Section 9.2.1 (for example ORD1001 delivered at T0 − 72h, ORD1005 at T0 − 36h), only those six orders have a `delivered_at`, and `seed_database(None)` still produces the fixed `2026-11-07T00:00:00Z` baseline values. The test reads the seeded rows and does not modify `seed_data.py`.
 - **Stored-text leakage:** returns and ticket tools never return `reason`, `description` or `conversation_summary`.
 
@@ -1154,42 +1209,110 @@ Listed so they are not lost. None is fixed by this document.
 
 1. `app/db/__init__.py` has `__all__ = [get_connection]`, which holds the function and not its name, so `from app.db import *` fails.
 2. `app/` is not an installable package, and `pyproject.toml` builds the unused `src/ecommerce_support_assistant` stub. Imports work only from the repository root.
-3. `get_connection()` defaults to the relative path `data/app.db`, creates the parent directory, and creates the file if missing. Repository functions use that default, so a configurable database path would need a separately approved repository change. This document assumes the working directory is the project root.
+3. `get_connection()` defaults to the relative path `data/app.db`, creates the parent directory, and creates the file if missing. Repository functions use that default, so a configurable database path would need a separately approved repository change. This document assumes the working directory is the project root. **Superseded (D2 implemented):** `APP_DB_PATH`, project-root-relative resolution and fail-if-missing normal connections replace this behavior (Section 9.6); the default is now `data/app_d2.db`.
 4. `main.py` prints a greeting and calls `get_connection()`, which can create an empty database.
 5. `PROJECT_STATUS.md` is stale.
 6. The local, gitignored `data/app.db` contains one stray test ticket from an earlier manual check.
-7. No LLM provider, embedding model or vector store is chosen, and there is no configuration or `.env.example`. These belong to later checkpoints.
+7. *(Superseded.)* Two provider adapters now exist (OpenAI-compatible and Anthropic, selected by environment variables, never run live) and the offline `RuleBasedLLM` is the default. Retrieval is BM25; **embeddings and a vector store are deferred and not implemented.** There is still no `.env.example`; the configuration reference is `docs/04_frontend_handover.md` Section 3.
 8. The FAQ mentions replacement and courier pickup, and the policies mention cancellation and warranty, but the system supports none of those actions (Section 10).
 
 ---
 
 ## 18. Open items for Technical Lead decision
 
-Nothing in this list is approved. Each item is a proposal or a question. Items 1 to 11 respond to the Revision 2 review. Items 12 to 26 are the items carried from earlier revisions.
+Status labels used below: **APPROVED** means Person A approved the decision in the master handover (2026-11-11) and it is recorded in this document as design (Section 19 records its implementation). **OPEN** means undecided. An item with neither label is a proposal from earlier revisions that the handover does not settle. Items 1 to 11 respond to the Revision 2 review, items 12 to 26 are carried from earlier revisions, and items 27 to 43 were added by the D2 contract freeze.
 
-1. **In-memory MVP versus durable pending-action storage** (Sections 8.7 and 8.8). Proposed: a process-global in-memory store and session registry with an atomic claim, valid for the single-process demo only, with no cross-process or restart protection. Decide: accept that for the capstone demo, and state a single worker as a deployment constraint. A durable shared store needs an approved schema change in a later checkpoint.
-2. **Durable idempotency and crash recovery strategy** (Section 8.8.3). Decide whether the capstone accepts the documented lost-reply and duplicate-ticket limitation, or whether a later checkpoint designs an idempotency key written in the same SQLite transaction as the business write. That needs a new repository contract and schema addition, and it is not designed here.
-3. **Atomicity of all pending-action state transitions and the write-capacity reservation** (Sections 8.4 and 8.4.1): staging with cancellation of the previous action, claim with capacity reservation, finalize, decline, expiry, and session end, each under one shared lock in memory and as a conditional update or transaction in a durable design. The reservation, not the lock or the one-pending-action rule, enforces the per-session write caps, and the cap values remain proposed (item 19).
-4. **Read-only SQLite health-check connection design** (Section 9.4.3): a separate `get_readonly_connection(db_path)` in the connection module using URI `mode=ro` and `PRAGMA query_only`, no directory creation, and a pre-open journal-mode and sidecar check that rejects WAL-mode databases and any existing `-wal`, `-shm` or `-journal` file as `unavailable` (no `immutable=1`). Decide whether to approve it, and approve the matching wording change to `AGENTS.md` and `docs/02`, which now say that every connection goes through `get_connection()`.
-5. **Internal demo-readiness diagnostic authorization** (Section 9.4.4). Proposed: a narrow internal read of the fixed demo markers ORD1001 and ORD1005, with no customer ID input, no fake customer context, and no exposure to customers. Alternative: drop the `stale_demo_data` status and rely on the reset command.
+1. **In-memory MVP versus durable pending-action storage** (Sections 8.7 and 8.8). **APPROVED (handover Section 11.2):** an in-memory, single-process registry. Durable storage, restart persistence, multi-process coordination and crash recovery are deferred, and the limitations must be stated. A single worker is a deployment constraint.
+2. **Durable idempotency and crash recovery** (Section 8.8.3). **APPROVED as deferred (handover Sections 11.2 and 22):** the MVP consumes a pending action before the write and never retries an ambiguous write automatically. The lost-reply and duplicate-ticket limitation is accepted and must be documented.
+3. **Atomicity of pending-action transitions and the write-capacity reservation** (Sections 8.4 and 8.4.1). **APPROVED (handover Section 11.3):** transitions and reservations are atomic under a shared lock, capacity is committed plus reserved, no lock is held during a repository call, and a purge may run between claim and finalize but retains the session and the held-reservation action. The cap values remain proposed (item 19).
+4. **Connection factories and read-only health connection** (Sections 9.4.3 and 9.6). **APPROVED (handover Sections 8.7 and 11.4):** three factories in `app/db/connection.py` (`get_connection()` `mode=rw`, `get_readonly_connection()` `mode=ro` with `query_only`, `get_initialization_connection()` `mode=rwc`), WAL and sidecar rejection, no `immutable=1`. The matching wording change to `AGENTS.md` and `docs/02` ("every connection goes through `get_connection()`") is made in the D2 freeze.
+5. **Internal demo-readiness diagnostic** (Section 9.4.4). **APPROVED as deferred/dropped (handover Section 22.8):** it is not in the MVP and `stale_demo_data` is not a health status.
 6. **Ambiguous-message context promotion into LLM history** (Section 13.4.1): the separate clarification context, the 3-message and 10-minute bounds, and promotion only after a later in-scope or mixed message. Alternative: never promote, and send only the later message.
-7. **`get_my_tickets` tool approval** (Section 5.5), including the 10-ticket return bound.
+7. **`get_my_tickets` tool** (Section 5.5). **APPROVED (handover Sections 9.4 and 11.6):** no arguments, trusted-session identity, at most 10 tickets, exactly `ticket_id`, `issue_type`, `order_id`, `status`, `priority`, `created_at`. The ordering rule is OPEN (item 39).
 8. **Session bearer-handle protections** (Section 3.3): the proposed generation, storage, logging and revocation requirements. The handle is a bearer credential, and the simulated login remains a labeled limitation.
-9. **Return-reason metadata prefix** (Section 7.4). Proposed: backend-generated prefix `[damaged] `, `[wrong_product] ` or `[standard] ` in the existing `reason` column. It does not consume the customer's approved 1,000-character allowance, and the longest stored string is 1,016 characters. No schema or repository contract change.
-10. **Existing approved category enum versus the proposed customer-selection interface** (Sections 5.3.1 and 7). The values `damaged`, `wrong_product` and `standard` and their windows are approved in the Checkpoint 7A contract. What is proposed is only that the customer selects the category explicitly through a choice prompt. Also decide whether a deterministic keyword suggestion may pre-highlight an option while still requiring the customer's selection.
+9. **Return-reason metadata prefix: RESOLVED and removed by the D2 amendment (2026-11-11).** The prefix convention is dropped. `reason_category` is persisted in its own column and `reason` stores only the customer's explanation (Sections 5.3.1 and 7.4). This item is no longer open and is kept only so item numbers stay stable.
+10. **Return category selection** (Sections 5.3.1 and 7). **APPROVED (handover Sections 8.1 and 22.7):** the customer selects the category and the LLM never selects it. Keyword inference and auto-highlighting are deferred. The detailed selection workflow in Section 7 remains a design proposal.
 11. **Seed timestamp verification result** (Section 9.2.1). Verified from the source: every `order_date` and every non-null `delivered_at` is relative to the supplied reference time, no other timestamp is seeded, and `seed_database(None)` keeps its fixed baseline. Decide whether the 12-hour lifetime of the 48-hour `damaged` demo scenario after initialization is acceptable for demo planning.
-12. **Return prechecks outcome naming and meaning** (Section 6). Proposed: `prechecks_passed`, meaning only the four facts in Section 6.3, with `window_closes_at` and `window_reason` in the result.
+12. **Eligibility outcome naming** (Section 6). The handover names the success outcome `eligible`; Revision 3.2 used `prechecks_passed`. Recorded as `eligible` with the preliminary-wording rule retained. **OPEN: confirm the name (item 35).**
 13. **Function name.** Keep `check_return_eligibility` (follows D1) or rename it `check_return_prechecks` to avoid overstating.
-14. **Prechecks failure convention.** The check returns the generic `failed` result like the write (Section 6.2), rather than raising like the other reads.
-15. **Login directory read.** The frontend needs a list of selectable customers, but the repository has no customer read. Proposed: a minimal read-only `list_customers_for_login()` returning `customer_id` and `display_name`, used only by `list_login_options`, never exposed as a tool, and labeled as simulated-login support. It is a repository read that is not scoped to an authenticated customer, so it needs explicit approval and an amendment to `docs/01`.
+14. **Eligibility failure convention.** Superseded: the D2 contract separates business outcomes from typed infrastructure exceptions (Section 15). Whether a generic `failed` result remains is OPEN (item 36).
+15. **Login directory read.** The frontend needs a list of selectable customers, but the repository has no customer read. **APPROVED by the D2 amendment (2026-11-11); implemented:** the read-only `list_customers_for_login()` returns only `customer_id` and the database field `name`, sorted by `name` then `customer_id`, is used only by the simulated login selector, is never an LLM tool, and is not authentication (`docs/01` Section E, D2 amendment). The backend maps `name` to `display_name`. It remains the one repository read that is not scoped to an authenticated customer.
 16. **Conversation Scope Guard behavior and classification strategy** (Section 13): the decision table, fail-open handling of ambiguous messages, unchanged routing of mixed messages, and the fixed replies. The stated limit that mixed messages still consume main LLM tokens is part of the proposal.
 17. **Scope-guard evaluation target.** The acceptable false-rejection rate on genuine support messages (Section 13.7), and who owns the labeled set.
 18. **Whether an additional lightweight classifier is justified later** (Section 13.6). Proposed default: no classifier. Revisit only with evaluation evidence, and select no provider or model until then.
 19. **Numeric message, history, token, tool-call and session limits** (Sections 5.3.2, 5.3.3, 11 and 13.5): the 2,000-character message limit, 10-turn history, the 6-calls-per-turn, 3-tickets, 5-returns and 60-messages caps, the 10-minute pending-action expiry, the 60-minute idle timeout, the optional 8-hour absolute session lifetime, the 3-message and 10-minute clarification bounds, and the input and output token budgets, which have no proposed numbers until a provider is chosen. The four approved D4 limits (Section 1.1) are not part of this item.
-20. **Issue-type enum restriction** (Sections 5.3.2 and 10.2). Without approval, `issue_type` stays validated free text of 1–100 characters.
+20. **Issue-type restriction** (Sections 5.3.1 and 10.2). **APPROVED (handover Section 7):** the exact allowlist `order`, `return`, `payment`, `product`, `general`.
 21. **Ticket confirmation requirement and typed confirmation behavior.** Proposed: all writes, including tickets, require confirmation (Section 8). Typed replies use strict whole-message matching against a small fixed word list. Messages that reach the orchestrator cancel the pending action, while greetings, redirections and clarification prompts do not (Section 8.3).
 22. **UTC versus IST in customer-facing deadlines.** Proposed: UTC with the zone stated. The alternative is to show IST as well.
 23. **Real support contact channel.** The source documents contain only a placeholder address, which this design never presents to customers (Section 4.5). Decide whether and when a real channel is supplied as project configuration. Until then, customers see "Please contact customer support."
-24. **`docs/01` and `docs/02` amendments** for the prechecks function (Section 6.5), for item 15, and for any of items 2, 4 and 5 that are approved, to be approved and committed separately.
+24. **`docs/01` and `docs/02` amendments:** the prechecks function and `list_customers_for_login` amendments were **made by the D2 documentation amendment** (Section 6.5). Amendments for any of items 2, 4 and 5, if approved, are still to be approved and committed separately.
 25. **Module names** `app/backend` and `app/catalog` (Section 2.2).
-26. **Next checkpoints (proposed, not authorized).** 11B: the prechecks read, the matching `docs/01` and `docs/02` amendments, and tests. 11C: session registry, pending-action store, context, validation, limits, catalog, tools, return-category selection and the confirmation state machine, with tests and no LLM. 11D: the bootstrap, reset, read-only connection and health-check commands. 11E: the scope guard with its labeled evaluation set. Later: RAG, the LLM adapter and orchestrator, and the frontend integration.
+26. **Next checkpoints (proposed, not authorized).** 11B: the prechecks read and its tests (the matching `docs/01` and `docs/02` amendments are made by the D2 documentation amendment; the implementation belongs to the D2 implementation work in `docs/02` Section 3). 11C: session registry, pending-action store, context, validation, limits, catalog, tools, return-category selection and the confirmation state machine, with tests and no LLM. 11D: the bootstrap, reset, read-only connection and health-check commands. 11E: the scope guard with its labeled evaluation set. Later: RAG, the LLM adapter and orchestrator, and the frontend integration.
+
+Items 27 to 34 were added by the D2 documentation amendment. They are ambiguities that the amendment did **not** decide.
+
+27. **Status `Returned` and the status outcome.** **RESOLVED/APPROVED (handover Section 8.2):** the outcome is `order_status_ineligible`, the rule is status exactly `Delivered`, and `Returned` closes the return opportunity. Wording per Section 7.5.
+28. **Embedded NUL and lone surrogates in reason and ticket text.** **RESOLVED/APPROVED (handover Sections 8.1 and 8.12):** rejected at every layer.
+29. **SQL whitespace set.** **RESOLVED/APPROVED (handover Section 8.1):** exactly space, tab, line feed, vertical tab, form feed and carriage return. Python `.strip()` is authoritative. The final `CHECK` SQL is written at D4.
+30. **Legacy schema recognition and migration mapping.** **RESOLVED/APPROVED (handover Section 8.6):** not needed. There is no legacy migration (M2, fresh database only).
+31. **How `check_backend()` reports an incompatible schema.** **RESOLVED/APPROVED (handover Section 8.8):** `schema_incompatible` with reason `outdated` (existing tables at `user_version` 0) or `future` (greater than 1).
+32. **`get_my_returns` projection.** **RESOLVED/APPROVED (handover Section 9.3):** at most 10 returns with exactly `return_id`, `order_id`, `item_id`, `status`, `requested_at`, `reason_category`. Never `reason` or `customer_id`. The tie-break ordering is OPEN (item 39).
+33. **Order status in the advisory result.** **RESOLVED/APPROVED (handover Section 8.2):** the advisory read includes the owned order's `order_status` and never reveals it for a missing or unowned order. The write result does not carry it.
+34. **Typed database errors.** **APPROVED in part (handover Section 8.9):** `DatabaseDataIntegrityError` and `DatabaseConstraintError` exist in the design, and business outcomes, operational errors, integrity errors and constraint errors stay distinct. The exact hierarchy and the exception type for a missing database file are fixed at D3 (expected `ConnectionError_`).
+35. **OPEN: `eligible` versus `prechecks_passed`.** The handover's success outcome is `eligible`. Earlier approved wording avoided it because the check does not prove product-level returnability. Confirm the name. The customer-facing wording rule (never promise eligibility or approval) stays either way.
+36. **OPEN: the generic `failed` result.** The handover does not say whether the write functions keep a generic `failed` outcome or only raise typed exceptions for database failures. **Resolved in the implementation: no generic `failed` result (Section 19.1, item 36).**
+37. **Recorded per the handover: ticket description limit 2,000 code points** (was 4,000 under the earlier approved D4). Confirm it is intended.
+38. **OPEN: removal of the `reference_time` parameter** from the return write and the advisory read in favor of the shared `utc_now()`. This invalidates the legacy test pattern and Person B's use of the seed parameter must be checked. `seed_database(connection, reference_time=None)` keeps its parameter. **Implemented (Section 19.1, item 38).**
+39. **OPEN: return and ticket ordering.** The legacy return ordering is `requested_at DESC, return_id ASC` and the handover's tool ordering uses `return_id DESC`. The documented ticket ordering is `created_at DESC, ticket_id ASC`.
+40. **OPEN: SQLite enforcement of the `issue_type` allowlist** (a `CHECK`). The handover requires backend validation only.
+41. **OPEN: a delivery time later than the captured `now`.** Whether it is reported as `outside_return_window` with `delivery_after_reference` or as `DatabaseDataIntegrityError` (it violates the four-timestamp rule).
+42. **Ticket result carries no linkage flag** (handover Section 8.11). The backend cannot say whether a ticket was linked to an order without reading it back, so the reply is uniform (Section 8.6).
+43. **`APP_DB_PATH` retained.** The handover does not mention it. It was approved earlier in D2, and the Docker work by Person B currently uses `DATABASE_PATH`, which no code reads. **Implemented. The default path is now `data/app_d2.db`; Person B's Docker work must use `APP_DB_PATH` (Section 19.1).**
+
+---
+
+## 19. Implementation record (2026-11-11, Person A execution)
+
+This section records what the code does. It is an implementation record, not a new approval: items marked **for confirmation** are choices made while implementing that Person A should confirm or reverse.
+
+### 19.1 Resolution of open items 35 to 43 as implemented
+
+- **35** The success outcome is `eligible`. The reply to the customer still says the item is eligible for a return and that confirming submits the request (it does not promise approval).
+- **36** The write functions have no generic `failed` result. Database failures raise typed `DatabaseError` subclasses (`app/db/errors.py`) from `repository.py`; `app/backend` and `app/orchestrator` map them to safe messages and never show SQL, paths or exception text. Retained by Technical Lead decision (2026-11-11).
+- **37** The 2,000-code-point ticket limit is implemented (description and summary).
+- **38** `reference_time` is removed from the return write and the advisory read; both use `app.db.clock.utc_now()` (one captured instant per transaction). The seed function keeps its `reference_time` parameter.
+- **39** Returns are ordered `requested_at DESC, return_id DESC`. Tickets are ordered `created_at DESC, ticket_id ASC`.
+- **40** The `issue_type` allowlist is enforced twice: by backend validation (`app/db/validation.py`, the tool registry) and by a SQLite `CHECK` in `app/db/schema.py`. The handover required backend validation only; the `CHECK` is retained by Technical Lead decision (2026-11-11). Adding an issue type needs a schema version change.
+- **41** A delivery time later than the captured `now` raises `DatabaseDataIntegrityError` (it violates the timestamp invariants).
+- **42** The ticket reply is uniform; it does not say whether the order link was stored.
+- **43** `APP_DB_PATH` is retained. The default is `<project root>/data/app_d2.db`. Person B's Docker files must use `APP_DB_PATH` instead of `DATABASE_PATH`.
+- **44** (Technical Lead review, 2026-11-11) The default database path changed from the protected legacy `data/app.db` to `data/app_d2.db`. No factory opens `data/app.db`. Normal startup never creates the default file, and the health check reports `not_initialized` until an operator runs `python -m app.db.seed_data` (optionally `--db-path`, `--reference-time`; the parent directory must already exist). The seed command and the application resolve the same configured path.
+
+### 19.2 Behavior decisions made during implementation (for confirmation)
+
+- **Typed text never confirms.** Confirmation and choices are accepted only through `ConfirmationDecision` and `ChoiceSelection`. While a confirmation or choice is outstanding, typed text re-shows it and nothing else happens, except the typed word `cancel` (any case, optional punctuation), which cancels the open choice, reason request or pending action and revokes it. Typing `yes`, `confirm` or `ok` never confirms or picks anything. Cancelling a ticket proposal leaves the tracked support issue exactly as it was.
+- **One outstanding prompt per session.** A new pending action cancels the previous open one.
+- **Extra error code.** `ChatReply.error_code` may also be `invalid_request` (not exactly one of message, decision or choice; blank message; malformed decision).
+- **`list_login_options()` returns an empty list** if the database is unavailable. Call `check_backend()` for the reason.
+- **Return reason (provenance).** The stored `reason` is always the customer's own message that requested the return, byte for byte (`app/orchestrator/engine.py`, `_start_return`, `_offer_category`; no trimming, rewriting or truncation). The model's `reason` argument is not part of the tool schema and is ignored if sent. The category is chosen only by the customer's `ChoiceSelection`. If the message is only a bare request (order and item IDs and request words, `guard.has_explanation`), the assistant asks the customer to explain in their own words and the next message becomes the reason (a `draft` flag, no new state field). If the text is longer than 1,000 code points, or unusable (blank, NUL, lone surrogate), the assistant asks for a shorter or different one and stores nothing. The repository's validation remains the final safeguard. The return confirmation shows the exact reason that will be stored (`PendingView.summary` includes it, preceded by "Your reason, saved exactly as you wrote it"), so the customer can verify it before confirming. The request for a reason says that the next message will be saved exactly as written and that the customer can type `cancel`. While a reason is awaited, a message that is plainly something else (a greeting, thanks, a question, a command such as "show my orders", an out-of-scope or unsupported request, or one naming a different order or item) is **not** stored: the draft and its original expiry are kept, no model is called, and the customer is told the assistant is still waiting and how to cancel (`guard.looks_unrelated_to_a_reason`). A reason that starts with a question word is also treated this way, which is a deliberate trade-off for safety.
+- **Issue lifecycle.** The relation classifier runs only when an active issue exists and the message contains an issue cue. Plain questions bypass it and are not added to any issue. Malformed output, a provider error or an invalid switch label all lead to the same clarification choice, with no retry.
+- **Unsupported operations** (cancel, change address, modify order, replacement or exchange, discounts) get a fixed honest reply and an offer of a ticket; the message also becomes the active issue. A question about such an operation ("Can I cancel my order?") is answered from the policy text instead (`guard._QUESTION_START`); an imperative request ("please cancel my order ORD1002") still gets the honest refusal.
+- **Ticket summary validation** accepts only text that starts with the heading `Customer Issue`, has no NUL or lone surrogate, is not blank and is at most 2,000 characters; otherwise the deterministic fallback is used. The check does not detect fabricated claims inside an otherwise valid summary. The summary prompt marks customer text as untrusted, and a human agent reads the summary.
+- **Grounding guard.** Model text that claims the assistant created, submitted, approved, refunded or cancelled something is replaced by a fixed notice. Success text is produced only from repository `created` outcomes.
+- **Capacity.** The per-session caps (5 returns, 3 tickets, 60 messages) count committed plus reserved writes, reserved atomically when a confirmation is claimed.
+- **Sessions.** Idle expiry (60 minutes), no absolute lifetime. A session's pending actions are removed with it.
+- **Choice and reason-request expiry.** A choice menu or a request for a reason expires 10 minutes after it was created (the pending-action TTL, `Settings.pending_ttl`). The expiry is absolute: re-displaying the prompt or sending other messages does not extend it. An expired prompt is cleared, cannot execute anything, and the next message is handled normally with a short notice.
+- **Retrieval (current implementation: BM25).** Policy retrieval is lexical BM25 over `FAQ.md` and `Policies.md` (`app/rag/retriever.py`, 25 chunks). **Embeddings and a vector store (for example ChromaDB) are deferred, not implemented and not planned for the MVP**; earlier text that assumes them describes an idea that was not followed. Relevance was tightened on 2026-11-11 after "what is the return window" ranked Q3.2 above Q3.1: the customer says "window" where the policy says "within 7 days". Fixes: a stemmer that unifies word forms (charge/charges, cancel/cancelled/cancellation), a small hand-written vocabulary bridge (window, deadline, period, timeline, cost, fee mapped to the words the documents use, counted at half weight), and a rule that a passage must match at least one of the customer's own words, so the bridge alone never creates a match. **Topic scoping (final source review, 2026-11-11):** the first bridge expanded "window" to "within / days / eligible" for every topic, so "What is the delivery window?" returned the return policy (Q3.1) ahead of the delivery-time answer (Q2.2). Each bridge rule now fires only when the query also names its topic (return topic: within 7 days; delivery topic: business days; refund topic: within business days), and the generic word itself drops to half weight when a rule fires. Regression tests: `tests/test_retrieval_topics.py`, including "Can I return a non-returnable product?", whose top two passages are the ones that state the exceptions. Regression tests: `tests/test_retrieval_regression.py` (standard and damaged return windows, refund time, cancellation, shipping charges, unrelated questions, and that the reply quotes the cited passage).
+- **LLM adapters and live readiness.** `app/llm/providers.py` contains OpenAI-compatible and Anthropic adapters, selected only by environment variables (the exact variables are in `docs/04_frontend_handover.md` Section 3). They are tested only against a mocked transport (`tests/test_providers.py`). **No live provider call has ever been made**; the default `RuleBasedLLM` is an offline stand-in, not a language model. A requested provider that is misconfigured fails closed with `LLMConfigError` (it never silently becomes the stand-in). `readiness(env)` reports which variables are present without printing any value.
+
+### 19.3 Deferred or not done
+
+Durable pending actions and idempotency, an absolute session lifetime, the read-only health connection used by `check_backend` (it uses `check_database_health`, which opens read-only), real authentication, a verified live LLM adapter, and embedding-based retrieval.
+
+### 19.4 Audit fixes (2026-11-11)
+
+A read-only audit of the backend found three defects, fixed on `rukum/backend` and covered by `tests/test_backend_fixes.py`:
+
+- **Confirm-time return window (P2-2).** The write result carries only the outcome, so the old rejection message for `outside_return_window` read "The None-hour return window ... closed on ,". `Engine._write_rejected_text` now re-reads eligibility (read-only, `check_return_eligibility`) to build the message from current facts, falls back to an outcome-only message if that read fails or shows no problem, and `Engine._ineligible_text` never emits a placeholder for missing fields. A rejected confirmation is not counted against the session cap.
+- **Typed `cancel` while a ticket description is awaited (P2-3).** `Engine._outstanding` now includes the `want_ticket` state, so `cancel` ends the request and is never stored as an issue or ticket description.
+- **Missing or invalid catalog or FAQ source (P2-4).** `load_chunks` raises `KnowledgeBaseError` for a missing, unreadable or empty source, and `Catalog.load` raises `CatalogError`; both loaders resolve their default paths at call time, and a failed load is not cached, so a feature recovers when the file returns. Only these two typed errors are handled: `lookup_product` reports `catalog_unavailable`, `search_policies` and `get_refund_policy` report `knowledge_unavailable` (the refund status of an order is still returned), order status shows items without product names, the engine's product matching and item naming fall back, and the rule-based model words each case honestly. Greetings, order questions, returns and tickets keep working. Any other exception still surfaces as an `internal` error reply.

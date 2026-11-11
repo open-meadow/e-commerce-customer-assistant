@@ -76,7 +76,7 @@ Voice-based support may be considered as a future enhancement after the MVP is c
 | Testing | Pytest |
 | Version control | Git and GitHub |
 
-Specific LLM providers, embedding models, and vector storage technologies will be finalized during architecture and implementation.
+Specific LLM providers, embedding models, and vector storage technologies were to be finalized during implementation. **Current state (2026-11-11):** policy retrieval is lexical BM25 (no embeddings, no vector store; those are deferred), and the LLM provider is chosen by environment variables with an offline rule-based default (see `docs/04_frontend_handover.md`).
 
 ## 5. High-Level Architecture
 
@@ -189,7 +189,7 @@ Each checkpoint must be reviewed and tested before moving to the next.
 From the repository root, start the Streamlit chat with:
 
 ```bash
-uv run streamlit run app/ui/streamlit_app.py
+uv run python -m streamlit run app/ui/streamlit_app.py
 ```
 
 Choose C101 or C102 in the sidebar to use the simulated login. The current chat replies come from a local demo stub; live order, return, policy, and ticket answers will be available when the real `handle_turn` implementation is integrated.
