@@ -672,28 +672,64 @@ def seed_database(
 # Script entrypoint
 # ---------------------------------------------------------------------------
 
-if __name__ == "__main__":
-    # Import here (not at module top) to keep the entrypoint self-contained
-    # and avoid circular-import concerns if this module is ever imported
-    # without running as a script.
-    from app.db.connection import DEFAULT_DB_PATH, get_connection
+def main(argv=None) -> int:
+    """Command line: create the schema in a NEW database and seed it.
+
+    The target is ``--db-path`` or, when omitted, the same path the
+    application uses (``APP_DB_PATH``, default ``data/app_d2.db``). The
+    parent directory must already exist. The protected legacy
+    ``data/app.db``, any existing database and any unsafe file are
+    refused before anything is opened or changed.
+    """
+    import argparse
+    import sys
+
+    from app.db.connection import get_initialization_connection, resolve_db_path
+    from app.db.errors import DatabaseError
     from app.db.schema import create_schema
 
-    print(f"Database path: {DEFAULT_DB_PATH}")
-    conn = get_connection()
+    parser = argparse.ArgumentParser(
+        prog="python -m app.db.seed_data",
+        description=(
+            "Initialize and seed a NEW database. Without --db-path the "
+            "application's configured path is used (APP_DB_PATH, default "
+            "data/app_d2.db). The parent directory must already exist. The "
+            "protected data/app.db and any existing database are refused."
+        ),
+    )
+    parser.add_argument("--db-path", default=None, help="path of the new database")
+    parser.add_argument(
+        "--reference-time",
+        default=None,
+        help="ISO-8601 time with an explicit offset; default is the fixed baseline",
+    )
+    arguments = parser.parse_args(argv)
     try:
-        print("Creating schema...")
+        path = resolve_db_path(arguments.db_path)
+        conn = get_initialization_connection(path)
+    except DatabaseError as exc:
+        print(f"Refused: {exc}", file=sys.stderr)
+        return 1
+    try:
         create_schema(conn)
-        print("Seeding database...")
-        seed_database(conn)
-        # Quick verification summary.
+        seed_database(conn, arguments.reference_time)
         n_customers = conn.execute("SELECT COUNT(*) FROM customers").fetchone()[0]
         n_orders = conn.execute("SELECT COUNT(*) FROM orders").fetchone()[0]
         n_items = conn.execute("SELECT COUNT(*) FROM order_items").fetchone()[0]
-        print(
-            f"Done. Inserted {n_customers} customer(s), "
-            f"{n_orders} order(s), "
-            f"{n_items} order item(s)."
-        )
+    except DatabaseError as exc:
+        print(f"Refused: {exc}", file=sys.stderr)
+        return 1
     finally:
         conn.close()
+    print(f"Database: {path}")
+    print(
+        f"Done. Inserted {n_customers} customer(s), "
+        f"{n_orders} order(s), {n_items} order item(s)."
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    import sys
+
+    sys.exit(main())

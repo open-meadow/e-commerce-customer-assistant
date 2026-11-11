@@ -1,8 +1,27 @@
 # Database Design — AI E-Commerce Customer Support Assistant
 
 **Phase:** 1 — Database Design
-**Status:** Phase 1 design approved. Checkpoint 2 (`app/db/schema.py`) implements Section C and was approved on 2026-11-06. Checkpoint 7A (the write-function contracts in Sections F, G, and H) is approved and was committed and pushed in `8ce2d43`. Those functions are not implemented; Checkpoint 7 implementation has not started and is not authorized.
-**Scope of this document:** design only. No application code, migrations, seed scripts, UI, RAG, LangGraph, or voice work is included, per the Phase 1 task boundary. Checkpoint 7A changes the write contracts only; it does not change Section C.
+**Status:** Phase 1 design approved. Checkpoint 2 (`app/db/schema.py`) implements Section C and was approved on 2026-11-06. Checkpoint 7A (the write-function contracts in Sections F, G, and H) is approved and was committed and pushed in `8ce2d43`. Those functions are **implemented** (`6a2c11a`, `app/db/repository.py`) and tested (`0f27739`). Database Checkpoints 1–10 are complete. See "Implementation status" below. **D2 contract freeze (approved by Person A in the master handover, 2026-11-11):** this document records the approved D2 design in Sections C, E, F, G, I, K and L: a persisted `reason_category` column, exact-text reason and ticket-text validation, canonical timestamp constraints, `RET_`/`TKT_` identifiers, the new eligibility outcomes and precedence, the `utc_now()` clock, `user_version` 0/1/>1 with fresh-database-only policy, three connection factories and the health states. **D2 is implemented** (checkpoints D3 to D8, commit `7dfd2f0` on `rukum/db`, 2026-11-11); the "Implementation status" block below describes the code. Sections labelled "Legacy" describe the pre-D2 contract, which is superseded and no longer implemented.
+**Scope of this document:** design. It was written under the Phase 1 task boundary (no application code, migrations, seed scripts, UI, RAG, LangGraph, or voice work); that sentence describes the original task, not the current repository, which now contains the implementation described below. Checkpoint 7A changed the write contracts only; it did not change Section C.
+
+**Implementation status (2026-11-11, reconciled with the code in database commit `7dfd2f0` on `rukum/db`).** This block reports what exists in `app/db/`. The D2 contract frozen in this document is implemented. Where an older paragraph below is labelled "Legacy", it describes the pre-D2 code and is kept for history only.
+
+- **Tables (`app/db/schema.py`, `create_schema`):** the five tables in Section C with the composite foreign keys, the D2 CHECK constraints (canonical timestamps, exact-text limits, status and delivery consistency, the `issue_type` allowlist, the `reason_category` allowlist), the persisted `reason_category` column, `conversation_summary NOT NULL`, the partial unique index `uq_active_return_per_item`, and `PRAGMA user_version = 1` stamped in the same `BEGIN IMMEDIATE` transaction. `create_schema` accepts only a genuinely empty database (no migration, M2); a legacy or newer database is rejected unchanged.
+
+- **Connections (`app/db/connection.py`):** three factories. `get_connection()` is `mode=rw`, never creates a file or directory, enforces and verifies `PRAGMA foreign_keys = ON`, checks `user_version` on every connection and uses a 5.0 s timeout. `get_readonly_connection()` is `mode=ro` plus `query_only` and refuses WAL databases and sidecar files. `get_initialization_connection(path)` is the only creator (`mode=rwc`); it needs an explicit path, an existing parent directory and no sidecar files. The path is `APP_DB_PATH` if set, otherwise `<project>/data/app_d2.db` (a relative value resolves from the project root). The legacy `data/app.db` is **protected**: no factory opens it, and nothing migrates it. Normal startup never creates the default file.
+
+- **Seed (`app/db/seed_data.py`):** `seed_database(connection, reference_time=None)` is deterministic synthetic data (6 customers, 15 orders, 16 order items; `None` means the baseline `2026-11-07T00:00:00Z`; no returns or tickets). The command `python -m app.db.seed_data [--db-path PATH] [--reference-time T]` creates and seeds a new database. Without `--db-path` it uses the same path as the application (`APP_DB_PATH`, default `data/app_d2.db`). The parent directory must already exist. It refuses the protected path and any existing database.
+
+- **Reads (`app/db/repository.py`):** `list_customers_for_login` (login selector only), `list_customer_orders`, `get_order`, `get_order_items`, `get_customer_returns` (includes `reason_category`; `requested_at DESC, return_id DESC`), `get_customer_tickets` (`created_at DESC, ticket_id ASC`) and the advisory `check_return_eligibility`. Each customer-scoped function filters on `authenticated_customer_id` in SQL. Persisted timestamps are validated on read.
+
+- **Writes:** `create_return_request(authenticated_customer_id, order_id, item_id, reason, *, reason_category)` and `create_support_ticket(authenticated_customer_id, issue_type, description, conversation_summary, order_id=None)`. There is no `reference_time` parameter: both use one `app.db.clock.utc_now()` instant captured inside `BEGIN IMMEDIATE`. Results are compact: `{"outcome": "created", "return_id": "RET_<32 hex>"}`, the ineligible outcome with `return_id` None, and `{"outcome": "created", "ticket_id": "TKT_<32 hex>"}`. A `created` result is returned only after COMMIT.
+
+- **Errors:** business outcomes are returned. Infrastructure failures raise typed errors from `app/db/errors.py` (`ConnectionError_` and its subclasses `DatabaseNotInitializedError` and `SchemaIncompatibleError`, `DatabaseOperationalError`, `DatabaseConstraintError`, `DatabaseDataIntegrityError`). There is **no generic `failed` result**. Wrong argument types raise `TypeError`, invalid values `ValueError`. The backend (`app/tools/registry.py` and `app/orchestrator/engine.py`, on `rukum/backend`) maps typed errors to safe messages; SQL and paths are never shown to customers.
+
+- **Return eligibility:** precedence is validate, `order_not_found`, `order_status_ineligible` (status must be exactly `Delivered`), `item_not_found`, `active_return_exists`, `delivery_timestamp_missing` / `outside_return_window`, then `eligible`. Windows are inclusive: 48 hours (`damaged`, `wrong_product`) and 168 hours (`standard`) from `delivered_at`. A `delivered_at` later than the captured time raises `DatabaseDataIntegrityError`. Category-based non-returnable enforcement is not implemented (Section L, item 1).
+
+- **`reason_category` and `reason`:** the category is selected by the customer and persisted in its own column (the model never selects it). `reason` stores only the customer's own message, exactly as accepted (at most 1,000 code points; never trimmed, rewritten or prefixed). The backend (`app/orchestrator/engine.py`) takes it from the customer's own message and ignores any model-supplied reason; this repository layer stores the text it is given.
+- **Tests:** 7 database test files under `tests/` (`test_authorization`, `test_clock_validation`, `test_connection`, `test_returns`, `test_schema`, `test_seed`, `test_tickets`, plus the shared `conftest.py`). `uv run python -m pytest tests/test_authorization.py tests/test_returns.py tests/test_schema.py tests/test_tickets.py tests/test_clock_validation.py tests/test_connection.py tests/test_seed.py -q` gave **412 passed** on 2026-11-11 (database commit `7dfd2f0`). Database tests build temporary databases with the real initialization path; no test opens `data/app.db` or `data/app_d2.db`. The full suite including the backend tests is reported in `PROJECT_STATUS.md`.
 
 ---
 
@@ -202,9 +221,12 @@ erDiagram
 | `customer_id` | TEXT | NOT NULL | **Composite FK** → orders(order_id, customer_id); also plain FK → customers.customer_id | — | — | — |
 | `order_id` | TEXT | NOT NULL | (part of both composite FKs below) | — | — | — |
 | `item_id` | TEXT | NOT NULL | **Composite FK** → order_items(item_id, order_id) | — | — | — |
-| `reason` | TEXT | NOT NULL | — | — | — | — |
+| `reason` | TEXT | NOT NULL | — | — | — | **D2:** the customer's explanation, stored exactly as accepted. `typeof='text'`, no NUL, at most 1,000 Unicode code points, non-empty after trimming the six ASCII whitespace characters (see "D2 schema contract") |
+| `reason_category` | TEXT | NOT NULL | — | — | — | **D2:** `CHECK (reason_category IN ('damaged', 'wrong_product', 'standard'))`. Selected by the customer, never by the LLM. Absent from the legacy schema |
 | `status` | TEXT | NOT NULL | — | `'Requested'` | — | must be one of the proposed values (Section D) |
 | `requested_at` | TEXT (ISO-8601 UTC) | NOT NULL | — | current UTC timestamp | — | — |
+
+**D2 contract for `return_requests` (approved by Person A, 2026-11-11; implemented).** The `reason` and `reason_category` rows above are the D2 schema contract. The pre-D2 legacy schema had no `reason_category` column and no `reason` constraint beyond `NOT NULL`; the implemented schema follows this contract. The complete D2 schema contract (constraints, timestamps, ticket text, IDs, versioning) is the "D2 schema contract" block at the end of this section. No category prefix is ever stored in `reason`.
 
 **Foreign keys, stated explicitly (revision):**
 - `FOREIGN KEY (order_id, customer_id) REFERENCES orders(order_id, customer_id)` — proves this order genuinely belongs to this customer.
@@ -219,7 +241,7 @@ erDiagram
 | `ticket_id` | TEXT | NOT NULL | PK | — | — | — |
 | `customer_id` | TEXT | NOT NULL | FK → customers.customer_id; also part of composite FK below | — | — | — |
 | `order_id` | TEXT | NULL | **Composite FK** → orders(order_id, customer_id), enforced only when not NULL | `NULL` | — | — |
-| `issue_type` | TEXT | NOT NULL | — | — | — | must be a known category (free-text in MVP; not enumerated, since issue types are open-ended) |
+| `issue_type` | TEXT | NOT NULL | — | — | — | exactly one of `order`, `return`, `payment`, `product`, `general`: validated by the backend and the repository (`validate_issue_type`) and enforced by a SQLite `CHECK` in `app/db/schema.py`. Adding a type needs a schema version change |
 | `description` | TEXT | NOT NULL | — | — | — | — |
 | `conversation_summary` | TEXT | NULL | — | `NULL` | — | — |
 | `status` | TEXT | NOT NULL | — | `'Open'` | — | must be one of the proposed values (Section D) |
@@ -229,6 +251,41 @@ erDiagram
 **Foreign key, stated explicitly (revision):** `FOREIGN KEY (order_id, customer_id) REFERENCES orders(order_id, customer_id)`. SQLite does not evaluate a foreign key when any of its referencing columns is NULL, so a general ticket (`order_id = NULL`) is unaffected by this constraint — only a ticket that *does* supply an `order_id` is checked for order/customer consistency. This is exactly the behavior Section G's "clear, don't reject" rule needs (see below).
 
 **Indexes:** PK on `ticket_id`. Index on `customer_id` (ownership filter). Index on `order_id` (for "show tickets related to this order" lookups, where not null).
+
+### D2 schema contract (approved by Person A, 2026-11-11; implemented)
+
+**Status.** Source: Person A's master handover, Sections 6 to 8. **Implemented** in `app/db/schema.py`, `app/db/clock.py`, `app/db/validation.py` and `app/db/repository.py` (D3 to D7). The pre-D2 legacy schema (no `reason_category`, none of the CHECKs below, no `user_version`) is no longer produced by the code. This block supersedes the legacy text above wherever they differ.
+
+**1. Return reason and category.**
+- `reason_category TEXT NOT NULL CHECK (reason_category IN ('damaged', 'wrong_product', 'standard'))`. The customer selects it. The LLM never selects or assigns it. Keyword inference or auto-highlighting is deferred.
+- `reason` is the customer's explanation, stored **exactly as accepted**. No category prefix is stored. Python validation rejects: a non-`str` (`TypeError`); an embedded NUL; a lone Unicode surrogate; a value that is blank by Python `.strip()`; a value longer than 1,000 Unicode code points (`ValueError`). The repository does **not** normalize, strip or truncate. If a tool layer applies NFC normalization, length is validated after it.
+- SQLite `CHECK` backstop, equivalent to: `typeof(reason) = 'text'`, `instr(reason, char(0)) = 0`, `length(reason) <= 1000`, and `length(trim(reason, <six ASCII whitespace characters>)) > 0`.
+- The six characters are space, horizontal tab (9), line feed (10), vertical tab (11), form feed (12) and carriage return (13).
+- The limit counts **Unicode code points**: Python `len()` and SQLite `length()` agree for valid, NUL-free text. It is not bytes and not grapheme clusters.
+- Python `.strip()` is authoritative. SQLite's narrow set is a backstop and is **not** claimed to equal Python's Unicode whitespace rules. SQLite `length()` stops at the first NUL, which is why NUL is rejected at every layer.
+
+**2. Support-ticket text and fields.**
+- `description` and `conversation_summary`: must be strings; nonblank by `.strip()`; at most **2,000** Unicode code points each; NUL and lone surrogates rejected; the repository preserves exact accepted text and does not trim or normalize. SQLite `CHECK` backstop per column: `typeof(column) = 'text'`, no NUL, `length(column) <= 2000`, non-empty after the six-character trim.
+- `issue_type` is one of the exact, case-sensitive values `order`, `return`, `payment`, `product`, `general`. The LLM may propose it and the backend validates it. A missing or invalid value is rejected, not written. `general` is an explicit category, not a substitute for invalid input. Whether SQLite also enforces the allowlist with a `CHECK` is decided when the schema is implemented (D4).
+- `status = 'Open'` and `priority = 'Normal'` at creation, set by the backend. The customer and the LLM cannot override them.
+
+**3. Canonical timestamps.** `orders.order_date` (non-null), `orders.delivered_at` (nullable), `return_requests.requested_at` (non-null) and `support_tickets.created_at` (non-null) are exact canonical UTC text `YYYY-MM-DDTHH:MM:SSZ`: 20 characters, `Z` suffix only, no offsets, no fractional seconds, TEXT. SQLite `CHECK` constraints validate the stored type, no NUL, exact length, and this shape:
+
+```text
+'[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z'
+```
+
+`GLOB` is a shape check only. Python validates actual calendar validity and the semantic rules. None of the four may be later than the operation's single captured UTC `now` (equality is allowed). Integrity is validated whenever the relevant records are read or written: orders (`order_date`, `delivered_at`), returns (`requested_at`), tickets (`created_at`), and eligibility for the relevant order timestamps. There is no full-database scan at startup. A malformed persisted timestamp raises `DatabaseDataIntegrityError`.
+
+**4. Order status and delivery consistency.** `Delivered` and `Returned` orders must have a non-NULL `delivered_at`. Every other status must have a NULL `delivered_at`. A non-NULL `delivered_at` must be on or after `order_date`. (The legacy schema only forbids `delivered_at` for the other statuses.)
+
+**5. Defaults and clock.** Repository methods supply timestamps explicitly from a shared DB-layer `utc_now()` provider. SQLite column defaults may remain only as a defensive fallback for direct SQL writes. This supersedes the legacy contract in which ticket `created_at` relied on the schema default. Production callers and LLM tools cannot supply arbitrary timestamps, and tests control time by monkeypatching `utc_now()`. `seed_database(connection, reference_time=None)` keeps its fixed baseline `2026-11-07T00:00:00Z`, and the seeded timestamps must satisfy the checks above relative to the reference time (to be verified in D7).
+
+**6. Identifiers.** Return ID `RET_` plus 32 lowercase hexadecimal characters from one UUID4. Ticket ID `TKT_` plus 32 lowercase hexadecimal characters from one UUID4. One UUID4 per operation. A collision is handled by the primary-key constraint: roll back and raise `DatabaseConstraintError`. No pre-check and no automatic retry. IDs are not authorization credentials. (The legacy format is `RET-` or `TKT-` plus 12 uppercase hexadecimal characters.)
+
+**7. Schema version.** New D2 schema creation stamps `PRAGMA user_version = 1` in the same transaction as the schema (Section I).
+
+**8. Unchanged.** The five tables, the composite foreign keys, `uq_active_return_per_item`, the Section D enums, integer paise and the ownership model.
 
 ---
 
@@ -304,9 +361,23 @@ This returns **zero rows**. The repository layer treats zero rows as "not found"
 
 **Trust boundary, stated plainly:** `authenticated_customer_id` originates only from the trusted application/session layer (the Streamlit "log in as" selector in this MVP). It is never accepted as a parameter from the LLM's tool-call arguments, never parsed from the user's free-text message, and never taken from conversation history. If the LLM is prompt-injected into trying to request another customer's ID, the backend ignores whatever it says and uses the session's own value regardless — so the ownership filter is enforced even under adversarial LLM behavior, which is the property Section 9 of the discovery report commits to.
 
+**D2 amendment: customer directory for the simulated login (approved by Person A, 2026-11-11; implemented as `list_customers_for_login`).** The login selector needs a list of customers, and no existing read provides it. D2 approves one additional repository read:
+
+```text
+list_customers_for_login() -> list[{"customer_id": str, "name": str}]
+```
+
+- It returns **only** the customer ID and the display name, using the actual column name `name`. It returns no email, phone, order or other data.
+- It sorts deterministically by `name`, then `customer_id`.
+- It is the one repository read that is not scoped to an authenticated customer, because no customer is authenticated before the simulated login. It is restricted to the simulated login/customer-selection interface. It is **not** an LLM tool and is never registered in any tool schema.
+- It does not constitute authentication. The simulated login remains a labeled limitation (Section L, item 5), and every other function still takes `authenticated_customer_id` and filters on it in SQL.
+
+
 ---
 
 ## F. Return Request Integrity
+
+> **Legacy contract (superseded, not implemented).** Everything in this section above the "D2 return contract" heading describes the pre-D2 contract and is kept for history. The code follows the D2 return contract at the end of this section.
 
 A return request must satisfy three joined conditions before it is created. Following the Section B revision, conditions 1 and 2 are now enforced at **two layers**, not one:
 
@@ -322,7 +393,7 @@ A return request must satisfy three joined conditions before it is created. Foll
    - A boundary is inclusive. Elapsed time of exactly 48 hours, or exactly 168 hours for `standard`, is eligible. Elapsed time is negative when `delivered_at` is later than the reference time; that request is ineligible. A NULL `delivered_at` is ineligible. All three ineligible cases use the `outside_window` result. There is no separate outcome for them.
    - Category-based non-returnable enforcement is not part of this contract. `Policies.md` §2 names categories that are non-returnable, but `Products.json` has no returnability metadata. This checkpoint does not invent a `non_returnable` result or change the schema or catalog (Section L).
 
-**Approved repository contract (Checkpoint 7A).** Not yet implemented. Schema columns and constraints in Section C are unchanged. `reason_category` is not stored; the free-text `reason` is stored in the existing `reason` column. `requested_at` is the normalized reference time, written by this function as `YYYY-MM-DDTHH:MM:SSZ`, so the stored timestamp and the eligibility comparison use the same instant. The column default (`strftime('%Y-%m-%dT%H:%M:%SZ', 'now')`) remains in the schema for other writers.
+**Approved repository contract (Checkpoint 7A).** Implemented in `6a2c11a` (`create_return_request` in `app/db/repository.py`) and tested in `0f27739`. Schema columns and constraints in Section C are unchanged. `reason_category` is not stored; the free-text `reason` is stored in the existing `reason` column. `requested_at` is the normalized reference time, written by this function as `YYYY-MM-DDTHH:MM:SSZ`, so the stored timestamp and the eligibility comparison use the same instant. The column default (`strftime('%Y-%m-%dT%H:%M:%SZ', 'now')`) remains in the schema for other writers.
 
 ```text
 create_return_request(authenticated_customer_id, order_id, item_id, reason, *, reason_category, reference_time=None)
@@ -368,15 +439,59 @@ Exact result dictionaries:
 
 `failed` is the generic database-failure result. It carries no SQLite message, SQL text, or exception type. A business rejection rolls the transaction back and returns its dictionary. No partial row remains. Transaction and exception rules are in Section H.
 
+### D2 return contract (approved by Person A, 2026-11-11; implemented)
+
+**Status.** Source: Person A's master handover, Section 8. **Implemented** (checkpoints D5 and D6). This block supersedes the legacy contract above (outcome names, check order, `reference_time` parameter, ID format, `failed` result, stored-reason handling), none of which remains in the code.
+
+**1. Categories and windows.** `standard`: 168 elapsed hours after delivery. `damaged`: 48 hours. `wrong_product`: 48 hours. Time is exact elapsed UTC time and expiry is inclusive (`now <= expiry`).
+
+**2. Which orders qualify.** Only an order whose status is **exactly `Delivered`**. `Returned`, `Cancelled` and every other status are ineligible. No partial or per-item order status is assumed. A `Returned` order closes the opportunity for a new return under this MVP.
+
+**3. Precedence** (the first failing step decides the outcome, for the advisory read and for the write):
+
+1. Validate arguments and category.
+2. Look up the order with trusted customer scope. A missing or unowned order gives `order_not_found`, with no existence disclosure.
+3. The order status must be `Delivered`, otherwise `order_status_ineligible`.
+4. The item must belong to the order, otherwise `item_not_found`.
+5. An active return (`Requested` or `Approved`) for the item gives `active_return_exists`.
+6. The return window, otherwise `outside_return_window`.
+7. Otherwise `eligible`.
+
+Defensive outcome: a `Delivered` order with no `delivered_at` gives `delivery_timestamp_missing`. A persisted timestamp that is malformed or unparseable is not a business outcome and raises `DatabaseDataIntegrityError`.
+
+**4. Advisory read.** `check_return_eligibility(authenticated_customer_id, order_id, item_id, *, reason_category)` is read-only and advisory. It runs in one short read transaction, captures one UTC `now`, and evaluates against one consistent snapshot. The result includes the owned order's `order_status` so the backend can explain a status-based ineligibility. `order_status` is never present for a missing or unowned order, so nothing about status or existence leaks. The field-level result contract (window fields and `existing_return_status`) is in `docs/03` Section 6.2. `eligible` is a preliminary determination. It is **not** a guarantee that the item is returnable (point 9), and customer-facing wording must never say the item is definitely eligible or approved.
+
+**5. Authoritative write.** `create_return_request(authenticated_customer_id, order_id, item_id, reason, *, reason_category)`. Neither function accepts a caller-supplied time (Section C, D2 schema contract, point 5). The result stays compact:
+
+```text
+{"outcome": "created", "return_id": "RET_<32 lowercase hex>"}
+{"outcome": "<one documented ineligible outcome>", "return_id": None}
+```
+
+The result never contains `order_status`. If the backend needs a status-specific message after a rejected write, it calls the existing customer-scoped `get_order`. The write rechecks every rule independently inside its own transaction, and a prior advisory result is not a guarantee. Sequence: get a connection, `BEGIN IMMEDIATE`, capture one UTC timestamp, validate and recheck, insert, commit. The same captured timestamp serves eligibility and `requested_at`.
+
+**6. Concurrency and transactions.** `BEGIN IMMEDIATE` for the write. The partial unique index `uq_active_return_per_item` allows one active return per item while the status is `Requested` or `Approved`. `Rejected` or `Completed` releases the item for a new request. Public repository methods own their transactions, and shared evaluators never begin or commit one. No LLM or network call occurs inside a database transaction.
+
+**7. Reason.** Validation of `reason` and `reason_category` is in Section C (D2 schema contract, point 1). The repository stores the exact accepted reason and the selected category in their own columns.
+
+**8. Errors.** Four kinds stay distinct: business outcomes (returned through the documented result), infrastructure or operational database errors, persisted-data-integrity errors (`DatabaseDataIntegrityError`) and constraint violations (`DatabaseConstraintError`). Customer-facing text never exposes SQL, filesystem paths, stack traces or internal database details. **Settled (implemented):** there is no generic `failed` result. Infrastructure failures raise typed database exceptions (`ConnectionError_` and its subclasses, `DatabaseOperationalError`, `DatabaseConstraintError`, `DatabaseDataIntegrityError`; see Section L, item 10.2 and 10.7). The generic `failed` result of the pre-D2 code is historical and was removed.
+
+**9. Limitation preserved.** `Products.json` has no returnability metadata and is not modified. The database cannot tell whether a product belongs to a non-returnable policy category (Section L, item 1), so `eligible` does not mean the product is returnable under every policy condition.
+
+**10. `get_customer_returns`.** The repository returns the full owner-scoped record, which now includes `reason_category`. The LLM-visible projection is an allowlist built by the backend (`docs/03` Section 5.4). The pre-D2 ordering was `requested_at DESC, return_id ASC` (historical, superseded). **Settled (implemented):** returns are ordered `requested_at DESC, return_id DESC`, which matches the handover's tool ordering (Section L, item 10.5).
+
+
 ---
 
 ## G. Support Ticket Integrity
+
+> **Legacy contract (superseded, not implemented).** Everything in this section above the "D2 ticket contract" heading describes the pre-D2 contract and is kept for history. The code follows the D2 ticket contract at the end of this section.
 
 - `support_tickets.customer_id` is always required and always sourced from trusted session context, identically to orders. The repository parameter is `authenticated_customer_id`. It is never taken from the user message or from model text.
 - `support_tickets.order_id` is optional (a ticket can be general, e.g., "how do I contact support").
 - **When `order_id` is a non-empty string**, the same ownership check from Section E runs first at the application layer: `SELECT 1 FROM orders WHERE customer_id = :auth_id AND order_id = :order_id`. If this returns no row, the ticket is still created, but **without** the order reference (`order_id` stored as `NULL`). A nonexistent order and an unowned order produce the same stored row and the same result dictionary. The function does not attach another customer's order ID.
 
-**Approved repository contract (Checkpoint 7A).** Not yet implemented. Section C is unchanged.
+**Approved repository contract (Checkpoint 7A).** Implemented in `6a2c11a` (`create_support_ticket` in `app/db/repository.py`) and tested in `0f27739`. Section C is unchanged.
 
 ```text
 create_support_ticket(authenticated_customer_id, issue_type, description, order_id=None, conversation_summary=None)
@@ -408,6 +523,18 @@ There is no rejection outcome for a missing or unowned order. The customer-facin
 - **Why the application check runs before the insert, not after:** the new composite FK on `support_tickets` (Section C revision: `FOREIGN KEY (order_id, customer_id) REFERENCES orders(order_id, customer_id)`) would in fact also reject an insert that tried to pair C101's `customer_id` with C102's `order_id` directly — but relying on that alone would surface a raw database constraint failure to the customer, which is poor UX and risks leaking implementation detail in an error message. The application layer checks first and silently clears `order_id` to NULL, so ticket creation always succeeds from the customer's point of view; the composite FK exists as a safety net in case application code has a bug, not as the primary mechanism (same division of responsibility as Section B).
 - **How this is communicated safely:** the customer is never told "that order doesn't belong to you" (which would confirm the order ID exists under someone else's account). Instead, the assistant's response treats this identically to the case where the order ID doesn't exist at all — something like "I've logged your ticket; I wasn't able to link it to a specific order, so a support agent will follow up for the order details." This keeps ticket creation from becoming a side channel for confirming another customer's order ID exists, consistent with Section E's "same not-found result" principle.
 
+
+### D2 ticket contract (approved by Person A, 2026-11-11; implemented)
+
+**Status.** Source: Person A's master handover, Sections 8.10 to 8.12. **Implemented** (checkpoint D5). Supersedes the legacy contract above (result shape, ID format, default-based `created_at`).
+
+- **Success result, for order-linked and general tickets alike:** `{"outcome": "created", "ticket_id": "TKT_<32 lowercase hex>"}`. The legacy `order_id` and `order_linked` keys are no longer returned. A caller that needs to know whether the ticket was linked must read it back through a customer-scoped read.
+- **Identity:** the customer ID is the trusted authenticated session ID. If the supplied order does not exist or is not owned by this customer, a general ticket is created with `order_id = NULL`, and nothing discloses whether that order exists or belongs to someone else.
+- **Backend-controlled fields:** `status = 'Open'` and `priority = 'Normal'`. The customer and LLM cannot set them.
+- **Fields and limits:** `issue_type` is one of `order`, `return`, `payment`, `product`, `general`. `description` and `conversation_summary` are strings, nonblank by Python `.strip()`, at most 2,000 Unicode code points each, with NUL and lone surrogates rejected and exact text preserved (Section C, D2 schema contract, point 2).
+- **Timestamp and ID:** `created_at` is supplied by the repository from the shared clock (Section C, point 5), and the ID is generated as in Section C, point 6.
+- **Orchestration (not a repository concern):** the description is built by the orchestrator from the relevant original customer messages, and the summary is produced by a separate tool-free summarization step before the repository call, with a deterministic fallback (`docs/03` Section 8.9). The repository validates the final values and does not choose relevance.
+
 ---
 
 ## H. Transactions and Duplicate Requests
@@ -432,7 +559,7 @@ This index is the database guarantee against a duplicate active return. The repo
 - On `sqlite3.Error`, roll back and return the documented `failed` dictionary for that function. Do not put the exception message, SQL, or exception type in the result. Do not claim the write succeeded.
 - On a programming error or any exception that is not a `sqlite3.Error`, roll back and re-raise that exception. Do not convert it into `failed`.
 - If rollback itself fails, do not replace the original exception with the rollback exception. On the `sqlite3.Error` path, still return `failed` with no database text. On every other path, re-raise the original exception.
-- `ConnectionError_` raised by `get_connection()` during connection acquisition returns the same generic `failed` dictionary. It is not propagated to the caller. No transaction was opened, so there is nothing to roll back. The result carries no connection or database error text.
+- *(Legacy, superseded.)* The pre-D2 code returned a generic `failed` dictionary for connection errors. The implemented code raises typed errors instead (see Implementation status).
 - Raw database error details (messages, SQL text, exception types) are never exposed through a write-operation result.
 
 ---
@@ -445,7 +572,7 @@ This index is the database guarantee against a duplicate active return. The repo
 |---|---|
 | Fit for this project | Single-user, local, demo-scale capstone with no concurrent-write load. SQLite's file-based model requires no separate server process, which keeps Docker setup and local run instructions simple (matches NFR3 from discovery: runnable via `docker compose up`). |
 | Limitations | Weak concurrent-write support (not a concern here — one demo user at a time); limited native type enforcement (mitigated by enforcing enums and checks at the repository layer in addition to `CHECK` constraints, and by the storage conventions below); no built-in network access control (not needed — the DB file is only ever touched by the backend process). |
-| Running locally | A single `.db` file, created from a schema script and seeded at startup; trivially included in a Docker volume for persistence across container restarts. |
+| Running locally | A single `.db` file, created from a schema script and seeded at startup; trivially included in a Docker volume for persistence across container restarts. *(Superseded by the D2 amendment below: the file is created only by the explicit seed command, never at startup, and its default path is `data/app_d2.db`.)* |
 | Migration path to PostgreSQL | The schema as designed (explicit types, named constraints, indexes, composite foreign keys, no SQLite-only features) maps cleanly to PostgreSQL if a future phase needed multi-user concurrency or a hosted deployment. This is noted as a future option, not a current requirement. |
 
 Already consistent with the HR Leave Assistant practical referenced earlier in this project's history, which used SQLite for the same reasons.
@@ -456,7 +583,47 @@ Already consistent with the HR Leave Assistant practical referenced earlier in t
 2. **Timestamps as UTC ISO-8601 text, one consistent format throughout.** SQLite has no native datetime type; storing timestamps as `TEXT` in the format `YYYY-MM-DDTHH:MM:SSZ` (always UTC, always this exact format) means they sort correctly as plain strings and parse unambiguously in Python (`datetime.fromisoformat`, with care for the trailing `Z`). Every `DATETIME`-labeled column in earlier drafts of this document (`order_date`, `delivered_at`, `requested_at`, `created_at`) is corrected to this `TEXT (ISO-8601 UTC)` type throughout Section C.
 3. **Explicit foreign-key enforcement on every connection.** SQLite does not enforce foreign keys by default — each new connection must run `PRAGMA foreign_keys = ON;` before any write, or every FK and composite FK in this design (Sections B and C) is silently unenforced. This must be part of the connection-setup code in Phase 2, not an optional flag; it is the single most important implementation detail carried over from this design document, since the entire relational-integrity revision in Section B depends on it being set.
 
-**Reproducible test dates:** return-eligibility logic (Section F) compares `delivered_at` with `reference_time`. When `reference_time` is omitted, `create_return_request` reads the current UTC time once with `datetime.now(timezone.utc)`, truncates it to whole seconds, and uses that single instant for both eligibility and `requested_at`. Callers and tests inject a timezone-aware `datetime` or an ISO-8601 string with an explicit UTC offset (normalized to UTC) so results are reproducible; tests must not rely on the wall clock. `seed_database(None)` is a separate function and continues to use its fixed deterministic baseline `2026-11-07T00:00:00Z`; seed `delivered_at` values are offsets from that baseline, so tests that combine seed data with `create_return_request` must pass `reference_time` explicitly (for example the seed baseline). Support-ticket `created_at` is separate: `create_support_ticket` uses the schema column default (`strftime('%Y-%m-%dT%H:%M:%SZ', 'now')`, UTC, approved format) and does not accept `reference_time`.
+**Reproducible test dates (legacy text, superseded by the D2 clock contract).** return-eligibility logic (Section F) compares `delivered_at` with `reference_time`. When `reference_time` is omitted, `create_return_request` reads the current UTC time once with `datetime.now(timezone.utc)`, truncates it to whole seconds, and uses that single instant for both eligibility and `requested_at`. Callers and tests inject a timezone-aware `datetime` or an ISO-8601 string with an explicit UTC offset (normalized to UTC) so results are reproducible; tests must not rely on the wall clock. `seed_database(None)` is a separate function and continues to use its fixed deterministic baseline `2026-11-07T00:00:00Z`; seed `delivered_at` values are offsets from that baseline, so tests that combine seed data with `create_return_request` must pass `reference_time` explicitly (for example the seed baseline). Support-ticket `created_at` is separate: `create_support_ticket` uses the schema column default (`strftime('%Y-%m-%dT%H:%M:%SZ', 'now')`, UTC, approved format) and does not accept `reference_time`. *(Superseded: `reference_time` no longer exists on the return write or the advisory read. Every operation reads `app.db.clock.utc_now()` once, and tests control time by monkeypatching that function.)*
+
+### D2 amendment: schema versioning, fresh-database policy, connections and health (approved by Person A, 2026-11-11; implemented)
+
+**Status.** Source: Person A's master handover, Sections 8.6 to 8.8. **Implemented** (checkpoints D3 and D4). The code has three connection factories, `user_version` checks on every connection, an `APP_DB_PATH` override with the default `data/app_d2.db`, a 5.0 s timeout and no migration. The legacy `data/app.db` is protected and never opened or migrated. Initialization and seeding are explicit, operator-run commands (`python -m app.db.seed_data`) that never run on a normal connection or at application startup. The "created from a schema script and seeded at startup" wording in "Running locally" above describes the original plan and is superseded.
+
+**1. Schema versions (`PRAGMA user_version`).**
+
+| `user_version` | Meaning | Behavior |
+|---:|---|---|
+| 0 | Uninitialized if there are no tables; legacy or unknown if tables exist | An empty or missing database may be initialized through the controlled initializer. Existing tables with version 0 are rejected and preserved unchanged |
+| 1 | The current approved D2 schema | Runtime-compatible, subject to the per-connection version check |
+| greater than 1 | Future or unsupported schema | Fail closed. Not opened for normal operation |
+
+The legacy code never stamped `user_version`, so existing databases are **legacy pre-D2 databases at `user_version = 0`**. They are not "version 1". New D2 schema creation stamps `user_version = 1` in the same transaction as the schema.
+
+**2. Migration choice M2: fresh database only.** There is **no** legacy migration engine in the MVP: no automatic upgrade, cleanup, row transformation, truncation, category inference, migration mapping file, DDL fingerprint comparison, operator row override or data-migration framework. A legacy database file is preserved unchanged and rejected. A missing database is created only through the controlled initialization factory.
+
+**3. Three connection factories, all in `app/db/connection.py`.**
+
+| Factory | URI mode | Purpose and rules |
+|---|---|---|
+| `get_connection()` | `mode=rw` | Normal runtime. Never creates a database. Enables and verifies `PRAGMA foreign_keys = ON`. Checks `user_version` on **every** normal connection and rejects incompatible versions |
+| `get_readonly_connection()` | `mode=ro` | Health and readiness. Never creates or modifies. Sets and verifies `PRAGMA query_only = ON`. Checks the schema version. Rejects WAL and sidecar states when read-only safety cannot be established. Does not use `immutable=1`. Any residual sidecar race is documented honestly |
+| `get_initialization_connection()` | `mode=rwc` | The only creation path. Validates an explicit database path and protects `data/app.db`. The parent directory must already exist. Preflights sidecars, existing database state and journal mode. Rejects legacy or unsupported existing tables unchanged. After opening, takes `BEGIN IMMEDIATE` and repeats the eligibility checks before any schema change. Schema DDL and the `user_version = 1` stamp are one transaction |
+
+Normal and read-only connections never initialize a database. Every writable connection verifies foreign-key enforcement before beginning a transaction and uses `sqlite3.Row`. The 5.0-second SQLite connection timeout and the `APP_DB_PATH` rules approved earlier in D2 are not superseded: the default is `<project-root>/data/app_d2.db` (the legacy `data/app.db` is protected and never opened), an absolute `APP_DB_PATH` is used as given, a relative one resolves from the project root, and tests supply temporary paths. The timeout bounds lock waiting only, not a whole operation.
+
+**4. Health and readiness statuses.** The read-only health check distinguishes `not_initialized`, `ready`, `schema_incompatible` (with a safe reason such as `outdated` or `future`) and `unavailable`.
+
+| State | Result |
+|---|---|
+| Missing database file | No creation. `not_initialized` |
+| Empty database, no schema | `not_initialized` |
+| Existing tables with `user_version = 0` | `schema_incompatible`, reason `outdated` (legacy) |
+| `user_version = 1` | `ready`, if accessible |
+| `user_version` greater than 1 | `schema_incompatible`, reason `future` |
+| Read-only connection failure | `unavailable` |
+
+Exact schema structure is validated during controlled initialization. Runtime checks focus on the version and state, with no full DDL comparison on every request. Write paths fail with typed exceptions for incompatible or unavailable states.
+
 
 ---
 
@@ -504,8 +671,21 @@ Seed data generation itself (a script) is **out of scope for this document**, pe
 | 10 | Ticket creation with unowned order_id | C101 creates a ticket referencing ORD1003 → `{"outcome": "created", "ticket_id": "<generated-id>", "order_id": None, "order_linked": False}`. A nonexistent order ID produces that same result shape. The stored `order_id` is NULL (Section G). |
 | 11 | **Refund consistency rule (new)** | Attempt to set `refund_status = 'Processed'` with `refund_amount = NULL`, and separately `refund_status = 'Not Applicable'` with a non-null `refund_amount` → both rejected per the consistency rule in Sections C/D |
 | 12 | **Foreign key enforcement is actually on** | Four-part test, corrected per Technical Lead review (see note below): (a) open a connection through the application's normal connection path and confirm it executes `PRAGMA foreign_keys = ON;` as part of setup; (b) immediately query `PRAGMA foreign_keys;` on that same connection and assert the result is `1`, not just that the statement ran without error; (c) on that same connection, attempt an insert that violates a composite foreign key (e.g., a `return_requests` row whose `order_id`/`customer_id` pair doesn't exist together in `orders`) and assert SQLite raises a foreign key constraint violation; (d) **optional, documentation-only** — separately open a second connection that deliberately does *not* execute the pragma, query `PRAGMA foreign_keys;` on it and observe it reports `0`, then attempt the same violating insert and observe SQLite accepts it silently, to demonstrate what the failure mode looks like if the pragma were ever omitted in application code. |
+| 13 | **D2: category and reason persistence** | `create_return_request(..., reason_category=...)` for each of `damaged`, `wrong_product`, `standard` → `created`, and the stored row has that `reason_category` and a `reason` equal to the accepted text **exactly** (no prefix, no stripping, no truncation). `get_customer_returns` includes `reason_category`. An invalid category: `ValueError` (wrong type: `TypeError`), no row. A direct insert with an invalid category is rejected by the `CHECK`. |
+| 14 | **D2: reason validation and backstop** | Exactly 1,000 code points accepted; 1,001 raises `ValueError`. Non-string: `TypeError`. Blank by Python `.strip()`, embedded NUL and a lone surrogate: `ValueError`. Surrounding whitespace is preserved when the text is otherwise valid. Direct inserts: 1,001 characters, a NUL, a blob value (`typeof` not `text`) and an empty or six-ASCII-whitespace-only reason are rejected by the `CHECK`. A reason made only of other Unicode whitespace is rejected by Python validation, and the test asserts that division without claiming the `CHECK` rejects it. Counting is by code points (an emoji with a modifier counts as 2). |
+| 15 | **D2: eligibility precedence and outcomes** | For `check_return_eligibility` and `create_return_request`, a matrix covering every step of the Section F D2 precedence: validation; `order_not_found` (nonexistent and unowned give the same result); `order_status_ineligible` for `Returned`, `Cancelled`, `Shipped` and the other non-`Delivered` statuses, **before** the item and duplicate checks; `item_not_found`; `active_return_exists`; `outside_return_window` with inclusive boundaries (exactly 48 and 168 hours accepted, one second later rejected); `delivery_timestamp_missing` for a `Delivered` order with NULL `delivered_at`; `eligible`. A malformed persisted timestamp raises `DatabaseDataIntegrityError`. |
+| 16 | **D2: advisory/authoritative contract** | The advisory result includes `order_status` only for an owned order and never for a missing or unowned one. The write result has no `order_status`. The advisory read never changes any table, including on failure paths. The write repeats every check: a state change between check and write yields the write's authoritative outcome. A prior `eligible` is not a guarantee. |
+| 17 | **D2: concurrency and clock** | A second active return for an item is rejected by the unique index; `Rejected` and `Completed` release the item. The write uses `BEGIN IMMEDIATE` and one captured `now` for eligibility and `requested_at`. Tests control time only by monkeypatching `utc_now()`; no production caller can pass a timestamp. No LLM or network call occurs in a transaction. |
+| 18 | **D2: timestamps** | `CHECK` constraints reject a wrong type, an embedded NUL, a wrong length, an offset or fractional seconds, and a non-canonical shape for all four timestamp columns. Python rejects an impossible calendar date, a naive `datetime`, and a value later than the captured `now` (equality allowed). `Delivered` and `Returned` orders require a non-NULL `delivered_at`, other statuses require NULL, and `delivered_at >= order_date`. A malformed persisted value raises `DatabaseDataIntegrityError`. No full scan runs at startup. |
+| 19 | **D2: ticket contract** | Success is exactly `{"outcome": "created", "ticket_id": "TKT_<32 lowercase hex>"}` for linked and general tickets. A nonexistent or unowned order produces a general ticket with `order_id = NULL` and an identical result. `status` is `Open` and `priority` is `Normal`, and neither can be supplied by the caller. `issue_type` accepts only the five allowlist values. `description` and `conversation_summary`: nonblank, at most 2,000 code points, NUL and surrogates rejected, text preserved exactly, and the `CHECK` backstop holds. `created_at` comes from the repository's captured `now`. |
+| 20 | **D2: identifiers** | Return and ticket IDs match `RET_` or `TKT_` plus 32 lowercase hexadecimal characters from one UUID4 per operation. A forced primary-key collision rolls back and raises `DatabaseConstraintError`, with no retry. |
+| 21 | **D2: versions, factories and health** | An empty or missing database is initialized only through `get_initialization_connection()`, creating the schema and `user_version = 1` in one transaction. Existing tables at `user_version = 0` are rejected and left unchanged. `user_version = 1` opens. `user_version` greater than 1 fails closed. `get_connection()` (`mode=rw`) never creates a database, verifies foreign keys, and checks `user_version` on every connection. `get_readonly_connection()` (`mode=ro`) creates and changes nothing, sets and verifies `query_only`, and rejects WAL and sidecar risks without `immutable=1`. The health states are exactly those in Section I, D2 amendment. |
+| 22 | **D2: path and connections** | `APP_DB_PATH` resolution (default under the project root, absolute as given, relative from the project root), tests using temporary paths, the 5.0-second lock-wait timeout, and `sqlite3.Row` on every connection. |
+| 23 | **D2: login directory** | `list_customers_for_login()` returns exactly the keys `customer_id` and `name`, ordered by `name` then `customer_id`, with no other field. |
 
 **Correction note on Test 12 (this revision):** the previous draft of this test was logically backward — it described opening a connection *without* the pragma and treated a resulting FK rejection as proof that enforcement was working. That is an invalid test: a connection that never enables FK enforcement should **not** reject a violating insert, so if that draft's test had actually passed, it would have indicated a problem, not confirmed the design. The corrected version above instead verifies the real production path — that the application's normal connection setup executes the pragma, that `PRAGMA foreign_keys` reads back as `1` on that connection, and that a violation is then actually rejected on it — with the no-pragma case now clearly separated out as an optional, documentation-only illustration of the failure mode, never used as evidence that enforcement is active.
+
+Tests 13 to 23 are the **D2 test cases** (implemented in `tests/test_connection.py`, `tests/test_schema.py`, `tests/test_clock_validation.py`, `tests/test_returns.py`, `tests/test_tickets.py` and `tests/test_seed.py`). Tests 7 to 9 above describe the legacy contract: under D2 the order status is checked first, the outcome names change, and the legacy `reference_time` parameter is replaced by the shared `utc_now()` clock (Section F, D2 return contract). The legacy tests were rewritten for the D2 contract.
 
 Tests 2b, 5b, 7b, 8b, 11, and 12 are new or corrected in this revision, added to directly exercise the strengthened relational integrity (composite FKs), corrected enums, and storage conventions from this review round. These are specified as test *cases* here; the actual `test_authorization.py` implementation is Phase 2 work, explicitly required by `PROJECT_STATUS.md` to pass before any orchestration or UI code is written.
 
@@ -520,7 +700,16 @@ Tests 2b, 5b, 7b, 8b, 11, and 12 are new or corrected in this revision, added to
 5. **Simulated authentication remains a labeled limitation.** The composite foreign keys added in this revision strengthen *relational consistency* between orders, items, returns, and tickets — they do not and cannot substitute for real authentication. The database still cannot itself verify that the Streamlit session selector reflects a real login; that trust boundary sits one layer up, in the application, and should be stated plainly in the final technical report so the security claim isn't overstated.
 6. **Teacher-provided schema/code**, if it exists outside this conversation, has not been reviewed. Unchanged by this review — if provided later, this design would need to be reconciled against it rather than assumed compatible.
 7. **New (this revision): composite foreign keys require `PRAGMA foreign_keys = ON` on every connection to have any effect** (Section I). This is a single line of setup code, but if it is ever omitted in Phase 2, every composite FK and every plain FK in this design becomes silently unenforced with no error — this is flagged as the single highest-leverage implementation risk introduced by this revision, specifically because its failure mode is silent rather than loud.
-8. **Reference time is injectable, and defaults to the real clock** (Sections F and I). `create_return_request(reference_time=None)` reads `datetime.now(timezone.utc)` exactly once and uses that instant for both eligibility and `requested_at`; it is not the seed baseline. Tests must inject `reference_time` to stay reproducible. `seed_database(None)` keeps its fixed `2026-11-07T00:00:00Z` baseline. Ticket `created_at` uses the schema default (`strftime('%Y-%m-%dT%H:%M:%SZ', 'now')`, SQLite's clock, approved UTC format) because Section G gives that function no `reference_time` parameter.
+8. **(Legacy; superseded by the D2 clock contract in Section C and item 10.4 below.) Reference time is injectable, and defaults to the real clock** (Sections F and I). `create_return_request(reference_time=None)` reads `datetime.now(timezone.utc)` exactly once and uses that instant for both eligibility and `requested_at`; it is not the seed baseline. Tests must inject `reference_time` to stay reproducible. `seed_database(None)` keeps its fixed `2026-11-07T00:00:00Z` baseline. Ticket `created_at` uses the schema default (`strftime('%Y-%m-%dT%H:%M:%SZ', 'now')`, SQLite's clock, approved UTC format) because Section G gives that function no `reference_time` parameter.
+9. **D2 decisions recorded 2026-11-11 (approved by Person A in the master handover; implemented 2026-11-11).** Persisted `reason_category` with no prefix; exact-text `reason` with NUL, surrogate and 1,000-code-point validation at the application, repository and SQLite layers; status `Delivered` required, checked first; the outcome names and precedence in Section F; the compact write result; one shared `utc_now()` clock; canonical timestamp constraints; `RET_`/`TKT_` identifiers; the ticket contract and field limits; `user_version` 0/1/>1 with fresh-database-only policy (M2); three connection factories; the health states; typed database errors; and `list_customers_for_login()`. Item 1 above (no product-level returnability) is not resolved and is preserved.
+10. **Items left open by the D2 contract freeze: all settled by the implementation (2026-11-11).** Each was open when the D2 design was frozen and is now fixed by the code and its tests:
+    1. **Outcome name: `eligible`.** `eligible` is the implemented and approved success outcome (`repository.ELIGIBLE`). The earlier Revision 3.2 wording `prechecks_passed` is retired. Customer-facing wording still never promises eligibility or approval, because the check does not prove product-level returnability (item 1).
+    2. **No generic `failed` result.** Business outcomes are returned in the documented result dictionaries. Infrastructure failures raise typed database exceptions (see item 7). Wrong argument types raise `TypeError` and invalid values `ValueError`, before any database work.
+    3. **Ticket text limit: 2,000 code points.** The implemented limit for `description` and `conversation_summary` is 2,000 Unicode code points, enforced in Python (`validate_text`) and by SQLite `CHECK` constraints. The earlier 4,000 limit is superseded. Return `reason` is limited to 1,000 code points.
+    4. **`reference_time` is removed from the return write and the advisory read.** `create_return_request` and `check_return_eligibility` take no time argument; each reads the shared `app.db.clock.utc_now()` exactly once per operation (after `BEGIN IMMEDIATE` for the write) and uses that instant for both the window comparison and `requested_at`. `seed_database(connection, reference_time=None)` keeps its optional parameter. The legacy test pattern was replaced by monkeypatching `utc_now`.
+    5. **Return ordering: `requested_at DESC, return_id DESC`.** Ticket ordering is `created_at DESC, ticket_id ASC`.
+    6. **SQLite `issue_type` allowlist: implemented.** `support_tickets` has `CHECK (issue_type IN ('order', 'return', 'payment', 'product', 'general'))`, in addition to backend and repository validation (`validate_issue_type`).
+    7. **Exception hierarchy (`app/db/errors.py`).** `DatabaseError` is the base class. Under it: `ConnectionError_` (with the subclasses `DatabaseNotInitializedError` and `SchemaIncompatibleError`, which carries `reason` `outdated` or `future`), and, as direct siblings of `ConnectionError_` (not subclasses of it), `DatabaseOperationalError`, `DatabaseConstraintError` and `DatabaseDataIntegrityError`. A normal connection (`get_connection`) or read-only connection to a **missing database file, or a file with no schema, raises `DatabaseNotInitializedError`**; a legacy or newer schema raises `SchemaIncompatibleError`; an unsafe or unreadable file, an unsafe path or the protected legacy path raises plain `ConnectionError_`. `get_initialization_connection` raises plain `ConnectionError_` for a missing parent directory, sidecar files, the protected path or an unsafe existing file. The health check (`app/db/health.py`) opens the file read-only without enforcing the version and classifies the state itself: `DatabaseNotInitializedError` or no schema gives `not_initialized`, existing tables at `user_version` 0 give `schema_incompatible` (`outdated`), a newer version gives `schema_incompatible` (`future`), and any other `ConnectionError_` gives `unavailable`.
 
 ---
 
@@ -582,11 +771,11 @@ The same logic applies to `return_requests(item_id, order_id)` against `order_it
 
 - Non-returnable product category has no qualifying seed product; `Products.json` has deliberately not been touched (Section L, item 1).
 - `return_requests.status` and `support_tickets.status`/`priority` enums are still unvalidated engineering proposals.
-- The `delivered_at` and `refund_amount`/`refund_status` cross-column `CHECK` constraints are specified as requirements here but not written in SQL yet (design-only boundary).
+- The `delivered_at` and `refund_amount`/`refund_status` cross-column `CHECK` constraints are specified as requirements here but not written in SQL yet (design-only boundary). *(Historical statement from that revision, superseded: both rules are implemented in SQL in `app/db/schema.py`. In `orders`, `delivered_at` is non-NULL exactly when `status` is `Delivered` or `Returned` and is never earlier than `order_date`; `refund_amount` is NULL exactly when `refund_status` is `Not Applicable` and otherwise a non-negative integer.)*
 - `product_id` validation against `Products.json` remains application-layer only, not a database FK.
 - Simulated authentication is still simulated — composite FKs strengthen internal consistency, not the authentication layer itself.
 - No teacher-provided schema/code has been reviewed, since none has been supplied.
-- Two new implementation risks introduced by this revision (FK pragma must be set on every connection; eligibility logic must accept an injectable reference time) are documented but not yet implemented — both are correctness-critical for Phase 2.
+- Two new implementation risks introduced by this revision (FK pragma must be set on every connection; eligibility logic must accept an injectable reference time) are documented but not yet implemented — both are correctness-critical for Phase 2. *(Update 2026-11-11: both risks are resolved in the D2 code: `get_connection()` sets and verifies the pragma on every connection, and the shared `utc_now()` clock replaced the `reference_time` parameter.)*
 
 ### 5. Confirmation
 
