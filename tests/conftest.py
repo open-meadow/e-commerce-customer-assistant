@@ -101,6 +101,25 @@ def protected_sentinel(tmp_path, monkeypatch):
 
 
 @pytest.fixture
+def bnow(monkeypatch):
+    """Control the backend clock (sessions, choice and confirmation expiry).
+
+    Returns ``advance(**timedelta_kwargs)``; the clock starts at the seed
+    baseline.
+    """
+    from datetime import timedelta
+    from app.backend import clock as backend_clock
+
+    state = {"now": T0}
+    monkeypatch.setattr(backend_clock, "now", lambda: state["now"])
+
+    def advance(**kwargs) -> None:
+        state["now"] += timedelta(**kwargs)
+
+    return advance
+
+
+@pytest.fixture
 def set_now(monkeypatch):
     """Return ``set_now(dt)``; the clock starts at the seed baseline."""
     state = {"now": T0}
