@@ -11,20 +11,21 @@ if __package__:
         start_session,
     )
     from .session import (
+        ACTIVE_CHAT_ID_KEY,
         AUTHENTICATED_CUSTOMER_ID_KEY,
-        CHOICE_VIEW_KEY,
-        CONVERSATION_STATE_KEY,
-        MESSAGES_KEY,
-        PENDING_VIEW_KEY,
+        CHATS_KEY,
+        NEW_CHAT_TITLE,
         REQUEST_ID_KEY,
         UI_ERROR_KEY,
         UI_NOTICE_KEY,
-        append_message,
-        clear_conversation,
+        ChatSession,
+        append_chat_message,
+        create_chat,
+        get_active_chat,
         initialize_session,
         is_chat_enabled,
+        select_chat,
         set_authenticated_customer_id,
-        set_conversation_state,
     )
 else:
     from client import (
@@ -35,20 +36,21 @@ else:
         start_session,
     )
     from session import (
+        ACTIVE_CHAT_ID_KEY,
         AUTHENTICATED_CUSTOMER_ID_KEY,
-        CHOICE_VIEW_KEY,
-        CONVERSATION_STATE_KEY,
-        MESSAGES_KEY,
-        PENDING_VIEW_KEY,
+        CHATS_KEY,
+        NEW_CHAT_TITLE,
         REQUEST_ID_KEY,
         UI_ERROR_KEY,
         UI_NOTICE_KEY,
-        append_message,
-        clear_conversation,
+        ChatSession,
+        append_chat_message,
+        create_chat,
+        get_active_chat,
         initialize_session,
         is_chat_enabled,
+        select_chat,
         set_authenticated_customer_id,
-        set_conversation_state,
     )
 
 LOGGER = logging.getLogger(__name__)
@@ -61,9 +63,22 @@ _ERROR_MESSAGES = {
 }
 
 
-def _begin_session(customer_id: str) -> None:
-    clear_conversation(st.session_state)
+def _begin_session(
+    customer_id: str,
+    *,
+    restart_chat: ChatSession | None = None,
+) -> None:
+    """Start a chat or replace an expired chat session."""
+    if restart_chat is not None:
+        restart_chat["conversation_state"] = None
+        restart_chat["messages"] = []
+        restart_chat["title"] = NEW_CHAT_TITLE
+        restart_chat["pending_view"] = None
+        restart_chat["choice_view"] = None
+
     st.session_state[UI_ERROR_KEY] = None
+    st.session_state[UI_NOTICE_KEY] = None
+    st.session_state.pop(REQUEST_ID_KEY, None)
 
     try:
         with st.spinner("Starting a new chat..."):
@@ -83,11 +98,17 @@ def _begin_session(customer_id: str) -> None:
         )
         return
 
-    set_conversation_state(st.session_state, result.state)
-    append_message(st.session_state, "assistant", result.greeting)
+    if restart_chat is None:
+        create_chat(st.session_state, result.state, result.greeting)
+    else:
+        restart_chat["conversation_state"] = result.state
+        restart_chat["messages"] = [
+            {"role": "assistant", "content": result.greeting}
+        ]
 
 
 def _set_customer_from_sidebar() -> None:
+    """Render the simulated login and its customer-scoped chat list."""
     initialize_session(st.session_state)
     try:
         login_options = list_login_options()
@@ -123,19 +144,35 @@ def _set_customer_from_sidebar() -> None:
     if selected_customer is not None and changed:
         _begin_session(selected_customer)
 
-    if selected_customer is not None and st.sidebar.button(
-        "Start new session",
-        key="start_new_session",
-    ):
-        _begin_session(selected_customer)
+    if selected_customer is not None:
+        _render_sidebar_chats(selected_customer)
+
+
+def _render_sidebar_chats(customer_id: str) -> None:
+    """Show the current customer's chats and the new-chat action."""
+    st.sidebar.subheader("Chats")
+    if st.sidebar.button("New chat", key="new_chat"):
+        _begin_session(customer_id)
+        st.rerun()
+
+    active_chat_id = st.session_state.get(ACTIVE_CHAT_ID_KEY)
+    chats: dict[str, ChatSession] = st.session_state[CHATS_KEY]
+    for chat_id, chat in chats.items():
+        if chat_id == active_chat_id:
+            st.sidebar.caption(f"Current: {chat['title']}")
+        elif st.sidebar.button(chat["title"], key=f"chat-{chat_id}"):
+            select_chat(st.session_state, chat_id)
+            st.rerun()
 
 
 def _show_backend_error(reply_error_code: str | None, request_id: str) -> None:
+    """Show a safe error or restart a chat with an expired backend state."""
     if reply_error_code == "invalid_session":
         customer_id = st.session_state.get(AUTHENTICATED_CUSTOMER_ID_KEY)
         if isinstance(customer_id, str):
-            _begin_session(customer_id)
-            if st.session_state.get(CONVERSATION_STATE_KEY) is not None:
+            chat = get_active_chat(st.session_state)
+            _begin_session(customer_id, restart_chat=chat)
+            if is_chat_enabled(st.session_state):
                 st.session_state[UI_NOTICE_KEY] = (
                     "Your chat session expired. A new session has been started."
                 )
@@ -167,17 +204,19 @@ def _send_backend_request(
     decision: ConfirmationDecision | None = None,
     choice: ChoiceSelection | None = None,
 ) -> None:
+    """Send one input and save the reply in the active chat."""
     supplied_inputs = sum(value is not None for value in (message, decision, choice))
     if supplied_inputs != 1:
         raise ValueError("supply exactly one backend request input")
 
-    state = st.session_state.get(CONVERSATION_STATE_KEY)
-    if state is None:
+    chat = get_active_chat(st.session_state)
+    if chat is None or chat["conversation_state"] is None:
         st.session_state[UI_ERROR_KEY] = (
-            "No active chat session. Please start a new session."
+            "No active chat session. Please start a new chat."
         )
         return
 
+    state = chat["conversation_state"]
     try:
         with st.spinner("Thinking..."):
             if message is not None:
@@ -194,15 +233,24 @@ def _send_backend_request(
         )
         return
 
-    set_conversation_state(st.session_state, reply.state)
-    append_message(st.session_state, "assistant", reply.text)
-    st.session_state[PENDING_VIEW_KEY] = reply.pending
-    st.session_state[CHOICE_VIEW_KEY] = reply.choice
+    if reply.error_code == "invalid_session":
+        _show_backend_error(reply.error_code, reply.request_id)
+        return
+
+    chat["conversation_state"] = reply.state
+    append_chat_message(st.session_state, "assistant", reply.text)
+    chat["pending_view"] = reply.pending
+    chat["choice_view"] = reply.choice
     _show_backend_error(reply.error_code, reply.request_id)
 
 
 def _render_actions() -> None:
-    pending = st.session_state.get(PENDING_VIEW_KEY)
+    """Render confirmation and choice controls for the active chat."""
+    chat = get_active_chat(st.session_state)
+    if chat is None:
+        return
+
+    pending = chat["pending_view"]
     if pending is not None:
         st.text(pending.summary)
         confirm_column, cancel_column = st.columns(2)
@@ -223,7 +271,7 @@ def _render_actions() -> None:
             )
             st.rerun()
 
-    choice = st.session_state.get(CHOICE_VIEW_KEY)
+    choice = chat["choice_view"]
     if choice is not None:
         st.text(choice.question)
         for option in choice.options:
@@ -241,6 +289,7 @@ def _render_actions() -> None:
 
 
 def _render_chat() -> None:
+    """Render the active transcript and message composer."""
     st.title("E-commerce customer support")
     st.caption(
         "Synthetic data only. This is a demo login, not a production auth system."
@@ -264,24 +313,29 @@ def _render_chat() -> None:
             str,
         ):
             st.info("Please choose a customer in the sidebar to begin.")
+        else:
+            st.info("Start a new chat from the sidebar to continue.")
         return
 
     customer_id = st.session_state[AUTHENTICATED_CUSTOMER_ID_KEY]
     st.subheader(f"Logged in as {customer_id}")
+    chat = get_active_chat(st.session_state)
+    assert chat is not None
 
-    for chat_message in st.session_state[MESSAGES_KEY]:
+    for chat_message in chat["messages"]:
         with st.chat_message(chat_message["role"]):
             st.text(chat_message["content"])
 
     _render_actions()
     prompt = st.chat_input("Ask about an order, return, policy, or product...")
     if prompt is not None:
-        append_message(st.session_state, "user", prompt)
+        append_chat_message(st.session_state, "user", prompt)
         _send_backend_request(message=prompt)
         st.rerun()
 
 
 def main() -> None:
+    """Run one Streamlit app render cycle."""
     initialize_session(st.session_state)
     _set_customer_from_sidebar()
     _render_chat()

@@ -2,6 +2,11 @@ from collections.abc import MutableMapping
 from typing import Any, TypedDict
 from uuid import uuid4
 
+if __package__:
+    from .client import ChoiceView, ConversationState, PendingView
+else:
+    from client import ChoiceView, ConversationState, PendingView
+
 SessionState = MutableMapping[Any, Any]
 
 AUTHENTICATED_CUSTOMER_ID_KEY = "authenticated_customer_id"
@@ -20,9 +25,9 @@ NEW_CHAT_TITLE = "New chat"
 class ChatSession(TypedDict):
     title: str
     messages: list[dict[str, str]]
-    conversation_state: object
-    pending_view: object | None
-    choice_view: object | None
+    conversation_state: ConversationState | None
+    pending_view: PendingView | None
+    choice_view: ChoiceView | None
 
 
 def initialize_session(session_state: SessionState) -> None:
@@ -51,9 +56,10 @@ def clear_conversation(session_state: SessionState) -> None:
 
 def create_chat(
     session_state: SessionState,
-    conversation_state: object,
+    conversation_state: ConversationState,
     greeting: str,
 ) -> str:
+    """Create and select a chat with its initial greeting."""
     initialize_session(session_state)
     chat_id = uuid4().hex
     chats: dict[str, ChatSession] = session_state[CHATS_KEY]
@@ -133,9 +139,12 @@ def set_conversation_state(
     session_state[CONVERSATION_STATE_KEY] = conversation_state
 
 def is_chat_enabled(session_state: SessionState) -> bool:
+    """Return whether the selected customer has an active chat."""
     customer_id = session_state.get(AUTHENTICATED_CUSTOMER_ID_KEY)
+    chat = get_active_chat(session_state)
     return (
         isinstance(customer_id, str)
         and bool(customer_id.strip())
-        and session_state.get(CONVERSATION_STATE_KEY) is not None
+        and chat is not None
+        and chat["conversation_state"] is not None
     )

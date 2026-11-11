@@ -1,3 +1,4 @@
+from app.ui.client import ChoiceView, ConversationState, PendingView
 from app.ui.session import (
     ACTIVE_CHAT_ID_KEY,
     AUTHENTICATED_CUSTOMER_ID_KEY,
@@ -19,7 +20,6 @@ from app.ui.session import (
     is_chat_enabled,
     select_chat,
     set_authenticated_customer_id,
-    set_conversation_state,
 )
 
 
@@ -102,6 +102,7 @@ def test_clear_conversation_removes_transcript_state_and_pending_views():
 
 
 def test_chat_is_enabled_only_with_customer_and_conversation_state():
+    """Enable chat only when the selected customer has an active conversation."""
     session = {}
     initialize_session(session)
     assert not is_chat_enabled(session)
@@ -109,8 +110,8 @@ def test_chat_is_enabled_only_with_customer_and_conversation_state():
     set_authenticated_customer_id(session, "C101")
     assert not is_chat_enabled(session)
 
-    state = object()
-    set_conversation_state(session, state)
+    state = ConversationState(customer_id="C101")
+    create_chat(session, state, "Hello")
     assert is_chat_enabled(session)
 
     set_authenticated_customer_id(session, "  ")
@@ -128,7 +129,8 @@ def test_append_message_stores_plain_role_and_content():
 
 
 def test_create_and_select_chats_preserves_each_chat_state():
-    first_state = object()
+    """Keep backend and action state isolated when selecting chats."""
+    first_state = ConversationState(customer_id="C101")
     session = {}
 
     first_chat_id = create_chat(session, first_state, "First greeting")
@@ -136,15 +138,24 @@ def test_create_and_select_chats_preserves_each_chat_state():
     assert first_chat is not None
     assert first_chat_id == session[ACTIVE_CHAT_ID_KEY]
     assert first_chat["conversation_state"] is first_state
-    first_pending = object()
-    first_choice = object()
+    first_pending = PendingView(
+        action_id="first-action",
+        kind="demo",
+        summary="First action",
+        expires_at="later",
+    )
+    first_choice = ChoiceView(
+        prompt_id="first-prompt",
+        question="First question",
+        options=(),
+    )
     first_chat["pending_view"] = first_pending
     first_chat["choice_view"] = first_choice
     assert first_chat["messages"] == [
         {"role": "assistant", "content": "First greeting"}
     ]
 
-    second_state = object()
+    second_state = ConversationState(customer_id="C101")
     second_chat_id = create_chat(session, second_state, "Second greeting")
     second_chat = get_active_chat(session)
     assert second_chat is not None
@@ -153,6 +164,9 @@ def test_create_and_select_chats_preserves_each_chat_state():
     assert second_chat["pending_view"] is None
     assert second_chat["choice_view"] is None
 
+    session[UI_ERROR_KEY] = "old error"
+    session[UI_NOTICE_KEY] = "old notice"
+    session[REQUEST_ID_KEY] = "old-request"
     assert select_chat(session, first_chat_id)
     restored_chat = get_active_chat(session)
     assert restored_chat is not None
@@ -160,13 +174,17 @@ def test_create_and_select_chats_preserves_each_chat_state():
     assert restored_chat["conversation_state"] is first_state
     assert restored_chat["pending_view"] is first_pending
     assert restored_chat["choice_view"] is first_choice
+    assert session[UI_ERROR_KEY] is None
+    assert session[UI_NOTICE_KEY] is None
+    assert REQUEST_ID_KEY not in session
     assert not select_chat(session, "missing")
     assert get_active_chat(session) is first_chat
 
 
 def test_chat_title_comes_from_first_nonempty_user_message():
+    """Derive a chat title from its first non-empty user message."""
     session = {}
-    create_chat(session, object(), "Welcome")
+    create_chat(session, ConversationState(customer_id="C101"), "Welcome")
 
     chat = get_active_chat(session)
     assert chat is not None
@@ -184,7 +202,11 @@ def test_chat_title_comes_from_first_nonempty_user_message():
         {"role": "user", "content": "Another question"},
     ]
 
-    new_chat_id = create_chat(session, object(), "Welcome again")
+    new_chat_id = create_chat(
+        session,
+        ConversationState(customer_id="C101"),
+        "Welcome again",
+    )
     new_chat = get_active_chat(session)
     assert new_chat is not None
     assert session[ACTIVE_CHAT_ID_KEY] == new_chat_id
@@ -192,10 +214,11 @@ def test_chat_title_comes_from_first_nonempty_user_message():
 
 
 def test_changing_customer_clears_all_chats():
+    """Clear the chat list when switching simulated customers."""
     session = {}
     set_authenticated_customer_id(session, "C101")
-    create_chat(session, object(), "First chat")
-    create_chat(session, object(), "Second chat")
+    create_chat(session, ConversationState(customer_id="C101"), "First chat")
+    create_chat(session, ConversationState(customer_id="C101"), "Second chat")
 
     changed = set_authenticated_customer_id(session, "C102")
 
