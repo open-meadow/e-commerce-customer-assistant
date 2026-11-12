@@ -7,9 +7,14 @@ ENV PYTHONUNBUFFERED=1 \
     UV_LINK_MODE=copy \
     PATH="/app/.venv/bin:${PATH}" \
     APP_DB_PATH=/app/data/app_d2.db \
-    VECTOR_STORE_DIR=/app/data/vector_store
+    VECTOR_STORE_DIR=/app/data/vector_store \
+    HF_HOME=/app/data/huggingface
 
 WORKDIR /app
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends espeak-ng libsndfile1 \
+    && rm -rf /var/lib/apt/lists/*
 
 COPY pyproject.toml uv.lock ./
 RUN --mount=type=cache,target=/root/.cache/uv \

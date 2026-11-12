@@ -1,6 +1,6 @@
 # E-Commerce Customer Support Assistant
 
-This repository is an educational capstone prototype for a text-based
+This repository is an educational capstone prototype for a text-and-voice
 e-commerce customer-support assistant. It uses synthetic data only and is not
 connected to a real store, customer account, payment provider, or courier.
 
@@ -21,6 +21,8 @@ backend (C101 and C102 only, no database).
 | Customer context | Simulated authenticated customer identity |
 | SQLite database | Customers, orders, order items, returns, and support tickets |
 | Policy retrieval | Persistent Chroma vector search over FAQ and policy documents using OpenAI embeddings |
+| Voice input | OpenAI Whisper transcription of microphone recordings |
+| Spoken replies | Local Kokoro text-to-speech with a playable audio response |
 | Product lookup | Read-only lookup from `Products.json`, separate from policy retrieval |
 | Backend tools | Customer-scoped order, return, and ticket operations |
 | LLM orchestration | Provider-agnostic orchestration; offline rule-based behavior is the default |
@@ -40,8 +42,6 @@ backend (C101 and C102 only, no database).
 - Real refund processing.
 - Production identity and authentication infrastructure.
 
-Voice-based support may be considered as a future enhancement after the MVP is completed and tested.
-
 ## 4. Technology Stack
 
 | Area | Technology |
@@ -53,10 +53,16 @@ Voice-based support may be considered as a future enhancement after the MVP is c
 | Knowledge base | Markdown documents |
 | AI orchestration | Provider-agnostic LLM interface; deterministic rule-based default |
 | Knowledge retrieval | ChromaDB with OpenAI `text-embedding-3-small` embeddings over Markdown FAQ and policy documents |
+| Voice input | OpenAI `whisper-1` speech-to-text |
+| Voice output | Local Kokoro TTS (`af_heart`, American English) |
 | Testing | Pytest |
 | Version control | Git and GitHub |
 
 OpenAI Responses API and Anthropic adapters are available but have only mock-tested transports; neither has been verified against a live provider. The default is `rule_based`, which matches a limited set of phrasings. Policy retrieval uses OpenAI embeddings and requires `OPENAI_API_KEY` when searching or indexing, even when the LLM remains in `rule_based` mode.
+
+Voice input also requires `OPENAI_API_KEY`: microphone recordings are sent to
+OpenAI's hosted `whisper-1` transcription API. Spoken replies are synthesized
+locally with Kokoro; reply text is not sent to a TTS service.
 
 ## 5. High-Level Architecture
 
@@ -68,6 +74,8 @@ app.backend -> orchestrator -> customer-scoped tools -> SQLite
                             -> Chroma vector search -> FAQ.md / Policies.md
                             -> product lookup -> Products.json
                             -> LLM interface -> RuleBasedLLM (default)
+Microphone audio -> OpenAI Whisper -> transcript -> existing chat input
+Assistant text -> local Kokoro -> audio player
 ```
 
 `UI_BACKEND=real` is the local default. `UI_BACKEND=fake` selects the canned,
@@ -164,6 +172,16 @@ business database at `VECTOR_STORE_DIR` (default
 `app/db/data/generated/vector_store`). It is rebuilt from the source documents
 when their content changes.
 
+Voice input records through the Streamlit chat widget and sends the recording
+to OpenAI for transcription; the transcript is then handled like typed text.
+Kokoro generates spoken replies locally. For local macOS use, install
+`espeak-ng` and sync the Python dependencies:
+
+```bash
+brew install espeak-ng
+uv sync
+```
+
 To use the existing default database, simply run:
 
 ```bash
@@ -192,20 +210,25 @@ From the repository root:
 
 ```bash
 cp .env.example .env
-# Set OPENAI_API_KEY for retrieval; optionally configure the LLM provider in .env.
+# Set OPENAI_API_KEY for retrieval and voice transcription; optionally configure the LLM provider.
 docker compose up --build
 ```
 
-Open <http://localhost:8501>. On first start, the container seeds a new database in the `app-data` volume
-and uses it through `APP_DB_PATH`. The Chroma index is stored separately at
-`/app/data/vector_store` on that same persistent volume. Later starts reuse
-both. Set `OPENAI_API_KEY` in `.env` for FAQ and policy retrieval; the default
-LLM remains offline and rule-based unless a provider is configured. The
-Streamlit UI and backend run together in one process; there is no separate API
-service.
+Open <http://localhost:8501>. On first start, the container seeds a new database
+in the `app-data` volume and uses it through `APP_DB_PATH`. The Chroma index and
+Kokoro model cache are stored separately at `/app/data/vector_store` and
+`/app/data/huggingface` on the same persistent volume. Later starts reuse them.
+The image installs the `espeak-ng` and `libsndfile` runtimes required by Kokoro
+and audio encoding. On first use, Kokoro downloads its model weights into the
+persistent cache. Set `OPENAI_API_KEY` in `.env` for FAQ/policy retrieval and
+voice transcription; microphone audio is sent to OpenAI. Spoken replies are
+generated locally. The default LLM remains offline and rule-based unless a
+provider is configured. The Streamlit UI and backend run together in one
+process; there is no separate API service.
 
 Stop the service with `Ctrl+C`; use `docker compose down` to stop and remove the
-container and network. The database volume is preserved.
+container and network. The `app-data` volume preserves the database, Chroma
+index, and Kokoro model cache.
 
 ## Tests and evaluation smoke run
 
@@ -235,7 +258,10 @@ evaluation of the real assistant. Sample outputs in
 - The default assistant is deterministic rule-based behavior, not a general
   language model. Provider adapters are not live-tested.
 - If an external LLM provider is explicitly configured, prompts may be sent to
-  that provider; the offline rule-based default makes no provider call.
+  that provider; the offline rule-based default makes no LLM provider call.
+- Voice recordings are sent to OpenAI for transcription even when the
+  rule-based LLM is selected. Kokoro produces speech locally; its model weights
+  are downloaded from Hugging Face on first use.
 - FAQ and policy retrieval uses Chroma with OpenAI embeddings. It requires an
   OpenAI API key and sends source text when indexing and each search query to
   OpenAI. The local index is persistent; Docker Compose stores it on the

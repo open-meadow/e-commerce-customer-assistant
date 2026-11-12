@@ -7,6 +7,7 @@ services:
     environment:
       APP_DB_PATH: /app/data/app_d2.db
       VECTOR_STORE_DIR: /app/data/vector_store
+      HF_HOME: /app/data/huggingface
       UI_BACKEND: real
     ports:
       - "8501:8501"
