@@ -12,7 +12,11 @@ _PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
-from app.db.connection import get_connection
+from app.db.connection import (
+    get_connection,
+    get_initialization_connection,
+    get_readonly_connection,
+)
 from scripts.init_demo_db import (
     build_parser,
     initialize_database,
@@ -131,7 +135,7 @@ def test_initialize_database_creates_schema_and_seed_data(tmp_path):
 @pytest.mark.parametrize("object_type", ["table", "view"])
 def test_initialize_database_refuses_existing_tables_or_views(tmp_path, object_type):
     db_path = tmp_path / f"existing-{object_type}.sqlite"
-    connection = get_connection(str(db_path))
+    connection = get_initialization_connection(str(db_path))
     try:
         if object_type == "table":
             connection.execute("CREATE TABLE existing_data (value TEXT)")
@@ -143,7 +147,7 @@ def test_initialize_database_refuses_existing_tables_or_views(tmp_path, object_t
     with pytest.raises(ValueError, match="database is not empty"):
         initialize_database(db_path, parse_reference_time(REFERENCE_TIME))
 
-    connection = get_connection(str(db_path))
+    connection = get_readonly_connection(str(db_path), check_version=False)
     try:
         assert connection.execute(
             "SELECT name FROM sqlite_master WHERE name='existing_data'"
@@ -157,7 +161,7 @@ def test_initialize_database_refuses_existing_tables_or_views(tmp_path, object_t
 
 def test_cli_refuses_non_empty_database_without_changing_existing_data(tmp_path):
     db_path = tmp_path / "existing.sqlite"
-    connection = get_connection(str(db_path))
+    connection = get_initialization_connection(str(db_path))
     try:
         connection.execute("CREATE TABLE keep_me (value TEXT)")
         connection.execute("INSERT INTO keep_me VALUES ('preserve')")
@@ -182,7 +186,7 @@ def test_cli_refuses_non_empty_database_without_changing_existing_data(tmp_path)
 
     assert completed.returncode == 2
     assert "database is not empty" in completed.stderr
-    connection = get_connection(str(db_path))
+    connection = get_readonly_connection(str(db_path), check_version=False)
     try:
         assert connection.execute("SELECT value FROM keep_me").fetchone()[0] == "preserve"
         assert connection.execute(
@@ -222,7 +226,7 @@ def test_cli_refuses_real_database_path_before_connecting(db_path):
 
 def test_non_empty_database_query_ignores_sqlite_internal_tables(tmp_path):
     db_path = tmp_path / "empty.sqlite"
-    connection = get_connection(str(db_path))
+    connection = get_initialization_connection(str(db_path))
     try:
         assert connection.execute(
             "SELECT name FROM sqlite_master "

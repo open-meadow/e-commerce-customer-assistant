@@ -12,7 +12,7 @@ _PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
-from app.db.connection import get_connection
+from app.db.connection import get_initialization_connection
 from app.db.schema import create_schema
 from app.db.seed_data import seed_database
 
@@ -92,7 +92,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def initialize_database(db_path: Path, reference_time: datetime) -> None:
     """Create the schema and seed an empty database, refusing existing objects."""
-    connection = get_connection(str(db_path))
+    connection = get_initialization_connection(str(db_path))
     try:
         existing_objects = connection.execute(
             "SELECT name FROM sqlite_master "
