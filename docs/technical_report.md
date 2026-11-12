@@ -1,194 +1,199 @@
 # Technical Report
 
-**Project:** AI E-Commerce Customer Support Assistant  
-**Report date:** 2026-11-11  
-**Project type:** Educational capstone prototype  
+**Project:** AI E-Commerce Customer Support Assistant
+**Report date:** 2026-11-12
+**Project type:** Educational capstone prototype
 **Data:** Synthetic only
-
-> **Update (branch `wire-ui-backend`):** the sections below describe the chat as
-> running on the fake backend. The UI is now wired to the real backend by
-> default (`UI_BACKEND=fake` restores the old behaviour); the evaluation runner
-> and Docker image still use the fake. Statements about the fake backend need
-> revising by Person B before the report is final.
 
 ## Abstract
 
-This project is a prototype for a text-based e-commerce customer-support
-assistant. The repository contains a runnable Streamlit demonstration with
-simulated customer selection, a separately implemented SQLite data layer, a
-Docker configuration, a safe demo-database initializer, and a 70-case labeled
-evaluation dataset.
+This capstone prototype provides a Streamlit customer-support UI connected by
+default to a local backend. The backend uses a simulated customer login,
+customer-scoped SQLite operations, lexical retrieval over FAQ and policy
+documents, read-only product lookup, and confirmation-gated return and ticket
+writes. Its default assistant is an offline, deterministic rule-based stand-in
+for a general language model.
 
-The current chat uses a local fake backend. It does not retrieve policies or
-products, query the SQLite repository, call an LLM, execute real customer
-tools, or create real returns or support tickets. Accordingly, the evaluation
-runner is a smoke harness: it records fake-backend replies and expected labels,
-but does not assess correctness, safety, hallucinations, or tool calls. The
-implemented artifacts demonstrate project structure and testable components;
-they do not constitute a completed AI support assistant.
+The UI also has an explicit canned fake-backend mode. Docker Compose and the
+evaluation runner currently use that fake mode. The 70-case runner records
+fake replies and expected labels, but marks answer quality, tool correctness,
+hallucination, and safety metrics `not_assessed`. It is a demo smoke harness,
+not an evaluation of the real assistant.
+
+The project is synthetic and local. It is not connected to a real retailer,
+customer account, payment provider, or courier.
 
 ## 1. Problem and scope
 
 E-commerce support commonly involves questions about orders, delivery,
 payments, returns, refunds, products, and store policies. The target capstone
-concept is a conversational interface that can answer policy questions,
-access only the signed-in customer's data through controlled tools, and
-escalate unresolved issues.
+system demonstrates a conversational interface that answers from approved
+synthetic sources, accesses only the signed-in demo customer's data through
+controlled tools, and can propose support actions for explicit confirmation.
 
-The prototype uses synthetic data and a simulated login selector. It does not
-connect to a real store, payment processor, courier, or customer account.
-Production authentication, checkout, real refunds, and voice support are
-outside the current scope.
-
-The source dataset contains sample FAQ and policy documents, a five-product
-JSON catalog, and six starter query examples. The project expanded the query
-examples to 70 labeled synthetic cases. The FAQ and `Policies.md` describe
-sample policies; they do not represent a real retailer.
+The simulated login is not production authentication. Checkout, production
+identity, real payments, refunds, couriers, and store integrations are out of
+scope. The project uses five database tables: customers, orders, order items,
+return requests, and support tickets. It has no payment or shipment tables.
+The supplied FAQ and `Policies.md` describe sample policies, not a real
+retailer.
 
 ## 2. Implemented system
 
-### 2.1 Streamlit demonstration
+### 2.1 Streamlit UI and backend
 
-The Streamlit app is in `app/ui/`. It offers simulated customers C101 and C102
-and maintains chat state in the Streamlit session. Its adapter routes to
-`app/ui/fake_backend.py`, which returns canned responses and supports demo
-return-choice and confirmation flows. A confirmation explicitly does not
-submit a real request. The UI is not wired to the SQLite repository or to the
-FAQ, policy, or product files.
+`app/ui/client.py` selects `app.backend` by default; `UI_BACKEND=fake` selects
+the older canned backend. The real UI presents six synthetic login customers,
+keeps chat history in Streamlit session state, and checks backend readiness
+before showing login. Backend sessions are in-memory and single-process.
+Simulated login demonstrates application-scoped identity but is not
+production-grade authentication.
 
-### 2.2 SQLite data layer
+The backend orchestrates customer-scoped order, return, and ticket operations,
+FAQ/policy retrieval, product lookup, and LLM responses. Return and support
+ticket writes require an explicit confirmation; the UI reports success only
+when the backend confirms the operation.
 
-The independent database implementation defines five tables:
-`customers`, `orders`, `order_items`, `return_requests`, and
-`support_tickets`. The connection factory enables and verifies SQLite foreign
-key enforcement and sets row results to `sqlite3.Row`. The seed data is
-synthetic, uses a fixed reference baseline unless an explicit time is
-provided, and validates product IDs against the read-only product catalog.
-Repository functions are customer-scoped and parameterized.
+### 2.2 Knowledge and language-model behavior
 
-The database work is separate from the runnable chat. Also, the canonical
-implementation plan (`docs/02_database_implementation_plan.md`) records write
-checkpoints 7–9 as not started and not authorized, while the current checkout
-contains `create_return_request`, `create_support_ticket`, and corresponding
-tests. This discrepancy is documented in `PROJECT_STATUS.md`; formal
-checkpoint authorization remains unresolved and should not be inferred from
-the files' presence.
+Policy and FAQ retrieval uses lexical BM25 over `FAQ.md` and `Policies.md`.
+It does not use embeddings or a vector database. Product lookup reads
+`Products.json` separately and is not part of RAG.
 
-### 2.3 Docker and database initialization
+The default `RuleBasedLLM` is an offline deterministic stand-in that handles a
+limited set of phrasings; it is not a general language model. OpenAI Responses
+API and Anthropic adapters are available and have mocked transport tests, but
+neither has been verified against a live provider. A misconfigured selected
+provider fails closed rather than silently falling back to rule-based mode.
 
-The repository includes a Docker image and Compose service for the Streamlit
-app. Compose forwards provisional database, vector-store, and LLM environment
-variables, but the current chat does not use them. The current fake-backend
-demo does not require an API key.
+### 2.3 SQLite data layer
 
-`scripts/init_demo_db.py` accepts an explicit database path and timezone-aware
-reference time, protects the project's canonical `app/db/data/app.db` from use, and
-refuses to initialize a database containing existing tables or views. Its
-validation uses temporary databases.
+The database contains five tables: `customers`, `orders`, `order_items`,
+`return_requests`, and `support_tickets`. Repository functions accept the
+authenticated customer identity and scope reads and writes in SQL. Writes use
+transactions and recheck eligibility. The default database path is
+`app/db/data/app_d2.db`; normal application startup does not create or seed it.
+The seed command creates a new database and refuses existing files and the
+protected legacy `app/db/data/app.db`.
 
-### 2.4 Evaluation artifacts
+The canonical database implementation plan and the files currently present
+have a documented checkpoint-status discrepancy for write-function
+checkpoints 7–9. This report does not change or resolve that authorization
+record; see `PROJECT_STATUS.md` and the canonical implementation plan.
 
-`app/db/data/eval/queries.csv` has 70 synthetic labeled cases across 17 categories,
-including order status, delivery, payment, returns, product questions,
-policies, cross-customer attempts, prompt-injection attempts, out-of-scope
-requests, ambiguous messages, and language-robustness examples.
+## 3. Architecture and operational modes
 
-`scripts/eval/run_eval.py` runs each case in a fresh fake-backend session and
-emits a JSON report. It reports expected-tool coverage and per-category case
-counts, but it does not observe tool calls. Answer accuracy, tool-call
-correctness, hallucination checks, and safety checks are explicitly reported
-as `not_assessed`. Four illustrative, case-linked demo logs are provided in
-`app/db/data/eval/logs/sample_conversations.jsonl`; they do not claim that expected
-safety behavior was actually demonstrated.
-
-## 3. Architecture
-
-The current chat path is:
+The local real-backend path is:
 
 ```text
 Customer
   -> Streamlit UI
   -> UI adapter
-  -> fake backend
-  -> canned demo reply
+  -> app.backend
+      -> customer-scoped tools -> SQLite
+      -> lexical BM25 retrieval -> FAQ.md / Policies.md
+      -> product lookup -> Products.json
+      -> LLM interface -> RuleBasedLLM (default)
 ```
 
-Separately, database setup and repository tests exercise the SQLite layer.
-The evaluation runner also calls the fake backend directly. There is no
-implemented connection from the chat to the database, policies, or product
-catalog. The proposed backend API, LLM orchestrator, RAG retriever, and
-customer-scoped runtime tool layer remain future design. See
-[`architecture.md`](./architecture.md) for the implemented-versus-planned
-diagram and [`03_backend_architecture.md`](./03_backend_architecture.md) for
-the backend design draft.
+`UI_BACKEND=fake` instead routes the UI to canned in-process responses and does
+not access the database. Docker Compose currently sets `UI_BACKEND=fake`; its
+image contains no initialized database. The evaluation runner also calls the
+fake backend directly. See [`architecture.md`](./architecture.md) for the
+current and alternate paths.
 
 ## 4. Data protection and reliability boundaries
 
-The database design uses customer-scoped repository operations and composite
-foreign keys for relational consistency. The tests exercise database and
-repository behavior independently of the Streamlit fake backend. The login
-selector is simulated and is not production authentication.
+Customer identity is established by the application session, not by user
+messages or LLM-generated tool arguments. Repository operations are
+customer-scoped. The LLM does not have unrestricted SQL access, and state
+changes require a confirmation action bound to the conversation session.
+These are prototype controls, not a substitute for production authentication
+or security review.
 
-Because the chat does not use the database or real tools, its operation flows
-do not demonstrate real authorization, cross-customer isolation, transaction
-handling, or confirmed writes. The fake backend's demo confirmation is not a
-database operation. The evaluation runner has no tool-call telemetry and
-therefore cannot verify those runtime properties.
+The rule-based assistant is limited to fixed phrasings. Backend sessions and
+chat history are not durable and do not support multiple application
+processes. Provider adapters have not been tested against live services. No
+real payment, refund, shipping, courier, or retailer integration is present.
 
-No real personal, order, or payment information should be entered into the
-prototype.
+No real personal, order, or payment information should be entered.
 
-## 5. Verification
+## 5. Evaluation artifacts
 
-The following checks were run on 2026-11-11:
+`app/db/data/eval/queries.csv` contains 70 synthetic labeled cases across 17
+categories, including order status, delivery, payment, returns, product and
+policy questions, cross-customer attempts, prompt-injection attempts,
+out-of-scope requests, ambiguity, and language robustness.
+
+`scripts/eval/run_eval.py` runs each case in a fresh fake-backend session and
+emits a JSON report. It records replies and expected labels but observes no
+real tool-call trace. Answer accuracy, tool-call correctness, hallucination
+checks, and safety checks are `not_assessed`. The case labels are expectations,
+not evidence that the assistant performed the expected behavior. No
+real-backend evaluation mode is present in this checkout.
+
+## 6. Verification
 
 | Check | Result |
 |---|---|
-| `uv run python -m pytest -q` | **545 passed** |
-| `uv run python scripts/eval/run_eval.py` | Processed **70 cases** across **17 categories** |
-| Evaluator answer/tool/safety metrics | `not_assessed` (as designed for the fake backend) |
-| `uv sync --check` | Passed |
-| `docker compose config --quiet` | Passed |
-| `git diff --check` | Passed for the documentation changes |
+| `uv run python -m pytest tests -q` | **1119 passed** on 2026-11-12 |
+| Current real-backend readiness check | Ready against the configured existing `app/db/data/app_d2.db`; six synthetic login IDs available |
+| Local UI smoke observation | C101's owned `ORD1001` query returned Delivered and Wireless Earbuds |
+| Person A's 2026-11-12 handoff report | 20 of 20 scripted checks and seven browser checks against a temporary seeded DB; not independently repeated for this report |
+| Demo evaluation | 70 cases; fake backend; metrics `not_assessed` |
+| Provider adapters | Mocked transport tests only; no live provider call verified |
 
-These results verify the available tests, configuration, and smoke harness.
-They do **not** measure answer quality or establish the safety of an
-LLM-powered assistant.
+The local UI observation above is limited to the owned-order query. A
+cross-customer request remained pending during this documentation task, and
+return/ticket confirmation flows were not exercised here. No screenshot is
+included as evidence of those flows. The broader scripted and browser results
+are attributed to Person A's handoff, not presented as independently
+reproduced.
 
-## 6. Limitations and future work
+## 7. Limitations and future work
 
-The main limitation is that the conversational UI remains a fake-backend
-prototype. Completing the target system would require implementing and
-integrating the backend API, validated tools, product lookup, policy retrieval,
-LLM orchestration, and observable tool-call logging. A subsequent evaluator
-could then assess grounded answers, actual tool calls, safety behavior, and
-hallucination risks against the labeled cases.
+The real backend is implemented, but the default assistant is rule-based and
+the provider integrations are not live-verified. Retrieval is lexical rather
+than embedding-based, sessions are in-memory and single-process, the login is
+simulated, and the evaluation runner does not measure real assistant quality
+or safety. Docker remains a fake-backend demo path.
 
-The database checkpoint status discrepancy should be resolved with the
-Technical Lead before changing canonical checkpoint authorization. Documentation
-and presentation materials should continue to distinguish code that exists
-from work formally authorized and from future design.
+Future work could add live-provider verification, a real-backend evaluation
+mode with measurable tool traces, durable session management, production
+authentication, and a deployment configuration using an explicitly
+initialized database. These are future activities, not claims about the
+current demo.
 
-## 7. Reproduction
+## 8. Reproduction
 
-From the repository root, with Python 3.13+ and `uv` installed:
+From the repository root with Python 3.13+ and `uv` installed:
 
 ```bash
 uv sync
-uv run streamlit run app/ui/streamlit_app.py
+uv run python -m pytest tests -q
+uv run python -m streamlit run app/ui/streamlit_app.py
 ```
 
-Run the test suite and demo-only evaluation harness with:
+The local UI uses `APP_DB_PATH` (default `app/db/data/app_d2.db`). Use an
+already initialized database if one exists. To create a separate new demo
+database, select a new path and current UTC reference time; do not run the seed
+command against an existing file:
 
 ```bash
-uv run python -m pytest
+mkdir -p demo
+uv run python -m app.db.seed_data --db-path demo/demo.db --reference-time 2026-11-12T00:00:00Z
+APP_DB_PATH=demo/demo.db uv run python -m streamlit run app/ui/streamlit_app.py
+```
+
+The protected legacy `app/db/data/app.db` must never be opened, seeded,
+reset, or modified. The demo-only evaluator can be run with:
+
+```bash
 uv run python scripts/eval/run_eval.py
 ```
 
-For the containerized demo:
+Docker starts the fake-backend UI with:
 
 ```bash
 docker compose up --build
 ```
-
-See the [README](../README.md) for setup details and limitations.

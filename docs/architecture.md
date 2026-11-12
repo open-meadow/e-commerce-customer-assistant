@@ -1,81 +1,71 @@
 # Project Architecture
 
-> **Update (branch `wire-ui-backend`):** the Streamlit UI now reaches the real
-> backend through `app/ui/client.py` (`UI_BACKEND=real`, the default); the
-> diagram and text below still describe the earlier fake-backend wiring, which
-> remains available with `UI_BACKEND=fake` and is what the evaluation runner and
-> Docker image still use. Person B to redraw the diagram and revise the report.
-
-This diagram distinguishes the current implementation from the target design.
-The target design is not implemented in the runnable chat.
+The local Streamlit app uses the real backend by default. `UI_BACKEND=fake`
+selects the canned, database-free demo; Docker Compose and the evaluation
+runner currently use that fake mode.
 
 ```mermaid
 flowchart LR
-    subgraph Current["Implemented in this checkout"]
-        subgraph Chat["Runnable Streamlit demo"]
-            Customer["Customer<br/>(simulated C101 / C102)"] --> UI["Streamlit UI<br/>app/ui/streamlit_app.py"]
-            UI --> Client["UI adapter<br/>app/ui/client.py"]
-            Client --> Fake["Fake backend<br/>canned replies and demo flows"]
-            Fake --> UI
-            UI -. "conversation state in Streamlit session" .-> Session["UI session state"]
-        end
+    Customer["Customer<br/>(simulated login)"] --> UI["Streamlit UI<br/>app/ui/streamlit_app.py"]
+    UI --> Client["UI adapter<br/>app/ui/client.py"]
+    Client -->|UI_BACKEND=real (default)| API["app.backend"]
+    Client -->|UI_BACKEND=fake| Fake["app.ui.fake_backend<br/>canned replies"]
 
-        subgraph Database["Separate SQLite implementation"]
-            Init["scripts/init_demo_db.py"] --> Connection["Connection factory"]
-            Connection --> Schema["Schema and seed"]
-            Connection --> Repository["Customer-scoped repository"]
-            Schema --> SQLite["SQLite database<br/>app/db/data/app.db by default"]
-            Repository --> SQLite
-            DBTests["Database tests<br/>(temporary databases)"] -. "exercise separately" .-> Schema
-            DBTests -. "exercise separately" .-> Repository
-        end
+    API --> Orchestrator["Orchestrator"]
+    Orchestrator --> Tools["Validated customer-scoped tools"]
+    Orchestrator --> RAG["Lexical BM25 retrieval"]
+    Orchestrator --> Catalog["Read-only catalog lookup"]
+    Orchestrator --> LLM["LLM interface<br/>rule-based default"]
+    Tools --> DB["SQLite<br/>customers, orders, items,<br/>returns, support tickets"]
+    RAG --> Docs["FAQ.md · Policies.md"]
+    Catalog --> Products["Products.json"]
+    Fake --> UI
+    API --> UI
 
-        subgraph Eval["Demo-only evaluation"]
-            Cases["70 labeled synthetic cases<br/>app/db/data/eval/queries.csv"] --> Runner["scripts/eval/run_eval.py"]
-            Runner --> EvalFake["Fake backend<br/>fresh session per case"]
-            EvalFake --> Report["JSON replies and labels<br/>quality / safety / tools: not assessed"]
-            Logs["Sample conversations<br/>demo_only / not_assessed"]
-            Cases -. "case-linked examples" .-> Logs
-        end
+    Cases["70 synthetic cases"] --> Eval["scripts/eval/run_eval.py"]
+    Eval --> Fake
+    Eval --> EvalReport["Replies and labels<br/>all quality/safety metrics not_assessed"]
 
-        Sources["FAQ.md · Policies.md<br/>Products.json"]:::unwired
-        Sources -. "not connected to current chat" .- UI
-    end
-
-    subgraph Future["Target design — planned, not implemented"]
-        Backend["Backend API<br/>session and response handling"]
-        Orchestrator["LLM orchestrator"]
-        Tools["Validated, customer-scoped tools"]
-        RAG["RAG over FAQ and Policies"]
-        Catalog["Read-only product lookup"]
-        Backend --> Orchestrator
-        Orchestrator --> Tools
-        Orchestrator --> RAG
-        Orchestrator --> Catalog
-        Tools --> FutureDB["SQLite repository"]
-        RAG --> FutureSources["FAQ.md · Policies.md"]
-        Catalog --> FutureProducts["Products.json"]
-    end
-
-    Client -. "future replacement; not connected" .-> Backend
-
-    classDef implemented fill:#e7f4e4,stroke:#367c2b,color:#173b13
-    classDef future fill:#fff3cd,stroke:#9a7615,color:#4d3b00
-    classDef unwired fill:#f2f2f2,stroke:#777,color:#333
-    class Customer,UI,Client,Fake,Session,Init,Connection,Schema,Repository,SQLite,DBTests,Cases,Runner,EvalFake,Report,Logs implemented
-    class Backend,Orchestrator,Tools,RAG,Catalog,FutureDB,FutureSources,FutureProducts future
-    class Sources unwired
+    Docker["Docker Compose"] -->|UI_BACKEND=fake| Fake
 ```
 
-## Reading the diagram
+## Runtime behavior
 
-- **Implemented** shows the paths present in source. The chat is wired only to
-  the fake backend; it does not query SQLite or the supplied knowledge files.
-- The database implementation is separate. Its initializer, schema, seed,
-  repository, and tests operate independently from the Streamlit conversation.
-- The evaluation runner exercises the fake backend, emits expected labels and
-  replies, and does not observe tool calls or assess answer quality or safety.
-- **Target design** summarizes planned components. It is not evidence that an
-  LLM, RAG pipeline, tool layer, or backend API is available in this checkout.
-  See [`03_backend_architecture.md`](./03_backend_architecture.md), a design
-  draft whose proposed backend implementation does not yet exist.
+- The UI imports backend functions through `app/ui/client.py`; it does not
+  access SQLite directly.
+- The default `app.backend` path uses the simulated login identity to create a
+  session, then uses customer-scoped repository operations for order, return,
+  and ticket data. Return and ticket writes require an explicit confirmation.
+- Policy and FAQ retrieval is lexical BM25 over `FAQ.md` and `Policies.md`.
+  Product lookup reads `Products.json` separately; it is not part of RAG.
+- `RuleBasedLLM` is the offline default and handles a fixed set of phrasings.
+  OpenAI Responses API and Anthropic adapters have mocked transport tests but
+  have not been verified against live services.
+- Backend sessions and Streamlit chat history are in-memory. A process restart
+  ends sessions; this is a single-process demo, not durable production service.
+- The SQLite schema has five tables: customers, orders, order items, return
+  requests, and support tickets. There are no payment or shipment tables.
+
+## Alternate demo paths and evaluation
+
+- `UI_BACKEND=fake` uses `app/ui/fake_backend.py`, which returns canned replies
+  and performs no database reads or writes.
+- `docker-compose.yml` sets `UI_BACKEND=fake`; the image has no initialized
+  database. This is a self-contained fake-backend demo, not the real-backend
+  local setup.
+- `scripts/eval/run_eval.py` runs each CSV case in a fresh fake session. It
+  records replies and expected labels, but has no real tool-call trace and
+  marks answer accuracy, tool-call correctness, hallucination checks, and
+  safety checks `not_assessed`. It is a smoke harness, not a quality or safety
+  benchmark.
+
+## Security boundaries and limitations
+
+The simulated customer selector demonstrates customer-scoped behavior; it is
+not production authentication. Customer identity comes from the application
+session, not user text or LLM-generated tool arguments. The assistant does not
+integrate with a real store, payment processor, courier, or refund system.
+
+See [`03_backend_architecture.md`](./03_backend_architecture.md) for backend
+design and implementation details, and [`04_frontend_handover.md`](./04_frontend_handover.md)
+for the UI contract.

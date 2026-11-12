@@ -11,7 +11,7 @@ policy, product and ticket answers come from the SQLite database and the source
 documents, and writes happen only after an explicit Confirm. The default
 assistant is an offline rule-based stand-in for a language model, so it
 understands a fixed set of phrasings. The simulated login lists the six seeded
-customers (C101 to C106). The database must be created first (see Running the
+customers (C101 to C106). The database must be initialized first (see Running the
 Project). For offline UI work, `UI_BACKEND=fake` selects the old canned demo
 backend (C101 and C102 only, no database).
 
@@ -20,10 +20,10 @@ backend (C101 and C102 only, no database).
 | Streamlit UI | Conversational customer support interface |
 | Customer context | Simulated authenticated customer identity |
 | SQLite database | Customers, orders, order items, returns, and support tickets |
-| RAG pipeline | Retrieve information from FAQ and policy documents |
-| Product lookup | Retrieve product details from `Products.json` |
-| Backend tools | Controlled customer-data retrieval and support operations |
-| LLM orchestration | Understand queries and coordinate retrieval and tools |
+| Policy retrieval | Lexical BM25 over FAQ and policy documents; no embeddings or vector store |
+| Product lookup | Read-only lookup from `Products.json`, separate from policy retrieval |
+| Backend tools | Customer-scoped order, return, and ticket operations |
+| LLM orchestration | Provider-agnostic orchestration; offline rule-based behavior is the default |
 | Ticket escalation | Create support ticket records |
 | Testing | Authorization, business logic, retrieval, and orchestration tests |
 
@@ -51,47 +51,27 @@ Voice-based support may be considered as a future enhancement after the MVP is c
 | Database | SQLite |
 | Structured data | JSON |
 | Knowledge base | Markdown documents |
-| AI capabilities | LLM |
-| Knowledge retrieval | Retrieval-Augmented Generation (RAG) |
+| AI orchestration | Provider-agnostic LLM interface; deterministic rule-based default |
+| Knowledge retrieval | Lexical BM25 over Markdown FAQ and policy documents |
 | Testing | Pytest |
 | Version control | Git and GitHub |
 
-Specific LLM providers, embedding models, and vector storage technologies were to be finalized during implementation. **Current state (2026-11-11):** policy retrieval is lexical BM25 (no embeddings, no vector store; those are deferred), and the LLM provider is chosen by environment variables with an offline rule-based default (see `docs/04_frontend_handover.md`).
+OpenAI Responses API and Anthropic adapters are available but have only mock-tested transports; neither has been verified against a live provider. The default is `rule_based`, which needs no network or API key and matches a limited set of phrasings. Retrieval uses lexical BM25, not embeddings or a vector database.
 
 ## 5. High-Level Architecture
 
 ```text
-                 CUSTOMER
-                    |
-                    v
-             STREAMLIT CHAT UI
-                    |
-                    v
-          CUSTOMER CONTEXT / SESSION
-                    |
-                    v
-             AI ORCHESTRATOR
-                    |
-          +---------+----------+
-          |         |          |
-          v         v          v
-       RAG       PRODUCT     BACKEND
-      ENGINE     LOOKUP       TOOLS
-          |         |          |
-          v         v          v
-      FAQ /      Products    SQLite
-      Policies   JSON        Database
-          |         |          |
-          +---------+----------+
-                    |
-                    v
-              LLM RESPONSE
-                    |
-                    v
-               CUSTOMER
+Customer -> Streamlit UI -> UI client -> app.backend (real, default)
+                                      -> fake backend (when UI_BACKEND=fake)
+
+app.backend -> orchestrator -> customer-scoped tools -> SQLite
+                            -> lexical BM25 -> FAQ.md / Policies.md
+                            -> product lookup -> Products.json
+                            -> LLM interface -> RuleBasedLLM (default)
 ```
 
-The architecture will evolve as individual components are implemented and tested.
+`UI_BACKEND=real` is the local default. `UI_BACKEND=fake` selects the canned,
+database-free demo. The Docker Compose service currently selects fake mode.
 
 ## 6. Security and Reliability Principles
 
@@ -113,35 +93,25 @@ Security is a core requirement, not an optional enhancement.
 ecommerce-support-assistant/
 │
 ├── app/
-│   ├── db/
-│   ├── tools/
-│   ├── rag/
-│   ├── orchestrator/
-│   └── ui/
-│
-├── data/
-│   ├── source/
-│   └── generated/
-│
+│   ├── backend/        # public backend API and orchestration
+│   ├── db/             # SQLite schema, seed, repository, source data
+│   ├── llm/            # rule-based default and provider adapters
+│   ├── rag/            # lexical policy/FAQ retrieval
+│   ├── catalog/        # read-only product lookup
+│   └── ui/             # Streamlit UI and optional fake backend
 ├── docs/
-│
-├── tests/
-│
-├── .gitignore
-├── PROJECT_STATUS.md
-├── README.md
-└── requirements.txt
+├── scripts/eval/       # demo-only fake-backend evaluation runner
+└── tests/
 ```
 
 ## 8. Dataset
 
-The project uses a provided synthetic dataset containing:
+The project uses synthetic source data and an evaluation corpus:
 
-- `FAQ.md` — common customer questions and answers.
-- `Policies.md` — shipping, returns, refunds, cancellation, and warranty policies.
-- `Products.json` — structured product information.
-- `customer_queries_sample.csv` — sample customer support queries.
-- `README_DATASET.md` — dataset documentation.
+- `app/db/data/source/FAQ.md` — common customer questions and answers.
+- `app/db/data/source/Policies.md` — sample policies and the policy source of truth.
+- `app/db/data/source/Products.json` — structured product information.
+- `app/db/data/eval/queries.csv` — 70 synthetic labeled evaluation/demo cases.
 
 Synthetic transactional records will be generated for customers, orders, order items, returns, and support tickets.
 
@@ -149,20 +119,11 @@ The supplied FAQ and policy documents are the source of truth for the MVP's supp
 
 ## 9. Development Methodology
 
-The project will be developed incrementally through approved checkpoints.
-
-1. Project discovery and requirements.
-2. Database design.
-3. Database implementation and authorization testing.
-4. Backend service and tool development.
-5. RAG pipeline implementation.
-6. LLM orchestration.
-7. Streamlit interface.
-8. Integration and end-to-end testing.
-9. Evaluation and documentation.
-10. Final demonstration and deployment preparation.
-
-Each checkpoint must be reviewed and tested before moving to the next.
+The project was developed through approved checkpoints covering requirements,
+the SQLite contract, customer-scoped backend tools, retrieval, LLM
+orchestration, and the Streamlit UI. The real backend is connected locally.
+Docker and the evaluation runner remain fake-backend paths; the runner does
+not measure real assistant quality or safety.
 
 ## 10. Running the Project
 
@@ -174,24 +135,36 @@ environment variables override it):
 cp .env.example .env
 ```
 
-The database is `app/db/data/app_d2.db` (`APP_DB_PATH` in `.env`). Create it
-once; the command refuses to overwrite an existing file, so to reseed delete the
-file first. Pass a reference time close to the demo day, because return windows
-are measured from it:
+The local UI uses `APP_DB_PATH` (default `app/db/data/app_d2.db`). If that
+database already exists and is initialized, point the app to it and do not seed
+it again. Normal startup never creates a database. To create a separate new
+demo database, first choose a new path whose parent directory exists:
 
 ```bash
-uv run python -m app.db.seed_data --reference-time 2026-11-12T00:00:00Z
+mkdir -p demo
+uv run python -m app.db.seed_data --db-path demo/demo.db --reference-time <current-UTC-time>
 ```
 
-Then start the UI:
+The seed command refuses an existing file and the protected legacy
+`app/db/data/app.db`; it is not a reset or migration command. Never delete or
+seed the legacy file. Set the UI database explicitly when using a non-default
+file:
+
+```bash
+APP_DB_PATH=demo/demo.db uv run python -m streamlit run app/ui/streamlit_app.py
+```
+
+To use the existing default database, simply run:
 
 ```bash
 uv run python -m streamlit run app/ui/streamlit_app.py
 ```
 
-If the database is missing, or a language-model provider is requested but not
-configured, the page shows a message instead of the login. To run without a
-database, set `UI_BACKEND=fake` in `.env`.
+The local UI uses the real backend by default. If the database is missing or
+incompatible, or a selected provider is misconfigured, the startup gate shows a
+safe message instead of the login. Set `LLM_PROVIDER=rule_based` for the
+offline deterministic assistant. Set `UI_BACKEND=fake` to use the canned
+database-free fallback.
 
 Open the local URL printed by Streamlit, then choose a customer in the
 sidebar. Use **New chat** to start another conversation or select a listed chat
@@ -199,9 +172,9 @@ to return to it. The chat list is temporary Streamlit session state: switching
 simulated customers clears it, and reloading the page loses it. It is not
 persistent account history.
 
-Replies come from the backend over synthetic data. Confirming a return or a
-ticket writes a real row to the chosen database; nothing leaves the machine.
-With `UI_BACKEND=fake` replies are canned and confirming writes nothing.
+Replies in real mode use the configured local database, source files, and
+backend tools. A return or ticket is written only after explicit confirmation
+and backend success. The fake mode returns canned replies and writes nothing.
 
 ## Run with Docker
 
@@ -211,20 +184,20 @@ From the repository root:
 docker compose up --build
 ```
 
-Open <http://localhost:8501>. Compose defines persistent Docker volumes and
-forwards sample environment settings for a future database/vector-store/LLM
-integration. The current chat does not use those settings and does not require
-an API key.
+Open <http://localhost:8501>. The current Compose configuration selects
+`UI_BACKEND=fake` and the image contains no initialized database, so this is a
+canned demo, not the real-backend local setup. The forwarded LLM variables do
+not make the fake backend call a provider.
 
 Stop the service with `Ctrl+C`; use `docker compose down` to stop and remove the
-container while keeping named volumes.
+container and network.
 
 ## Tests and evaluation smoke run
 
 Run the test suite:
 
 ```bash
-uv run python -m pytest
+uv run python -m pytest tests -q
 ```
 
 Run the demo-only evaluation harness:
@@ -233,24 +206,27 @@ Run the demo-only evaluation harness:
 uv run python scripts/eval/run_eval.py
 ```
 
-It reads the synthetic case CSV, starts a fresh fake session per case, and
-prints JSON replies and expected labels. It does not score answer accuracy,
-safety, hallucinations, or tool-call correctness: the fake backend has no
-real tools or observable tool-call trace. Sample outputs are in
-`app/db/data/eval/logs/sample_conversations.jsonl` and are explicitly marked
-`demo_only` / `not_assessed`.
+It reads 70 synthetic cases, starts a fresh fake-backend session per case, and
+prints JSON replies and expected labels. The runner reports all quality and
+safety metrics as `not_assessed`: it has no real tool-call trace and is not an
+evaluation of the real assistant. Sample outputs in
+`app/db/data/eval/logs/sample_conversations.jsonl` are labeled
+`demo_only` / `not_assessed`. A real-backend evaluation mode is not included.
 
 ## Security and scope limitations
 
 - The customer selector is simulated and is not production authentication.
-- The UI is not connected to the SQLite repository or real customer records.
-- No real payments, refunds, shipping, cancellations, address changes, returns,
-  or support tickets are performed.
-- The current backend does not implement an LLM, RAG, product lookup, scope
-  guard, or tool-call telemetry.
+- Backend sessions and UI chat history are in-memory and single-process.
+- The default assistant is deterministic rule-based behavior, not a general
+  language model. Provider adapters are not live-tested.
+- If an external LLM provider is explicitly configured, prompts may be sent to
+  that provider; the offline rule-based default makes no provider call.
+- Retrieval is lexical BM25; there are no embeddings or vector store.
+- There are no payment or shipment tables and no real payment, refund,
+  courier, cancellation, or address-change integrations.
 - Evaluation cases and sample logs are synthetic. The demo runner verifies
   only that the fake backend can be called for each case; it does not establish
-  assistant correctness or safety.
+  real assistant correctness or safety.
 
 Do not enter real personal, order, or payment information.
 
