@@ -8,13 +8,21 @@ types appear only in annotations and are not imported at runtime.
 from __future__ import annotations
 
 from collections.abc import MutableMapping
-from typing import TYPE_CHECKING, Any, TypedDict
+from typing import TYPE_CHECKING, Any, NotRequired, TypedDict
 from uuid import uuid4
 
 if TYPE_CHECKING:
     from .client import ChoiceView, ConversationState, PendingView
 
 SessionState = MutableMapping[Any, Any]
+
+
+class ChatMessage(TypedDict):
+    role: str
+    content: str
+    audio: NotRequired[bytes]
+    audio_error: NotRequired[str]
+
 
 AUTHENTICATED_CUSTOMER_ID_KEY = "authenticated_customer_id"
 CHATS_KEY = "chats"
@@ -31,7 +39,7 @@ NEW_CHAT_TITLE = "New chat"
 
 class ChatSession(TypedDict):
     title: str
-    messages: list[dict[str, str]]
+    messages: list[ChatMessage]
     conversation_state: ConversationState | None
     pending_view: PendingView | None
     choice_view: ChoiceView | None

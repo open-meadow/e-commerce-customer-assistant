@@ -18,7 +18,12 @@ if __package__:
         list_login_options,
         start_session,
     )
-    from .voice import VoiceTranscriptionError, transcribe_audio
+    from .voice import (
+        VoiceSynthesisError,
+        VoiceTranscriptionError,
+        synthesize_speech,
+        transcribe_audio,
+    )
     from .session import (
         ACTIVE_CHAT_ID_KEY,
         AUTHENTICATED_CUSTOMER_ID_KEY,
@@ -45,7 +50,12 @@ else:
         list_login_options,
         start_session,
     )
-    from voice import VoiceTranscriptionError, transcribe_audio
+    from voice import (
+        VoiceSynthesisError,
+        VoiceTranscriptionError,
+        synthesize_speech,
+        transcribe_audio,
+    )
     from session import (
         ACTIVE_CHAT_ID_KEY,
         AUTHENTICATED_CUSTOMER_ID_KEY,
@@ -310,6 +320,12 @@ def _send_backend_request(
         return
 
     append_chat_message(st.session_state, "assistant", reply.text)
+    assistant_message = chat["messages"][-1]
+    try:
+        with st.spinner("Preparing voice reply..."):
+            assistant_message["audio"] = synthesize_speech(reply.text)
+    except VoiceSynthesisError as exc:
+        assistant_message["audio_error"] = str(exc)
     chat["pending_view"] = reply.pending
     chat["choice_view"] = reply.choice
     _show_backend_error(None, reply.request_id)
@@ -417,6 +433,16 @@ def _render_chat() -> None:
         )
         with st.chat_message(chat_message["role"], avatar=avatar):
             st.text(chat_message["content"])
+            audio = chat_message.get("audio")
+            if audio is not None:
+                st.audio(
+                    audio,
+                    format="audio/wav",
+                    alt="Spoken assistant reply",
+                )
+            audio_error = chat_message.get("audio_error")
+            if audio_error is not None:
+                st.warning(audio_error)
 
     if not has_user_message:
         suggestion = st.pills(
