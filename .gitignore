@@ -16,11 +16,6 @@ env/
 # Jupyter
 .ipynb_checkpoints/
 
-# SQLite database
-app/db/data/*.db
-app/db/data/*.db-shm
-app/db/data/*.db-wal
-
 # Generated data
 app/db/data/generated/*
 
@@ -40,11 +35,20 @@ Thumbs.db
 # Streamlit agent skills (environment-specific symlinks)
 .agents/skills/developing-with-streamlit
 .claude/skills/developing-with-streamlit
-# Databases: never committed (app/db/data/app.db legacy, app/db/data/app_d2.db default, demo copies, sidecars)
+# SQLite databases: never committed (app/db/data/app.db legacy, app/db/data/app_d2.db default,
+# copies), including WAL, SHM and journal sidecars
 *.db
-*.db-journal
-*.db-shm
 *.db-wal
+*.db-shm
+*.db-journal
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite-journal
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
+*.sqlite3-journal
 
 # Generated review bundles (not part of the repository)
 CHANGES_BUNDLE*.md

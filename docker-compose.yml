@@ -4,17 +4,12 @@ services:
       context: .
       dockerfile: Dockerfile
     environment:
-      # The image has no database or data/source yet, so it runs the canned demo UI.
+      # The image contains no database, so it runs the canned demo UI (no database needed).
       UI_BACKEND: fake
-      DATABASE_PATH: ${DATABASE_PATH:-data/app.db}
-      VECTOR_STORE_DIR: ${VECTOR_STORE_DIR:-data/vector_store}
       LLM_PROVIDER: ${LLM_PROVIDER:-openai}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
     ports:
       - "8501:8501"
-    volumes:
-      - app_data:/app/data
-      - vector_store:/app/data/vector_store
     healthcheck:
       test:
         - CMD
@@ -29,7 +24,3 @@ services:
       retries: 5
       start_period: 15s
     restart: unless-stopped
-
-volumes:
-  app_data:
-  vector_store:

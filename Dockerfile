@@ -17,7 +17,6 @@ COPY app/ ./app/
 
 RUN uv sync --frozen --no-dev --no-editable \
     && useradd --create-home --uid 10001 --user-group app \
-    && mkdir -p /app/data \
     && chown -R app:app /app
 
 ENV PATH="/app/.venv/bin:${PATH}"

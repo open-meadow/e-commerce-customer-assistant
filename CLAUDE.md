@@ -81,7 +81,7 @@ Conventions: money is integer paise; timestamps are TEXT `YYYY-MM-DDTHH:MM:SSZ` 
 ### Known breakage and stale config
 
 - `scripts/init_demo_db.py:95` calls `get_connection(...)`, which no longer creates files. Five tests in `tests/test_init_demo_db.py` fail for that reason, and `tests/e2e-db-test.sh` (which runs that script) would fail too. The fix is to use `get_initialization_connection`; `python -m app.db.seed_data` already does.
-- `docker-compose.yml` and `.env.example` set `DATABASE_PATH`, `VECTOR_STORE_DIR`, `LLM_PROVIDER` (default `openai`) and `OPENAI_API_KEY`. The code reads none of the first two (the database variable is `APP_DB_PATH`), and the UI uses no LLM. The `Dockerfile` copies only `src/` and `app/`, so an image would lack `app/db/data/source`, `scripts` and any database; it runs the fake-backend UI on port 8501.
+- `docker-compose.yml` sets `UI_BACKEND=fake`, `LLM_PROVIDER` (default `openai`) and `OPENAI_API_KEY`. The obsolete `DATABASE_PATH`, `VECTOR_STORE_DIR` and the `/app/data` and vector-store volumes were removed (no code reads them; the database variable is `APP_DB_PATH`, and retrieval is BM25 with no vector store). The `Dockerfile` copies only `src/` and `app/`, so the image has `app/db/data/source` but no `scripts` and no database; it runs the fake-backend UI on port 8501 and does not use the LLM settings. Docker does not read `.env` (it is in `.dockerignore`).
 - `scripts/eval/run_eval.py` reads `app/db/data/eval/queries.csv` and runs each case against the **fake** backend. Every score is `not_assessed` and `observed_tool_calls` is null; it measures nothing about the real assistant.
 
 ## Tests
