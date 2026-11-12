@@ -76,8 +76,14 @@ _TOOLS = {
 }
 
 
-def load_cases(path: Path) -> list[dict[str, str]]:
-    """Load cases and reject malformed rows or labels."""
+def load_cases(
+    path: Path, known_customers: "set[str] | None" = None
+) -> list[dict[str, str]]:
+    """Load cases and reject malformed rows or labels.
+
+    ``known_customers`` defaults to the fake backend's customers; the real-backend
+    evaluation passes the customers of its own seeded database instead.
+    """
     try:
         with path.open(newline="", encoding="utf-8") as file:
             reader = csv.DictReader(file)
@@ -92,7 +98,8 @@ def load_cases(path: Path) -> list[dict[str, str]]:
     if not rows:
         raise ValueError(f"{path}: no evaluation cases found")
 
-    known_customers = {option.customer_id for option in list_login_options()}
+    if known_customers is None:
+        known_customers = {option.customer_id for option in list_login_options()}
     seen_ids: set[str] = set()
     for line_number, row in enumerate(rows, start=2):
         if None in row or any(not value or not value.strip() for value in row.values()):
