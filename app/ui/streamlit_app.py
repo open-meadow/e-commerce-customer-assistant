@@ -18,6 +18,7 @@ if __package__:
         list_login_options,
         start_session,
     )
+    from .voice import VoiceTranscriptionError, transcribe_audio
     from .session import (
         ACTIVE_CHAT_ID_KEY,
         AUTHENTICATED_CUSTOMER_ID_KEY,
@@ -44,6 +45,7 @@ else:
         list_login_options,
         start_session,
     )
+    from voice import VoiceTranscriptionError, transcribe_audio
     from session import (
         ACTIVE_CHAT_ID_KEY,
         AUTHENTICATED_CUSTOMER_ID_KEY,
@@ -426,6 +428,10 @@ def _render_chat() -> None:
         suggestion = None
 
     _render_actions()
+    st.caption(
+        "Voice recordings are sent to OpenAI for transcription. If both voice "
+        "and text are submitted, voice takes priority."
+    )
     prompt = st.chat_input(
         "Ask about an order, return, product, or policy",
         accept_audio=True,
@@ -442,17 +448,12 @@ def _render_chat() -> None:
         audio = prompt.audio
 
     if audio is not None:
-        if message:
-            st.session_state[UI_NOTICE_KEY] = (
-                "Voice transcription is not available yet; only the typed text "
-                "was sent."
-            )
-        else:
-            st.info(
-                "Microphone capture is ready. Transcription will be added in "
-                "the next step; this recording has not been sent to the assistant."
-            )
-            st.audio(audio, alt="Recorded voice message")
+        try:
+            with st.spinner("Transcribing voice message..."):
+                message = transcribe_audio(audio)
+        except VoiceTranscriptionError as exc:
+            st.error(str(exc))
+            return
 
     if message:
         append_chat_message(st.session_state, "user", message)

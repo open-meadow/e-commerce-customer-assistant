@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from typing import BinaryIO
 
 from openai import APIError, OpenAI
 
@@ -13,9 +14,10 @@ class VoiceTranscriptionError(Exception):
     """A voice recording could not be transcribed."""
 
 
-def transcribe_audio(audio: bytes) -> str:
+def transcribe_audio(audio: bytes | BinaryIO) -> str:
     """Send a WAV recording to OpenAI and return its transcript."""
-    if not isinstance(audio, bytes) or not audio:
+    audio_bytes = audio if isinstance(audio, bytes) else audio.read()
+    if not audio_bytes:
         raise VoiceTranscriptionError("The voice recording is empty.")
 
     api_key = os.environ.get("OPENAI_API_KEY")
@@ -27,7 +29,7 @@ def transcribe_audio(audio: bytes) -> str:
     try:
         result = OpenAI(api_key=api_key).audio.transcriptions.create(
             model=_TRANSCRIPTION_MODEL,
-            file=("voice.wav", audio, "audio/wav"),
+            file=("voice.wav", audio_bytes, "audio/wav"),
         )
     except APIError as exc:
         raise VoiceTranscriptionError(
