@@ -44,7 +44,7 @@ Branches: `master` contains everything. Local and remote `rukum/db` and `rukum/b
 
 ```
 app/ui/          Streamlit chat (Person B)   -> client.py -> app.backend (default) or fake_backend.py (UI_BACKEND=fake)
-app/backend/     public API for a frontend   -> orchestrator, tools, rag, catalog, llm -> app/db   (tested, not wired to the UI)
+app/backend/     public API for a frontend   -> orchestrator, tools, rag, catalog, llm -> app/db   (tested; used by the UI by default)
 app/db/          SQLite layer + seed
 app/db/data/source/     FAQ.md, Policies.md, Products.json (read-only source of truth)
 app/db/data/eval/       70 synthetic eval cases + sample demo logs
@@ -63,7 +63,7 @@ scripts/         init_demo_db.py (broken), eval/run_eval.py (fake backend only)
 
 ### Database layer (`app/db/`)
 
-- Three connection factories in `connection.py`; never call `sqlite3.connect()` elsewhere. `get_connection(db_path=None)` opens an existing, initialized, current-version database read-write and **never creates a file** (a missing file raises `DatabaseNotInitializedError`). `get_readonly_connection` opens read-only. `get_initialization_connection(db_path)` is the only creator and refuses the protected `app/db/data/app.db`. The path comes from `APP_DB_PATH` (default `<project>/data/app_d2.db`). Schema version is `PRAGMA user_version = 1`; there is no legacy migration.
+- Three connection factories in `connection.py`; never call `sqlite3.connect()` elsewhere. `get_connection(db_path=None)` opens an existing, initialized, current-version database read-write and **never creates a file** (a missing file raises `DatabaseNotInitializedError`). `get_readonly_connection` opens read-only. `get_initialization_connection(db_path)` is the only creator and refuses the protected `app/db/data/app.db`. The path comes from `APP_DB_PATH` (default `<project>/app/db/data/app_d2.db`). Schema version is `PRAGMA user_version = 1`; there is no legacy migration.
 - `schema.create_schema(connection)` builds the five tables (`customers`, `orders`, `order_items`, `return_requests`, `support_tickets`) with canonical-timestamp, exact-text and consistency CHECKs, the stored `reason_category` and `uq_active_return_per_item`. `health.check_database_health()` reports `ready`, `not_initialized`, `schema_incompatible` or `unavailable` and never raises.
 - `repository.py` is the authorization boundary: every function takes `authenticated_customer_id` and filters on it in SQL. Writes (`create_return_request`, `create_support_ticket`) use `BEGIN IMMEDIATE`, recheck eligibility inside the transaction and return compact results (`{"outcome","return_id"}`, `{"outcome":"created","ticket_id"}`). Failures raise typed `DatabaseError` subclasses (`app/db/errors.py`), not a generic `failed` result. `check_return_eligibility` is the read-only advisory twin; `list_customers_for_login` feeds the login selector only.
 - `seed_data.seed_database(connection, reference_time=None)` is deterministic and not idempotent (6 customers C101 to C106, 15 orders; `None` means the baseline `2026-11-07T00:00:00Z`). Product IDs are validated against `Products.json`.
