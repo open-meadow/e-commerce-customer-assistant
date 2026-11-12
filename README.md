@@ -71,7 +71,9 @@ app.backend -> orchestrator -> customer-scoped tools -> SQLite
 ```
 
 `UI_BACKEND=real` is the local default. `UI_BACKEND=fake` selects the canned,
-database-free demo. The Docker Compose service currently selects fake mode.
+database-free demo. Docker Compose uses the real backend and seeds a persistent
+database volume on first start. The evaluation runner still uses the fake
+backend.
 
 ## 6. Security and Reliability Principles
 
@@ -122,8 +124,9 @@ The supplied FAQ and policy documents are the source of truth for the MVP's supp
 The project was developed through approved checkpoints covering requirements,
 the SQLite contract, customer-scoped backend tools, retrieval, LLM
 orchestration, and the Streamlit UI. The real backend is connected locally.
-Docker and the evaluation runner remain fake-backend paths; the runner does
-not measure real assistant quality or safety.
+Docker uses that backend with a seeded SQLite volume. The evaluation runner
+remains a fake-backend smoke run and does not measure real assistant quality or
+safety.
 
 ## 10. Running the Project
 
@@ -181,16 +184,19 @@ and backend success. The fake mode returns canned replies and writes nothing.
 From the repository root:
 
 ```bash
+cp .env.example .env
+# Optionally set LLM_PROVIDER, LLM_MODEL, and the matching API key in .env.
 docker compose up --build
 ```
 
-Open <http://localhost:8501>. The current Compose configuration selects
-`UI_BACKEND=fake` and the image contains no initialized database, so this is a
-canned demo, not the real-backend local setup. The forwarded LLM variables do
-not make the fake backend call a provider.
+Open <http://localhost:8501>. On first start, the container seeds a new database
+in the `app-data` volume and uses it through `APP_DB_PATH`. Later starts reuse
+that database. The default LLM is the offline rule-based assistant; configure
+the provider and its key in `.env` to use OpenAI or Anthropic. The Streamlit UI
+and backend run together in one process; there is no separate API service.
 
 Stop the service with `Ctrl+C`; use `docker compose down` to stop and remove the
-container and network.
+container and network. The database volume is preserved.
 
 ## Tests and evaluation smoke run
 

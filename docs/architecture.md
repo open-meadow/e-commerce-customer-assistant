@@ -1,8 +1,8 @@
 # Project Architecture
 
-The local Streamlit app uses the real backend by default. `UI_BACKEND=fake`
-selects the canned, database-free demo; Docker Compose and the evaluation
-runner currently use that fake mode.
+The local Streamlit app and Docker Compose use the real backend by default.
+`UI_BACKEND=fake` selects the canned, database-free demo; only the evaluation
+runner uses that fake mode.
 
 ```mermaid
 flowchart LR
@@ -26,7 +26,7 @@ flowchart LR
     Eval --> Fake
     Eval --> EvalReport["Replies and labels<br/>all quality/safety metrics not_assessed"]
 
-    Docker["Docker Compose"] -->|UI_BACKEND=fake| Fake
+    Docker["Docker Compose"] -->|UI_BACKEND=real| UI
 ```
 
 ## Runtime behavior
@@ -50,9 +50,9 @@ flowchart LR
 
 - `UI_BACKEND=fake` uses `app/ui/fake_backend.py`, which returns canned replies
   and performs no database reads or writes.
-- `docker-compose.yml` sets `UI_BACKEND=fake`; the image has no initialized
-  database. This is a self-contained fake-backend demo, not the real-backend
-  local setup.
+- Docker Compose sets `UI_BACKEND=real`. On first start, the entrypoint seeds
+  the persistent `app-data` volume if its database file is absent; the
+  container uses that file through `APP_DB_PATH`.
 - `scripts/eval/run_eval.py` runs each CSV case in a fresh fake session. It
   records replies and expected labels, but has no real tool-call trace and
   marks answer accuracy, tool-call correctness, hallucination checks, and

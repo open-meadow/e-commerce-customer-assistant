@@ -226,7 +226,7 @@ Integration notes from the backend audit:
 3. Walk the C101 flow: "Where is my order ORD1001?", "I want to return item IT101 from order ORD1001 because I changed my mind", pick "Another reason", Confirm. Then ask "show my returns".
 4. Try cross-customer access (`ORD1003` as C101), an out-of-scope message, a typed "cancel" during a choice, and an expired confirmation (wait ten minutes).
 5. Evaluation runner: call `handle_message` directly; no UI needed. Each case should use a fresh `start_session`. Seeded customers are C101 to C106; see `app/db/seed_data.py` for orders.
-6. Docker: Python 3.13, `uv sync --frozen`, copy `app/`, `app/db/data/source/`, `main.py` and `pyproject.toml`; set `APP_DB_PATH` to a mounted file; seed once as a separate step.
+6. Docker: Compose runs `UI_BACKEND=real` with `APP_DB_PATH=/app/data/app_d2.db` on the persistent `app-data` volume. The entrypoint seeds that database only when the file is absent, then starts Streamlit; the UI imports the backend in-process. Optional `.env` values configure the LLM provider and API key.
 
 ## 8. Error states summary
 

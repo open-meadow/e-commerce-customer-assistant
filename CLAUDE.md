@@ -6,7 +6,7 @@ Capstone: a text customer-support assistant (Streamlit chat, RAG over `app/db/da
 
 ## Where the code stands
 
-Person A's database layer and backend (`rukum/db`, `rukum/backend`) and Person B's UI, Docker, evaluation and report work are all merged on `master` (merge commit `3b68b12`). **On branch `wire-ui-backend` (not yet merged to `master`) the Streamlit UI talks to the real backend** through `app/ui/client.py`; the plan is `docs/plans/ui_real_backend_plan.md`. `UI_BACKEND=fake` still selects the canned `app/ui/fake_backend.py`. `scripts` and Docker still do not use the database: the Docker image runs the fake (`UI_BACKEND=fake` in `docker-compose.yml`) and the eval runner uses the fake.
+Person A's database layer and backend (`rukum/db`, `rukum/backend`) and Person B's UI, Docker, evaluation and report work are all merged on `master` (merge commit `3b68b12`). **On branch `wire-ui-backend` (not yet merged to `master`) the Streamlit UI talks to the real backend** through `app/ui/client.py`; the plan is `docs/plans/ui_real_backend_plan.md`. `UI_BACKEND=fake` still selects the canned `app/ui/fake_backend.py`. Docker Compose now uses the real backend and seeds a persistent database volume on first start; the eval runner remains fake.
 
 ## Commands
 
@@ -81,7 +81,7 @@ Conventions: money is integer paise; timestamps are TEXT `YYYY-MM-DDTHH:MM:SSZ` 
 ### Known breakage and stale config
 
 - `scripts/init_demo_db.py:95` calls `get_connection(...)`, which no longer creates files. Five tests in `tests/test_init_demo_db.py` fail for that reason, and `tests/e2e-db-test.sh` (which runs that script) would fail too. The fix is to use `get_initialization_connection`; `python -m app.db.seed_data` already does.
-- `docker-compose.yml` sets `UI_BACKEND=fake`, `LLM_PROVIDER` (default `openai`) and `OPENAI_API_KEY`. The obsolete `DATABASE_PATH`, `VECTOR_STORE_DIR` and the `/app/data` and vector-store volumes were removed (no code reads them; the database variable is `APP_DB_PATH`, and retrieval is BM25 with no vector store). The `Dockerfile` copies only `src/` and `app/`, so the image has `app/db/data/source` but no `scripts` and no database; it runs the fake-backend UI on port 8501 and does not use the LLM settings. Docker does not read `.env` (it is in `.dockerignore`).
+- Docker Compose sets `UI_BACKEND=real`, mounts the named `app-data` volume at `/app/data`, and sets `APP_DB_PATH=/app/data/app_d2.db`. The entrypoint seeds that database only when the file is absent, using current UTC as the reference time, then starts Streamlit, which imports the backend in-process. Optional `.env` values are passed at runtime for LLM provider/model/API-key configuration and are not copied into the image. The image contains no pre-seeded database; `.dockerignore` excludes database files and `.env`.
 - `scripts/eval/run_eval.py` reads `app/db/data/eval/queries.csv` and runs each case against the **fake** backend. Every score is `not_assessed` and `observed_tool_calls` is null; it measures nothing about the real assistant.
 
 ## Tests

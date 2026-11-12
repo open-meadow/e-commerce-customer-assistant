@@ -1,26 +1,16 @@
 services:
   app:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    build: .
+    env_file:
+      - path: .env
+        required: false
     environment:
-      # The image contains no database, so it runs the canned demo UI (no database needed).
-      UI_BACKEND: fake
-      LLM_PROVIDER: ${LLM_PROVIDER:-openai}
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      APP_DB_PATH: /app/data/app_d2.db
+      UI_BACKEND: real
     ports:
       - "8501:8501"
-    healthcheck:
-      test:
-        - CMD
-        - uv
-        - run
-        - --no-sync
-        - python
-        - -c
-        - "from urllib.request import urlopen; response = urlopen('http://127.0.0.1:8501/_stcore/health', timeout=3); exit(0 if response.status == 200 else 1)"
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 15s
-    restart: unless-stopped
+    volumes:
+      - app-data:/app/data
+
+volumes:
+  app-data:

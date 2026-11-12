@@ -12,7 +12,7 @@ This note says what is finished, how to get running in ten minutes, who owns wha
 - Person A has an OpenAI Responses API adapter committed on the local branch `feature/openai-responses-adapter` (`f25b7c4`, mocked tests only, not yet pushed or merged). A first live one-request probe was prepared but has not run, so nothing has been verified against the real OpenAI API.
 - The real backend was verified on 2026-11-12 against a temporary seeded database: 20 of 20 scripted checks (login, ownership isolation, return rejections and creation, duplicate protection, ticket creation and retrieval) and seven browser checks on the running Streamlit app.
 - The assistant is the offline `RuleBasedLLM`, a deterministic stand-in, not a language model. No network or API key is needed. The OpenAI and Anthropic adapters exist but have **never been run against a live service**.
-- Docker builds and serves the **fake-backend** UI on port 8501 (`UI_BACKEND=fake` in `docker-compose.yml`). The image holds no database.
+- Docker Compose serves the **real-backend** UI on port 8501. On first start, the entrypoint seeds the persistent `app-data` volume at `APP_DB_PATH`; optional `.env` values configure the LLM provider and key. The image does not contain a database.
 
 ## 2. Get running
 
@@ -60,7 +60,7 @@ Working rules:
 | B1 | Update the report (`docs/technical_report.md`), architecture diagram (`docs/architecture.md`), README and deck (`docs/presentation.md`) for the real backend. Regenerate `docs/presentation.pptx`. | 4h | No document claims the chat uses a fake backend, except where it describes `UI_BACKEND=fake` on purpose. | Must |
 | B2 | Add the new evidence to the report: test counts, the real-backend verification above, screenshots, and honest limitations (rule-based assistant, lexical BM25 retrieval, in-memory single-process sessions, provider adapters not live-tested unless A1 finishes). | 2h | Every claim matches section 1. | Must |
 | B3 | Evaluation set and write-up: the 70 cases use only C101 and C102. After Person A's A3 exists, relabel or widen them and reword the evaluation section. | 1.5h | The report says what the evaluation does and does not measure. | Should |
-| B4 | Docker: build and run from a fresh clone, then decide fake or real. If real, agree the environment contract with Person A (database on a volume, a one-off seed step, `LLM_PROVIDER` default `rule_based`). One transient DNS failure occurred during a build; a retry succeeded. | 2.5h | `docker compose up` works from a clean clone. | Should |
+| B4 | Docker: run the real backend with a persistent database volume, seed-on-first-start, and optional `.env` provider credentials. Compose configuration and image build pass; the container has not been started in this change. | 2.5h | Runtime seeding and startup work from a clean clone. | Should |
 | B5 | UI polish: a rejected over-long message is still echoed in the chat; policy citations (`reply.citations`) come back from the backend but are not shown. | 1h | Both fixed with tests, or skipped. | Optional |
 | B6 | Demo rehearsal: slides, screenshots, timing, and a fallback (`UI_BACKEND=fake`) if the database fails live. | 2h | One full dry run. | Must |
 | B7 | Final consistency pass: README commands, test counts, `git diff --check`. | 0.5h | Clean. | Should |

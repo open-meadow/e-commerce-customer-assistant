@@ -14,9 +14,10 @@ documents, read-only product lookup, and confirmation-gated return and ticket
 writes. Its default assistant is an offline, deterministic rule-based stand-in
 for a general language model.
 
-The UI also has an explicit canned fake-backend mode. Docker Compose and the
-evaluation runner currently use that fake mode. The 70-case runner records
-fake replies and expected labels, but marks answer quality, tool correctness,
+The UI also has an explicit canned fake-backend mode. Docker Compose uses the
+real backend with a database seeded into a persistent volume on first start;
+the evaluation runner uses the fake mode. The 70-case runner records fake
+replies and expected labels, but marks answer quality, tool correctness,
 hallucination, and safety metrics `not_assessed`. It is a demo smoke harness,
 not an evaluation of the real assistant.
 
@@ -97,10 +98,10 @@ Customer
 ```
 
 `UI_BACKEND=fake` instead routes the UI to canned in-process responses and does
-not access the database. Docker Compose currently sets `UI_BACKEND=fake`; its
-image contains no initialized database. The evaluation runner also calls the
-fake backend directly. See [`architecture.md`](./architecture.md) for the
-current and alternate paths.
+not access the database. Docker Compose sets `UI_BACKEND=real`; its entrypoint
+seeds the persistent database volume once when the database file is absent.
+The evaluation runner calls the fake backend directly. See
+[`architecture.md`](./architecture.md) for the current and alternate paths.
 
 ## 4. Data protection and reliability boundaries
 
@@ -156,13 +157,13 @@ The real backend is implemented, but the default assistant is rule-based and
 the provider integrations are not live-verified. Retrieval is lexical rather
 than embedding-based, sessions are in-memory and single-process, the login is
 simulated, and the evaluation runner does not measure real assistant quality
-or safety. Docker remains a fake-backend demo path.
+or safety. Docker uses a local seeded database volume; live provider adapters
+remain unverified.
 
 Future work could add live-provider verification, a real-backend evaluation
 mode with measurable tool traces, durable session management, production
-authentication, and a deployment configuration using an explicitly
-initialized database. These are future activities, not claims about the
-current demo.
+authentication, and production-grade database provisioning and backups. These
+are future activities, not claims about the current prototype.
 
 ## 8. Reproduction
 
@@ -192,7 +193,8 @@ reset, or modified. The demo-only evaluator can be run with:
 uv run python scripts/eval/run_eval.py
 ```
 
-Docker starts the fake-backend UI with:
+Docker starts the real-backend UI and seeds its persistent database volume on
+first start with:
 
 ```bash
 docker compose up --build
