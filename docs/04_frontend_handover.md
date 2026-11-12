@@ -174,7 +174,7 @@ check_backend() -> BackendHealth
 - `status`: `ready`, `not_initialized`, `schema_incompatible` or `unavailable` (the database state; it never calls the language-model provider).
 - `reason`: `outdated` or `future` when `status == "schema_incompatible"`, otherwise `None`.
 - `llm_mode`: the active model client, `rule_based` (offline stand-in), `openai` or `anthropic`.
-- `notes`: a tuple of short, customer-safe strings about the current limits (for example that retrieval is lexical and that the offline assistant is not a language model). Safe to show in an About or status panel.
+- `notes`: a tuple of short, customer-safe strings about the current limits (for example that FAQ/policy retrieval needs OpenAI embeddings and that the offline assistant is not a language model). Safe to show in an About or status panel.
 
 `handle_message` takes **exactly one** of `message` (typed text), `decision` (`ConfirmationDecision(action_id, accepted)`) or `choice` (`ChoiceSelection(prompt_id, option_id)`). It never raises for user or service problems; it returns a `ChatReply`. It raises `TypeError` only if `state` is not a `ConversationState`.
 
@@ -245,7 +245,7 @@ Integration notes from the backend audit:
 ## 9. Known limitations
 
 - The default assistant is rule-based; natural-language coverage is narrow. A real provider must be configured and tested by Person A before a demo that claims language-model behavior. **Unverified live.**
-- Policy retrieval is lexical BM25 (the current implementation); embeddings and a vector store are deferred. Paraphrased questions can still miss, although common wording differences ("window", "cost", "cancellation") are bridged.
+- Policy retrieval uses persistent Chroma vector search with OpenAI embeddings; `OPENAI_API_KEY` is required even when `LLM_PROVIDER=rule_based`. FAQ/policy source text is embedded, and each query is sent to OpenAI. The local index defaults to `app/db/data/generated/vector_store`; Docker Compose uses `/app/data/vector_store` on its persistent `app-data` volume. The index is separate from the SQLite business database. A cosine-distance cutoff can return no hits for unrelated questions.
 - Login is simulated (pick a customer). There is no authentication.
 - No durable pending actions or idempotency; a crash between a write and its reply can leave an ambiguous result, which the backend reports honestly and does not retry.
 - Single process; no multi-worker deployment.

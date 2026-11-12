@@ -6,7 +6,8 @@ ENV PYTHONUNBUFFERED=1 \
     UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \
     PATH="/app/.venv/bin:${PATH}" \
-    APP_DB_PATH=/app/data/app_d2.db
+    APP_DB_PATH=/app/data/app_d2.db \
+    VECTOR_STORE_DIR=/app/data/vector_store
 
 WORKDIR /app
 

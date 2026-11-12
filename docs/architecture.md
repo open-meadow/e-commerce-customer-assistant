@@ -13,7 +13,7 @@ flowchart LR
 
     API --> Orchestrator["Orchestrator"]
     Orchestrator --> Tools["Validated customer-scoped tools"]
-    Orchestrator --> RAG["Lexical BM25 retrieval"]
+    Orchestrator --> RAG["Chroma vector retrieval<br/>OpenAI embeddings"]
     Orchestrator --> Catalog["Read-only catalog lookup"]
     Orchestrator --> LLM["LLM interface<br/>rule-based default"]
     Tools --> DB["SQLite<br/>customers, orders, items,<br/>returns, support tickets"]
@@ -36,7 +36,8 @@ flowchart LR
 - The default `app.backend` path uses the simulated login identity to create a
   session, then uses customer-scoped repository operations for order, return,
   and ticket data. Return and ticket writes require an explicit confirmation.
-- Policy and FAQ retrieval is lexical BM25 over `FAQ.md` and `Policies.md`.
+- Policy and FAQ retrieval uses a persistent Chroma index with OpenAI
+  `text-embedding-3-small` embeddings over `FAQ.md` and `Policies.md`.
   Product lookup reads `Products.json` separately; it is not part of RAG.
 - `RuleBasedLLM` is the offline default and handles a fixed set of phrasings.
   OpenAI Responses API and Anthropic adapters have mocked transport tests but
@@ -52,7 +53,8 @@ flowchart LR
   and performs no database reads or writes.
 - Docker Compose sets `UI_BACKEND=real`. On first start, the entrypoint seeds
   the persistent `app-data` volume if its database file is absent; the
-  container uses that file through `APP_DB_PATH`.
+  container uses that file through `APP_DB_PATH`. Chroma stores its index
+  separately at `/app/data/vector_store` on the same volume.
 - `scripts/eval/run_eval.py` runs each CSV case in a fresh fake session. It
   records replies and expected labels, but has no real tool-call trace and
   marks answer accuracy, tool-call correctness, hallucination checks, and
@@ -65,6 +67,9 @@ The simulated customer selector demonstrates customer-scoped behavior; it is
 not production authentication. Customer identity comes from the application
 session, not user text or LLM-generated tool arguments. The assistant does not
 integrate with a real store, payment processor, courier, or refund system.
+Vector retrieval requires `OPENAI_API_KEY`; FAQ/policy text is embedded and
+queries are sent to OpenAI. The vector index is separate from the five-table
+SQLite business database.
 
 See [`03_backend_architecture.md`](./03_backend_architecture.md) for backend
 design and implementation details, and [`04_frontend_handover.md`](./04_frontend_handover.md)

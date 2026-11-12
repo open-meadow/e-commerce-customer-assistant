@@ -9,7 +9,7 @@
 
 This capstone prototype provides a Streamlit customer-support UI connected by
 default to a local backend. The backend uses a simulated customer login,
-customer-scoped SQLite operations, lexical retrieval over FAQ and policy
+customer-scoped SQLite operations, Chroma vector retrieval over FAQ and policy
 documents, read-only product lookup, and confirmation-gated return and ticket
 writes. Its default assistant is an offline, deterministic rule-based stand-in
 for a general language model.
@@ -51,15 +51,17 @@ Simulated login demonstrates application-scoped identity but is not
 production-grade authentication.
 
 The backend orchestrates customer-scoped order, return, and ticket operations,
-FAQ/policy retrieval, product lookup, and LLM responses. Return and support
-ticket writes require an explicit confirmation; the UI reports success only
-when the backend confirms the operation.
+embedding-based FAQ/policy retrieval, product lookup, and LLM responses.
+Return and support ticket writes require an explicit confirmation; the UI
+reports success only when the backend confirms the operation.
 
 ### 2.2 Knowledge and language-model behavior
 
-Policy and FAQ retrieval uses lexical BM25 over `FAQ.md` and `Policies.md`.
-It does not use embeddings or a vector database. Product lookup reads
-`Products.json` separately and is not part of RAG.
+Policy and FAQ retrieval uses a persistent Chroma vector index with OpenAI
+`text-embedding-3-small` embeddings over `FAQ.md` and `Policies.md`. It requires
+`OPENAI_API_KEY` for indexing and searches, including when the LLM is using the
+offline rule-based default. Product lookup reads `Products.json` separately
+and is not part of RAG.
 
 The default `RuleBasedLLM` is an offline deterministic stand-in that handles a
 limited set of phrasings; it is not a general language model. OpenAI Responses
@@ -92,7 +94,7 @@ Customer
   -> UI adapter
   -> app.backend
       -> customer-scoped tools -> SQLite
-      -> lexical BM25 retrieval -> FAQ.md / Policies.md
+      -> Chroma vector retrieval -> FAQ.md / Policies.md
       -> product lookup -> Products.json
       -> LLM interface -> RuleBasedLLM (default)
 ```
@@ -154,11 +156,12 @@ reproduced.
 ## 7. Limitations and future work
 
 The real backend is implemented, but the default assistant is rule-based and
-the provider integrations are not live-verified. Retrieval is lexical rather
-than embedding-based, sessions are in-memory and single-process, the login is
-simulated, and the evaluation runner does not measure real assistant quality
-or safety. Docker uses a local seeded database volume; live provider adapters
-remain unverified.
+the provider integrations and embedding calls are not live-verified. Retrieval
+uses OpenAI embeddings and requires network access and an API key. Sessions are
+in-memory and single-process, the login is simulated, and the evaluation
+runner does not measure real assistant quality or safety. Docker uses
+persistent database and vector-index storage; live provider adapters remain
+unverified.
 
 Future work could add live-provider verification, a real-backend evaluation
 mode with measurable tool traces, durable session management, production
@@ -175,8 +178,11 @@ uv run python -m pytest tests -q
 uv run python -m streamlit run app/ui/streamlit_app.py
 ```
 
-The local UI uses `APP_DB_PATH` (default `app/db/data/app_d2.db`). Use an
-already initialized database if one exists. To create a separate new demo
+The local UI uses `APP_DB_PATH` (default `app/db/data/app_d2.db`). FAQ and
+policy retrieval also requires `OPENAI_API_KEY`; its persistent Chroma index
+uses `VECTOR_STORE_DIR` (default
+`app/db/data/generated/vector_store`), separate from the business database.
+Use an already initialized database if one exists. To create a separate new demo
 database, select a new path and current UTC reference time; do not run the seed
 command against an existing file:
 

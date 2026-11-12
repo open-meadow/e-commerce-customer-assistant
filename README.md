@@ -20,7 +20,7 @@ backend (C101 and C102 only, no database).
 | Streamlit UI | Conversational customer support interface |
 | Customer context | Simulated authenticated customer identity |
 | SQLite database | Customers, orders, order items, returns, and support tickets |
-| Policy retrieval | Lexical BM25 over FAQ and policy documents; no embeddings or vector store |
+| Policy retrieval | Persistent Chroma vector search over FAQ and policy documents using OpenAI embeddings |
 | Product lookup | Read-only lookup from `Products.json`, separate from policy retrieval |
 | Backend tools | Customer-scoped order, return, and ticket operations |
 | LLM orchestration | Provider-agnostic orchestration; offline rule-based behavior is the default |
@@ -52,11 +52,11 @@ Voice-based support may be considered as a future enhancement after the MVP is c
 | Structured data | JSON |
 | Knowledge base | Markdown documents |
 | AI orchestration | Provider-agnostic LLM interface; deterministic rule-based default |
-| Knowledge retrieval | Lexical BM25 over Markdown FAQ and policy documents |
+| Knowledge retrieval | ChromaDB with OpenAI `text-embedding-3-small` embeddings over Markdown FAQ and policy documents |
 | Testing | Pytest |
 | Version control | Git and GitHub |
 
-OpenAI Responses API and Anthropic adapters are available but have only mock-tested transports; neither has been verified against a live provider. The default is `rule_based`, which needs no network or API key and matches a limited set of phrasings. Retrieval uses lexical BM25, not embeddings or a vector database.
+OpenAI Responses API and Anthropic adapters are available but have only mock-tested transports; neither has been verified against a live provider. The default is `rule_based`, which matches a limited set of phrasings. Policy retrieval uses OpenAI embeddings and requires `OPENAI_API_KEY` when searching or indexing, even when the LLM remains in `rule_based` mode.
 
 ## 5. High-Level Architecture
 
@@ -65,7 +65,7 @@ Customer -> Streamlit UI -> UI client -> app.backend (real, default)
                                       -> fake backend (when UI_BACKEND=fake)
 
 app.backend -> orchestrator -> customer-scoped tools -> SQLite
-                            -> lexical BM25 -> FAQ.md / Policies.md
+                            -> Chroma vector search -> FAQ.md / Policies.md
                             -> product lookup -> Products.json
                             -> LLM interface -> RuleBasedLLM (default)
 ```
@@ -98,7 +98,7 @@ ecommerce-support-assistant/
 │   ├── backend/        # public backend API and orchestration
 │   ├── db/             # SQLite schema, seed, repository, source data
 │   ├── llm/            # rule-based default and provider adapters
-│   ├── rag/            # lexical policy/FAQ retrieval
+│   ├── rag/            # Chroma vector search over policy/FAQ documents
 │   ├── catalog/        # read-only product lookup
 │   └── ui/             # Streamlit UI and optional fake backend
 ├── docs/
@@ -157,6 +157,13 @@ file:
 APP_DB_PATH=demo/demo.db uv run python -m streamlit run app/ui/streamlit_app.py
 ```
 
+FAQ and policy search uses OpenAI embeddings, so set `OPENAI_API_KEY` in `.env`
+even if `LLM_PROVIDER` is unset and the assistant uses the offline
+rule-based model. The persistent Chroma index is stored separately from the
+business database at `VECTOR_STORE_DIR` (default
+`app/db/data/generated/vector_store`). It is rebuilt from the source documents
+when their content changes.
+
 To use the existing default database, simply run:
 
 ```bash
@@ -185,15 +192,17 @@ From the repository root:
 
 ```bash
 cp .env.example .env
-# Optionally set LLM_PROVIDER, LLM_MODEL, and the matching API key in .env.
+# Set OPENAI_API_KEY for retrieval; optionally configure the LLM provider in .env.
 docker compose up --build
 ```
 
-Open <http://localhost:8501>. On first start, the container seeds a new database
-in the `app-data` volume and uses it through `APP_DB_PATH`. Later starts reuse
-that database. The default LLM is the offline rule-based assistant; configure
-the provider and its key in `.env` to use OpenAI or Anthropic. The Streamlit UI
-and backend run together in one process; there is no separate API service.
+Open <http://localhost:8501>. On first start, the container seeds a new database in the `app-data` volume
+and uses it through `APP_DB_PATH`. The Chroma index is stored separately at
+`/app/data/vector_store` on that same persistent volume. Later starts reuse
+both. Set `OPENAI_API_KEY` in `.env` for FAQ and policy retrieval; the default
+LLM remains offline and rule-based unless a provider is configured. The
+Streamlit UI and backend run together in one process; there is no separate API
+service.
 
 Stop the service with `Ctrl+C`; use `docker compose down` to stop and remove the
 container and network. The database volume is preserved.
@@ -227,7 +236,10 @@ evaluation of the real assistant. Sample outputs in
   language model. Provider adapters are not live-tested.
 - If an external LLM provider is explicitly configured, prompts may be sent to
   that provider; the offline rule-based default makes no provider call.
-- Retrieval is lexical BM25; there are no embeddings or vector store.
+- FAQ and policy retrieval uses Chroma with OpenAI embeddings. It requires an
+  OpenAI API key and sends source text when indexing and each search query to
+  OpenAI. The local index is persistent; Docker Compose stores it on the
+  `app-data` volume. Product lookup remains a separate structured lookup.
 - There are no payment or shipment tables and no real payment, refund,
   courier, cancellation, or address-change integrations.
 - Evaluation cases and sample logs are synthetic. The demo runner verifies

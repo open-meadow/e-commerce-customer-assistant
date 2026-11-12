@@ -70,7 +70,7 @@ Orchestrator (later) ── LLM + intent routing; sees tool schemas only
 Tool layer (app/tools) ── ctx-bound, validated, normalized results (Section 5)
         │                    │                      │
         ▼                    ▼                      ▼
-Repository (app/db)     Product catalog         BM25 retriever (done)
+Repository (app/db)     Product catalog         Chroma vector retriever (done)
         │               (Products.json)         (FAQ.md, Policies.md)
         ▼
 SQLite via get_connection()
@@ -94,7 +94,7 @@ app/
   tools/          # CustomerContext, tool registry, validation, outcomes (Section 5)
   catalog/        # read-only Products.json loader and lookup      (Section 12)
   orchestrator/   # LLM + routing (later checkpoint)
-  rag/            # lexical BM25 retrieval over FAQ/Policies (current); embeddings and a vector store are DEFERRED, not implemented
+  rag/            # persistent Chroma retrieval over FAQ/Policies using OpenAI embeddings
   db/             # existing repository layer; one new read (Section 6)
   ui/             # Streamlit, owned by the frontend developer
 ```
@@ -171,7 +171,7 @@ handle_message(
 | `ChatReply` | `text: str`, `state: ConversationState`, `status: str`, `error_code: str \| None`, `pending: PendingView \| None`, `choice: ChoiceView \| None`, `citations: tuple[Citation, ...]`, `request_id: str` | See below. |
 | `PendingView` | `action_id: str`, `kind: str`, `summary: str`, `expires_at: str` | What the frontend shows next to confirm and cancel buttons. `action_id` is the random identifier of the server-side pending action (Section 8.1). |
 | `ChoiceView` | `prompt_id: str`, `question: str`, `options: tuple[ChoiceOption, ...]` | A fixed set of options. `ChoiceOption` is `option_id` and `label`. |
-| `Citation` | `source: str`, `section: str` | Source document and section for policy answers (filled by the BM25 policy retrieval). |
+| `Citation` | `source: str`, `section: str` | Source document and section for policy answers (filled by Chroma policy retrieval). |
 
 `ChatReply.status` is one of `ok`, `needs_choice`, `needs_confirmation`, `error`. `ChatReply.error_code` is empty unless the status is `error`. At most one of `pending` and `choice` is set.
 
@@ -308,7 +308,7 @@ Order and item IDs are normalized only for convenience ("ord1001" becomes "ORD10
 | `start_support_ticket` | `issue_type`, `description`, `order_id` (optional) | Stages a pending action | Never writes. Returns `needs_confirmation` (Section 8). |
 | `get_refund_policy` | `order_id` (optional) | policy source, plus `get_order` when `order_id` is given | Policy facts with citations, and that order's refund status and amount if supplied. |
 | `lookup_product` | `query` or `product_id` | catalog | Section 12. |
-| `search_policies` | `query` | BM25 retriever (`app/rag/retriever.py`) | **Implemented.** Lexical BM25 over `FAQ.md` (one chunk per Q&A) and `Policies.md` (one chunk per section); returns at most 3 passages with their source and section, or none. Embeddings and a vector store are deferred. |
+| `search_policies` | `query` | Chroma retriever (`app/rag/retriever.py`) | **Implemented.** Persistent Chroma search using OpenAI `text-embedding-3-small` over `FAQ.md` (one chunk per Q&A) and `Policies.md` (one chunk per section); returns at most 3 passages with source and section, or none when no result meets the cosine-distance cutoff. Requires `OPENAI_API_KEY`. |
 
 ### 5.5 `get_my_tickets` (approved by Person A, 2026-11-11)
 The repository already has `get_customer_tickets(authenticated_customer_id)`, which returns the authenticated customer's tickets, most recent first, with the keys `ticket_id`, `customer_id`, `order_id`, `issue_type`, `description`, `conversation_summary`, `status`, `priority` and `created_at`. A customer who created a ticket needs to be able to ask about it later, and `get_my_returns` has no ticket counterpart. This proposal adds one tool. It is an additive use of an existing repository operation and does not change that operation or its contract.
@@ -1302,12 +1302,13 @@ This section records what the code does. It is an implementation record, not a n
 - **Capacity.** The per-session caps (5 returns, 3 tickets, 60 messages) count committed plus reserved writes, reserved atomically when a confirmation is claimed.
 - **Sessions.** Idle expiry (60 minutes), no absolute lifetime. A session's pending actions are removed with it.
 - **Choice and reason-request expiry.** A choice menu or a request for a reason expires 10 minutes after it was created (the pending-action TTL, `Settings.pending_ttl`). The expiry is absolute: re-displaying the prompt or sending other messages does not extend it. An expired prompt is cleared, cannot execute anything, and the next message is handled normally with a short notice.
-- **Retrieval (current implementation: BM25).** Policy retrieval is lexical BM25 over `FAQ.md` and `Policies.md` (`app/rag/retriever.py`, 25 chunks). **Embeddings and a vector store (for example ChromaDB) are deferred, not implemented and not planned for the MVP**; earlier text that assumes them describes an idea that was not followed. Relevance was tightened on 2026-11-11 after "what is the return window" ranked Q3.2 above Q3.1: the customer says "window" where the policy says "within 7 days". Fixes: a stemmer that unifies word forms (charge/charges, cancel/cancelled/cancellation), a small hand-written vocabulary bridge (window, deadline, period, timeline, cost, fee mapped to the words the documents use, counted at half weight), and a rule that a passage must match at least one of the customer's own words, so the bridge alone never creates a match. **Topic scoping (final source review, 2026-11-11):** the first bridge expanded "window" to "within / days / eligible" for every topic, so "What is the delivery window?" returned the return policy (Q3.1) ahead of the delivery-time answer (Q2.2). Each bridge rule now fires only when the query also names its topic (return topic: within 7 days; delivery topic: business days; refund topic: within business days), and the generic word itself drops to half weight when a rule fires. Regression tests: `tests/test_retrieval_topics.py`, including "Can I return a non-returnable product?", whose top two passages are the ones that state the exceptions. Regression tests: `tests/test_retrieval_regression.py` (standard and damaged return windows, refund time, cancellation, shipping charges, unrelated questions, and that the reply quotes the cited passage).
+- **Retrieval history (2026-11-11).** The initial policy retriever used lexical BM25 over 25 FAQ and policy chunks. Its stemmer, domain vocabulary bridge, topic scoping and regression tests remain historical implementation notes; that BM25 implementation is no longer the default.
+- **Retrieval (current implementation).** `app/rag/retriever.py` uses a persistent Chroma index with OpenAI `text-embedding-3-small` embeddings over `FAQ.md` and `Policies.md`. It requires `OPENAI_API_KEY` for indexing and each query, and returns at most three citations when cosine distance is at most 0.7. The local index defaults to `app/db/data/generated/vector_store`; Docker Compose sets `/app/data/vector_store` on the persistent `app-data` volume. This storage is separate from the five-table business database. A source-content fingerprint triggers reindexing after FAQ or policy content changes.
 - **LLM adapters and live readiness.** `app/llm/providers.py` contains OpenAI-compatible and Anthropic adapters, selected only by environment variables (the exact variables are in `docs/04_frontend_handover.md` Section 3). They are tested only against a mocked transport (`tests/test_providers.py`). **No live provider call has ever been made**; the default `RuleBasedLLM` is an offline stand-in, not a language model. A requested provider that is misconfigured fails closed with `LLMConfigError` (it never silently becomes the stand-in). `readiness(env)` reports which variables are present without printing any value.
 
 ### 19.3 Deferred or not done
 
-Durable pending actions and idempotency, an absolute session lifetime, the read-only health connection used by `check_backend` (it uses `check_database_health`, which opens read-only), real authentication, a verified live LLM adapter, and embedding-based retrieval.
+Durable pending actions and idempotency, an absolute session lifetime, the read-only health connection used by `check_backend` (it uses `check_database_health`, which opens read-only), real authentication, and a verified live LLM adapter.
 
 ### 19.4 Audit fixes (2026-11-11)
 

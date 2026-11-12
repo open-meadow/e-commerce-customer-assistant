@@ -6,7 +6,7 @@ Capstone: text customer-support assistant. Synthetic data only. No real store, p
 
 Target: Streamlit chat for order, delivery, payment, return, refund, product, and policy questions. Current chat behavior is a local fake-backend demo, not a connected AI support assistant.
 
-- Planned: RAG over `app/db/data/source/FAQ.md` and `Policies.md` (policy source of truth).
+- Built: persistent Chroma retrieval over `app/db/data/source/FAQ.md` and `Policies.md`, using OpenAI embeddings (policy source of truth).
 - Planned: product lookup from `app/db/data/source/Products.json` (read-only; not RAG; not a DB FK).
 - Database/repository operations exist, but the chat UI does not call them. The current fake backend performs no real order lookups, returns, ticket writes, or policy retrieval.
 - Simulated login (Streamlit session) is not production authentication. Any future identity must come from application context, never message or LLM text.
@@ -33,8 +33,8 @@ Phase 0–1 docs approved. Phase 2 plan approved. Database Checkpoints 1–10 co
 Do not treat these as existing. Do not start a checkpoint that has not been authorized.
 
 - **Committed and pushed (`rukum/db`, `7dfd2f0`):** the D2 database contract: three connection factories, `APP_DB_PATH` (default `app/db/data/app_d2.db`), `user_version = 1`, persisted `reason_category`, exact-text validation, canonical timestamps, eligibility outcomes, typed errors, health check, `list_customers_for_login`, the seed command and the rewritten database tests (including `tests/conftest.py`).
-- **Uncommitted on `rukum/backend`:** the tool layer, session registry and pending actions, scope guard, issue lifecycle, ticket summaries with fallback, lexical RAG, the provider-agnostic LLM layer and `app.backend`, with their tests, plus three audit fixes (confirm-time return-window message, typed `cancel` while a ticket description is awaited, graceful handling of a missing product catalog or FAQ source). See `docs/03` Section 19 and `docs/04_frontend_handover.md`.
-- **Not verified:** the OpenAI-compatible and Anthropic adapters have never been run against a live service (no credentials). The rule-based LLM is a deterministic stand-in. RAG is lexical, not embeddings. Durable pending actions and idempotency are out of scope (single process, in-memory).
+- **Uncommitted on `rukum/backend`:** the tool layer, session registry and pending actions, scope guard, issue lifecycle, ticket summaries with fallback, Chroma vector retrieval, the provider-agnostic LLM layer and `app.backend`, with their tests, plus three audit fixes (confirm-time return-window message, typed `cancel` while a ticket description is awaited, graceful handling of a missing product catalog or FAQ source). See `docs/03` Section 19 and `docs/04_frontend_handover.md`.
+- **Not verified:** the OpenAI-compatible and Anthropic adapters and the embedding calls have not been run against live services. The rule-based LLM is a deterministic stand-in. Chroma uses OpenAI embeddings and requires `OPENAI_API_KEY`. Durable pending actions and idempotency are out of scope (single process, in-memory).
 - **Open for Person B:** `app/ui/streamlit_app.py` (stub, not connected), Docker, evaluation set, report, deck. Person B's unmerged branches use `DATABASE_PATH` and `get_connection(db_path)`; they must move to `APP_DB_PATH` and the seed command (see `docs/04_frontend_handover.md`).
 - **Current state:** branch `rukum/backend` (from `7dfd2f0`, not pushed). The backend code, its tests and the full-version documentation are uncommitted and not staged. `app/db/data/app.db` has not been opened or modified, and `app/db/data/app_d2.db` has not been created.
 

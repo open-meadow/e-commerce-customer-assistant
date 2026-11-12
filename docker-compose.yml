@@ -6,6 +6,7 @@ services:
         required: false
     environment:
       APP_DB_PATH: /app/data/app_d2.db
+      VECTOR_STORE_DIR: /app/data/vector_store
       UI_BACKEND: real
     ports:
       - "8501:8501"
