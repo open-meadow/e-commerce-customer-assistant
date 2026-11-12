@@ -2,6 +2,13 @@ import logging
 
 import streamlit as st
 
+st.set_page_config(
+    page_title="Customer support",
+    page_icon=":material/support_agent:",
+    layout="centered",
+    initial_sidebar_state="expanded",
+)
+
 if __package__:
     from .client import (
         ChoiceSelection,
@@ -56,6 +63,14 @@ else:
     )
 
 LOGGER = logging.getLogger(__name__)
+
+_SUGGESTIONS = {
+    ":material/local_shipping: Check an order": "Where is my order?",
+    ":material/policy: Return policy": "What is your return policy?",
+    ":material/inventory_2: Product details": (
+        "Tell me about the wireless earbuds"
+    ),
+}
 
 # Fallbacks only: a backend error reply carries its own customer-safe text, which
 # is shown in preference to these.
@@ -134,6 +149,8 @@ def _require_backend() -> None:
 def _set_customer_from_sidebar() -> None:
     """Render the simulated login and its customer-scoped chat list."""
     initialize_session(st.session_state)
+    st.sidebar.subheader("Demo customer")
+    st.sidebar.caption("Synthetic data · simulated login")
     try:
         login_options = list_login_options()
     except Exception:
@@ -179,17 +196,26 @@ def _set_customer_from_sidebar() -> None:
 
 def _render_sidebar_chats(customer_id: str) -> None:
     """Show the current customer's chats and the new-chat action."""
-    st.sidebar.subheader("Chats")
-    if st.sidebar.button("New chat", key="new_chat"):
+    st.sidebar.subheader("Your chats")
+    if st.sidebar.button(
+        "New chat",
+        key="new_chat",
+        icon=":material/add_comment:",
+        width="stretch",
+    ):
         _begin_session(customer_id)
         st.rerun()
 
     active_chat_id = st.session_state.get(ACTIVE_CHAT_ID_KEY)
     chats: dict[str, ChatSession] = st.session_state[CHATS_KEY]
     for chat_id, chat in chats.items():
-        if chat_id == active_chat_id:
-            st.sidebar.caption(f"Current: {chat['title']}")
-        elif st.sidebar.button(chat["title"], key=f"chat-{chat_id}"):
+        if st.sidebar.button(
+            chat["title"],
+            key=f"chat-{chat_id}",
+            type="primary" if chat_id == active_chat_id else "secondary",
+            icon=":material/chat_bubble_outline:",
+            width="stretch",
+        ):
             select_chat(st.session_state, chat_id)
             st.rerun()
 
@@ -295,49 +321,60 @@ def _render_actions() -> None:
 
     pending = chat["pending_view"]
     if pending is not None:
-        st.text(pending.summary)
-        st.caption(f"Expires at {pending.expires_at} (UTC). Use the buttons to answer.")
-        confirm_column, cancel_column = st.columns(2)
-        if confirm_column.button("Confirm", key=f"confirm-{pending.action_id}"):
-            _send_backend_request(
-                decision=ConfirmationDecision(
-                    action_id=pending.action_id,
-                    accepted=True,
-                )
-            )
-            st.rerun()
-        if cancel_column.button("Cancel", key=f"cancel-{pending.action_id}"):
-            _send_backend_request(
-                decision=ConfirmationDecision(
-                    action_id=pending.action_id,
-                    accepted=False,
-                )
-            )
-            st.rerun()
+        with st.container(border=True):
+            st.markdown("**Confirm this request**")
+            st.write(pending.summary)
+            st.caption(f"Expires at {pending.expires_at} UTC")
+            with st.container(horizontal=True, vertical_alignment="center"):
+                if st.button(
+                    "Confirm",
+                    key=f"confirm-{pending.action_id}",
+                    type="primary",
+                    icon=":material/check:",
+                ):
+                    _send_backend_request(
+                        decision=ConfirmationDecision(
+                            action_id=pending.action_id,
+                            accepted=True,
+                        )
+                    )
+                    st.rerun()
+                if st.button(
+                    "Cancel",
+                    key=f"cancel-{pending.action_id}",
+                    icon=":material/close:",
+                ):
+                    _send_backend_request(
+                        decision=ConfirmationDecision(
+                            action_id=pending.action_id,
+                            accepted=False,
+                        )
+                    )
+                    st.rerun()
 
     choice = chat["choice_view"]
     if choice is not None:
-        st.text(choice.question)
-        for option in choice.options:
-            if st.button(
-                option.label,
-                key=f"choice-{choice.prompt_id}-{option.option_id}",
-            ):
-                _send_backend_request(
-                    choice=ChoiceSelection(
-                        prompt_id=choice.prompt_id,
-                        option_id=option.option_id,
-                    )
-                )
-                st.rerun()
+        with st.container(border=True):
+            st.write(choice.question)
+            with st.container(horizontal=True):
+                for option in choice.options:
+                    if st.button(
+                        option.label,
+                        key=f"choice-{choice.prompt_id}-{option.option_id}",
+                    ):
+                        _send_backend_request(
+                            choice=ChoiceSelection(
+                                prompt_id=choice.prompt_id,
+                                option_id=option.option_id,
+                            )
+                        )
+                        st.rerun()
 
 
 def _render_chat() -> None:
     """Render the active transcript and message composer."""
-    st.title("E-commerce customer support")
-    st.caption(
-        "Synthetic data only. This is a demo login, not a production auth system."
-    )
+    st.title("Customer support", icon=":material/support_agent:")
+    st.caption("Order, return, product, and policy help · Demo with synthetic data")
 
     error_message = st.session_state.get(UI_ERROR_KEY)
     if isinstance(error_message, str):
@@ -356,22 +393,42 @@ def _render_chat() -> None:
             st.session_state.get(AUTHENTICATED_CUSTOMER_ID_KEY),
             str,
         ):
-            st.info("Please choose a customer in the sidebar to begin.")
+            st.subheader("How can we help?")
+            st.write("Choose a demo customer in the sidebar to start a chat.")
         else:
-            st.info("Start a new chat from the sidebar to continue.")
+            st.caption("Start a new chat from the sidebar to continue.")
         return
 
-    customer_id = st.session_state[AUTHENTICATED_CUSTOMER_ID_KEY]
-    st.subheader(f"Logged in as {customer_id}")
     chat = get_active_chat(st.session_state)
     assert chat is not None
+    has_user_message = any(
+        message["role"] == "user" for message in chat["messages"]
+    )
+    if not has_user_message:
+        st.subheader("How can I help?")
 
     for chat_message in chat["messages"]:
-        with st.chat_message(chat_message["role"]):
+        avatar = (
+            ":material/support_agent:"
+            if chat_message["role"] == "assistant"
+            else ":material/person:"
+        )
+        with st.chat_message(chat_message["role"], avatar=avatar):
             st.text(chat_message["content"])
 
+    if not has_user_message:
+        suggestion = st.pills(
+            "Try asking",
+            options=list(_SUGGESTIONS),
+            key=f"suggestions-{st.session_state[ACTIVE_CHAT_ID_KEY]}",
+        )
+    else:
+        suggestion = None
+
     _render_actions()
-    prompt = st.chat_input("Ask about an order, return, policy, or product...")
+    prompt = st.chat_input("Ask about an order, return, product, or policy")
+    if suggestion is not None:
+        prompt = _SUGGESTIONS[suggestion]
     if prompt is not None:
         append_chat_message(st.session_state, "user", prompt)
         _send_backend_request(message=prompt)
