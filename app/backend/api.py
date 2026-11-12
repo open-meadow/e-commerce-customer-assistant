@@ -123,7 +123,7 @@ class Backend:
 
     def check_backend(self) -> BackendHealth:
         health = check_database_health()
-        notes = ("Policy retrieval is lexical (BM25), not embedding based.",)
+        notes = ("Policy retrieval uses OpenAI embeddings in a persistent Chroma index.",)
         if getattr(self.llm, "name", "") == "rule_based":
             notes += ("Using the offline rule-based assistant, not a language model.",)
         return BackendHealth(health.status, health.reason, getattr(self.llm, "name", "unknown"), notes)

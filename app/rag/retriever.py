@@ -1,34 +1,33 @@
-"""FAQ and policy retrieval.
+"""FAQ and policy chunks plus the default Chroma-backed retriever.
 
 Design and honest limits
 ------------------------
 * Source documents: ``app/db/data/source/FAQ.md`` (one chunk per Q&A) and
   ``app/db/data/source/Policies.md`` (one chunk per numbered section). They are
   the source of truth for support rules and are never modified.
-* Retrieval is **lexical BM25 implemented in pure Python**. There are no
-  embeddings and no vector database in this MVP. The ``KnowledgeBase``
-  interface (``search(query, k)``) is what a vector store would replace.
-  This is a documented gap against the "embeddings + vector DB" idea in
-  the assignment brief, chosen to avoid heavy dependencies and a
-  provider decision.
-* The index is rebuilt in memory at start-up, so there is nothing to
-  persist and no stale index.
+* The default retriever uses a persistent Chroma index with OpenAI embeddings.
+  The lexical ``KnowledgeBase`` below remains an independent implementation;
+  it is not used as a fallback.
 * Retrieved text is **untrusted data**. Callers must present it to a
   model as quoted reference material, never as instructions.
-* A query with no meaningful overlap returns no hits, and the caller must
-  say it cannot confirm rather than invent a policy.
+* A query with no sufficiently close vector match returns no hits, and the
+  caller must say it cannot confirm rather than invent a policy.
 """
 
 from __future__ import annotations
 
 import math
+import os
 import re
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
-from typing import Iterable, Optional
+from typing import TYPE_CHECKING, Iterable, Optional
 
 from app.db.connection import PROJECT_ROOT
+
+if TYPE_CHECKING:
+    from app.rag.vector_index import ChromaKnowledgeBase
 
 SOURCE_DIR = PROJECT_ROOT / "app" / "db" / "data" / "source"
 
@@ -205,5 +204,21 @@ class KnowledgeBase:
 
 
 @lru_cache(maxsize=1)
-def default_knowledge_base() -> KnowledgeBase:
-    return KnowledgeBase(load_chunks())
+def default_knowledge_base() -> ChromaKnowledgeBase:
+    from app.rag.vector_index import ChromaKnowledgeBase
+
+    configured_directory = os.environ.get("VECTOR_STORE_DIR")
+    if configured_directory:
+        persist_directory = Path(configured_directory)
+        if not persist_directory.is_absolute():
+            persist_directory = PROJECT_ROOT / persist_directory
+    else:
+        persist_directory = (
+            PROJECT_ROOT / "app" / "db" / "data" / "generated" / "vector_store"
+        )
+
+    return ChromaKnowledgeBase(
+        load_chunks(),
+        persist_directory,
+        api_key=os.environ.get("OPENAI_API_KEY"),
+    )

@@ -202,7 +202,7 @@ def _passages(query: str, k: int = 3) -> list[dict[str, str]]:
             for h in hits]
 
 
-_KNOWLEDGE_UNAVAILABLE_NOTE = ("The FAQ and policy source is temporarily unavailable. Say that you cannot "
+_KNOWLEDGE_UNAVAILABLE_NOTE = ("Policy retrieval is temporarily unavailable. Say that you cannot "
                                "confirm the answer right now and offer a support ticket. Do not guess.")
 
 
@@ -210,7 +210,7 @@ def _search_policies(ctx: CustomerContext, args: dict[str, Any]) -> ToolResult:
     try:
         passages = _passages(args["query"])
     except KnowledgeBaseError:
-        log.warning("FAQ and policy source unavailable")
+        log.warning("FAQ and policy retrieval unavailable")
         return ToolResult("unavailable", "knowledge_unavailable", note=_KNOWLEDGE_UNAVAILABLE_NOTE)
     return ToolResult("ok", "policy_passages" if passages else "no_match",
                       {"passages": passages},
@@ -225,7 +225,7 @@ def _get_refund_policy(ctx: CustomerContext, args: dict[str, Any]) -> ToolResult
     try:
         data["passages"] = _passages("refund returns refunds timeline quality check")
     except KnowledgeBaseError:
-        log.warning("FAQ and policy source unavailable")
+        log.warning("FAQ and policy retrieval unavailable")
         policy_unavailable = True
         data["policy_unavailable"] = True
     if "order_id" in args:
