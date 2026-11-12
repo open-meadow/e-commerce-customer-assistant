@@ -1,14 +1,15 @@
 # Handover to Person B
 
 **From:** Person A (Rukum, backend and AI). **To:** Person B (frontend and delivery).
-**Written against:** `master` at `c9035c5`, on 2026-11-12. **Deadline:** about 2026-11-13.
+**Written against:** `master` at `c9035c5` plus one local, unpublished branch (see section 1), on 2026-11-12. **Deadline:** about 2026-11-13. The task split in sections 4 and 5 was refreshed the same day so that each of us has about 13.5 hours of work (estimates).
 
 This note says what is finished, how to get running in ten minutes, who owns what, and what is left for each of us. It is a status note, not a design document. The contracts are `docs/04_frontend_handover.md` (UI to backend) and `docs/03_backend_architecture.md` (backend design).
 
 ## 1. What is finished
 
 - The database layer, the backend and the Streamlit UI are merged on `master`. The UI uses the **real backend by default** (`UI_BACKEND=real`); `UI_BACKEND=fake` keeps the old canned demo.
-- Full test suite: **1028 passed, 0 failed** (`uv run python -m pytest tests -q`).
+- Full test suite on `master`: **1028 passed, 0 failed** (`uv run python -m pytest tests -q`). The local feature branch below brings it to 1119.
+- Person A has an OpenAI Responses API adapter committed on the local branch `feature/openai-responses-adapter` (`f25b7c4`, mocked tests only, not yet pushed or merged). A first live one-request probe was prepared but has not run, so nothing has been verified against the real OpenAI API.
 - The real backend was verified on 2026-11-12 against a temporary seeded database: 20 of 20 scripted checks (login, ownership isolation, return rejections and creation, duplicate protection, ticket creation and retrieval) and seven browser checks on the running Streamlit app.
 - The assistant is the offline `RuleBasedLLM`, a deterministic stand-in, not a language model. No network or API key is needed. The OpenAI and Anthropic adapters exist but have **never been run against a live service**.
 - Docker builds and serves the **fake-backend** UI on port 8501 (`UI_BACKEND=fake` in `docker-compose.yml`). The image holds no database.
@@ -52,26 +53,30 @@ Working rules:
 - `.env` is git-ignored and may hold keys. Never commit it or paste its contents anywhere.
 - Do not modify `Products.json`, `FAQ.md` or `Policies.md`.
 
-## 4. Person B: remaining tasks
+## 4. Person B: remaining tasks (about 13.5 hours)
 
-| # | Task | Done when | Priority |
+| # | Task | Est. | Done when | Priority |
+|---|---|---|---|---|
+| B1 | Update the report (`docs/technical_report.md`), architecture diagram (`docs/architecture.md`), README and deck (`docs/presentation.md`) for the real backend. Regenerate `docs/presentation.pptx`. | 4h | No document claims the chat uses a fake backend, except where it describes `UI_BACKEND=fake` on purpose. | Must |
+| B2 | Add the new evidence to the report: test counts, the real-backend verification above, screenshots, and honest limitations (rule-based assistant, lexical BM25 retrieval, in-memory single-process sessions, provider adapters not live-tested unless A1 finishes). | 2h | Every claim matches section 1. | Must |
+| B3 | Evaluation set and write-up: the 70 cases use only C101 and C102. After Person A's A3 exists, relabel or widen them and reword the evaluation section. | 1.5h | The report says what the evaluation does and does not measure. | Should |
+| B4 | Docker: build and run from a fresh clone, then decide fake or real. If real, agree the environment contract with Person A (database on a volume, a one-off seed step, `LLM_PROVIDER` default `rule_based`). One transient DNS failure occurred during a build; a retry succeeded. | 2.5h | `docker compose up` works from a clean clone. | Should |
+| B5 | UI polish: a rejected over-long message is still echoed in the chat; policy citations (`reply.citations`) come back from the backend but are not shown. | 1h | Both fixed with tests, or skipped. | Optional |
+| B6 | Demo rehearsal: slides, screenshots, timing, and a fallback (`UI_BACKEND=fake`) if the database fails live. | 2h | One full dry run. | Must |
+| B7 | Final consistency pass: README commands, test counts, `git diff --check`. | 0.5h | Clean. | Should |
+
+## 5. Person A: remaining tasks (about 13.5 hours, for your awareness)
+
+| # | Task | Est. | Priority |
 |---|---|---|---|
-| B1 | Update the documents that still describe the fake backend: `docs/technical_report.md`, `docs/architecture.md` (diagram too), README, `docs/presentation.md`. Regenerate `docs/presentation.pptx`. | No document claims the chat uses a fake backend, except where it describes `UI_BACKEND=fake` on purpose. | Must |
-| B2 | Add the new evidence to the report: 1028 tests, the real-backend verification above, screenshots, and honest limitations (rule-based assistant, lexical BM25 retrieval, in-memory single-process sessions, provider adapters not live-tested). | Every claim matches section 1. | Must |
-| B3 | Evaluation set: the 70 cases use only C101 and C102. After Person A's A2, widen or relabel them and reword the evaluation section. | Report says what the evaluation does and does not measure. | Should |
-| B4 | Docker: build and run from a fresh clone, then decide fake or real. If real, coordinate the environment contract with Person A (database on a volume, a one-off seed step, `LLM_PROVIDER` default `rule_based`). One transient DNS failure occurred during a build; a retry succeeded. | `docker compose up` works from a clean clone. | Should |
-| B5 | UI polish: a rejected over-long message is still echoed in the chat; policy citations (`reply.citations`) come back from the backend but are not shown. | Optional; skip if time is short. | Optional |
-| B6 | Demo rehearsal: slides, screenshots, timing, and a fallback (`UI_BACKEND=fake`) if the database fails live. | One full dry run. | Must |
-| B7 | Final consistency pass: README commands, test counts, `git diff --check`. | Clean. | Should |
+| A1 | Live OpenAI verification: apply the approved probe fixes, run the guarded one-request probe, then a minimal sequence (FAQ, owned order, unowned order, return with Confirm, ticket) on a fresh temporary database. | 3.5h | Should |
+| A2 | Publish and merge: push the OpenAI adapter branch, merge to `master`, push this note, and decide what to do with the stale remote branches (`rukum/db`, `rukum/backend`, the `rohan/*` branches). | 1.5h | Must |
+| A3 | Real-backend evaluation: add a real mode to `scripts/eval/run_eval.py` against a seeded temporary database, rerun it, and record which metrics are measurable. Today it runs only the fake backend and every score is `not_assessed`. | 4h | Must (at least the limitation) |
+| A4 | Refresh status docs: `PROJECT_STATUS.md` (still says checkpoint 3 is next), `AGENTS.md` (backend "uncommitted", work "on `rukum/db`"), `CLAUDE.md` (known-breakage and test-count lines), `docs/04` ("OpenAI-compatible endpoint"). Path notes for `docs/01` to `docs/03` need the technical lead's approval. | 1.5h | Must |
+| A5 | Demo runbook: reseed steps, the phrasing cheat-sheet (section 6), and the scripted verification kept as a script. | 1.5h | Must |
+| A6 | Final acceptance from a clean clone; review Person B's pull requests. | 1.5h | Must |
 
-## 5. Person A: remaining tasks (for your awareness)
-
-- **A1** Refresh stale status text: `PROJECT_STATUS.md` (still says checkpoint 3 is next), `AGENTS.md` (backend "uncommitted", work "on `rukum/db`"), `CLAUDE.md` (`init_demo_db.py` is no longer broken and the suite is now 1028 passed), and a path note for `docs/01` and `docs/02`, which still use the old `data/` paths.
-- **A2** Real-backend evaluation: `scripts/eval/run_eval.py` runs only the fake backend, so every score is `not_assessed`. Add a real mode or document the limit.
-- **A3** Demo runbook and the scripted verification kept as a script.
-- **A4** Decide whether to stay on the rule-based assistant or configure a real provider.
-- **A5, A6** Optional: Docker real-backend contract; small polish and stale-branch cleanup.
-- **A7** Review your pull requests and run the final check from a clean clone.
+Dependencies: A2 comes first, so Person B branches from the updated `master`. B3 waits for A3. B2 should include A1's live results if they exist; otherwise it states that the provider adapters are mock-tested only. B6 and A6 are last.
 
 ## 6. What the rule-based assistant understands
 
@@ -96,6 +101,6 @@ Tips:
 
 ## 7. Timeline
 
-- End of today: B1 drafted; A1 and A3 done.
+- End of today: A2 done; B1 drafted; A4 and A5 done.
 - Tomorrow morning: B2 and B6 finished; one clean-clone run (Person A) and one dry run of the demo (both).
-- Anything marked Optional is dropped first if time runs out.
+- The Must items are about 10 hours for Person A (A2 to A6) and 8 hours for Person B (B1, B2, B6), which is still heavy for one day. If time runs out, drop in this order: B5, A1, B4, B3, B7. The rule-based assistant stays the demo path, and the report says the OpenAI adapter is mock-tested only if A1 is dropped.
