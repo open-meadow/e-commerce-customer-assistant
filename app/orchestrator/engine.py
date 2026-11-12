@@ -413,8 +413,13 @@ class Engine:
             if calls_used + len(calls) > self.settings.max_tool_calls_per_turn:
                 return Turn(self._with_notices(ctx, "I wasn't able to finish that request. Could you rephrase "
                                                     "it or ask for one thing at a time?"))
-            messages.append({"role": "assistant", "tool_calls": [
-                {"name": c.name, "arguments": c.arguments} for c in calls]})
+            proposed: dict[str, Any] = {"role": "assistant", "tool_calls": [
+                {"name": c.name, "arguments": c.arguments, "call_id": c.call_id} for c in calls]}
+            if result.provider_items:
+                # Opaque provider state (for example OpenAI reasoning and function_call items) that
+                # the provider needs back, unchanged, with the tool results. Never inspected or shown.
+                proposed["provider_items"] = list(result.provider_items)
+            messages.append(proposed)
             for call in calls:
                 calls_used += 1
                 name = call.name if isinstance(call.name, str) else ""
@@ -425,7 +430,8 @@ class Engine:
                 tool_result = execute_tool(ctoken, name, call.arguments)
                 self._collect_citations(ctx, name, tool_result)
                 wrote_tool_results = True
-                messages.append({"role": "tool", "name": name, "content": tool_result.to_json()})
+                messages.append({"role": "tool", "name": name, "call_id": call.call_id,
+                                 "content": tool_result.to_json()})
 
     def _finish_text(self, s: Session, text: Optional[str], ctx: _Ctx, used_tools: bool) -> Turn:
         body = (text or "").strip()
