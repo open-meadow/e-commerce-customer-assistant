@@ -426,12 +426,37 @@ def _render_chat() -> None:
         suggestion = None
 
     _render_actions()
-    prompt = st.chat_input("Ask about an order, return, product, or policy")
+    prompt = st.chat_input(
+        "Ask about an order, return, product, or policy",
+        accept_audio=True,
+        key="chat_input",
+    )
     if suggestion is not None:
-        prompt = _SUGGESTIONS[suggestion]
-    if prompt is not None:
-        append_chat_message(st.session_state, "user", prompt)
-        _send_backend_request(message=prompt)
+        message = _SUGGESTIONS[suggestion]
+        audio = None
+    elif prompt is None:
+        message = None
+        audio = None
+    else:
+        message = prompt.text
+        audio = prompt.audio
+
+    if audio is not None:
+        if message:
+            st.session_state[UI_NOTICE_KEY] = (
+                "Voice transcription is not available yet; only the typed text "
+                "was sent."
+            )
+        else:
+            st.info(
+                "Microphone capture is ready. Transcription will be added in "
+                "the next step; this recording has not been sent to the assistant."
+            )
+            st.audio(audio, alt="Recorded voice message")
+
+    if message:
+        append_chat_message(st.session_state, "user", message)
+        _send_backend_request(message=message)
         st.rerun()
 
 
