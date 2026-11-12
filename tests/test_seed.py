@@ -137,7 +137,7 @@ class TestSeedGuards:
             raw.close()
 
     def test_products_json_is_not_modified(self):
-        path = PROJECT_ROOT / "data" / "source" / "Products.json"
+        path = PROJECT_ROOT / "app" / "db" / "data" / "source" / "Products.json"
         before = path.read_bytes()
         seed_database_in_memory()
         assert path.read_bytes() == before
@@ -156,7 +156,7 @@ class TestCommandLine:
     """The seed command, run in-process with ``main``.
 
     No test launches the CLI with the real protected path, and none
-    touches ``data/app.db`` or the default ``data/app_d2.db``.
+    touches ``app/db/data/app.db`` or the default ``app/db/data/app_d2.db``.
     """
 
     def test_explicit_path_initializes_a_new_database(self, tmp_path, capsys):

@@ -29,7 +29,7 @@ Customers commonly need help with:
 The target system should answer from approved sources and use controlled,
 customer-scoped actions.
 
-*Evidence: docs/00_project_discovery.md; data/source/FAQ.md*
+*Evidence: docs/00_project_discovery.md; app/db/data/source/FAQ.md*
 
 ## Scope and data
 
@@ -44,7 +44,7 @@ customer-scoped actions.
 - Real store, customer accounts, payments, or couriers
 - Production authentication, checkout, or real refunds
 
-*Evidence: README.md; data/source/Policies.md; data/source/Products.json*
+*Evidence: README.md; app/db/data/source/Policies.md; app/db/data/source/Products.json*
 
 ## What runs today
 
@@ -97,7 +97,7 @@ formal authorization remains unresolved.
 **Not assessed:** answer accuracy, tool-call correctness, hallucinations, and
 safety behavior.
 
-*Evidence: data/eval/queries.csv; scripts/eval/run_eval.py*
+*Evidence: app/db/data/eval/queries.csv; scripts/eval/run_eval.py*
 
 ## Verification results
 

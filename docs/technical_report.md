@@ -82,13 +82,13 @@ variables, but the current chat does not use them. The current fake-backend
 demo does not require an API key.
 
 `scripts/init_demo_db.py` accepts an explicit database path and timezone-aware
-reference time, protects the project's canonical `data/app.db` from use, and
+reference time, protects the project's canonical `app/db/data/app.db` from use, and
 refuses to initialize a database containing existing tables or views. Its
 validation uses temporary databases.
 
 ### 2.4 Evaluation artifacts
 
-`data/eval/queries.csv` has 70 synthetic labeled cases across 17 categories,
+`app/db/data/eval/queries.csv` has 70 synthetic labeled cases across 17 categories,
 including order status, delivery, payment, returns, product questions,
 policies, cross-customer attempts, prompt-injection attempts, out-of-scope
 requests, ambiguous messages, and language-robustness examples.
@@ -98,7 +98,7 @@ emits a JSON report. It reports expected-tool coverage and per-category case
 counts, but it does not observe tool calls. Answer accuracy, tool-call
 correctness, hallucination checks, and safety checks are explicitly reported
 as `not_assessed`. Four illustrative, case-linked demo logs are provided in
-`data/eval/logs/sample_conversations.jsonl`; they do not claim that expected
+`app/db/data/eval/logs/sample_conversations.jsonl`; they do not claim that expected
 safety behavior was actually demonstrated.
 
 ## 3. Architecture

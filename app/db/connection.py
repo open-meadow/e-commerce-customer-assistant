@@ -3,7 +3,7 @@
 Three factories, each with one job (master handover Section 8.7):
 
 ``get_connection()``
-    Normal runtime. Refuses the protected legacy ``data/app.db``. SQLite URI ``mode=rw``: it can never create a
+    Normal runtime. Refuses the protected legacy ``app/db/data/app.db``. SQLite URI ``mode=rw``: it can never create a
     database. Enables and verifies ``PRAGMA foreign_keys = ON``, checks
     ``PRAGMA user_version`` on **every** connection, and raises a typed
     error for an incompatible database.
@@ -17,7 +17,7 @@ Three factories, each with one job (master handover Section 8.7):
 
 ``get_initialization_connection()``
     The only creation path (``mode=rwc``). Requires an explicit path,
-    refuses the protected ``data/app.db``, refuses unsafe sidecar and
+    refuses the protected ``app/db/data/app.db``, refuses unsafe sidecar and
     journal states, and never opens a legacy database for changes.
     ``schema.create_schema`` then re-checks eligibility inside
     ``BEGIN IMMEDIATE`` before any DDL.
@@ -27,7 +27,7 @@ Nothing else in the project may call ``sqlite3.connect()``.
 Database path: ``APP_DB_PATH`` if set, otherwise
 ``<project-root>/data/app_d2.db``. A relative value resolves from the
 project root, never from the working directory. The legacy
-``data/app.db`` is protected: no factory opens it, and nothing migrates
+``app/db/data/app.db`` is protected: no factory opens it, and nothing migrates
 it. The default file is never created by normal startup; it is created
 only by the explicit seed command (``python -m app.db.seed_data``).
 
@@ -51,8 +51,8 @@ from app.db.errors import (
 )
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_DB_PATH = str(PROJECT_ROOT / "data" / "app_d2.db")
-PROTECTED_DB_PATH = str(PROJECT_ROOT / "data" / "app.db")
+DEFAULT_DB_PATH = str(PROJECT_ROOT / "app" / "db" / "data" / "app_d2.db")
+PROTECTED_DB_PATH = str(PROJECT_ROOT / "app" / "db" / "data" / "app.db")
 ENV_DB_PATH = "APP_DB_PATH"
 SCHEMA_VERSION = 1
 CONNECT_TIMEOUT_SECONDS = 5.0
@@ -282,7 +282,7 @@ def get_readonly_connection(
 def get_initialization_connection(db_path: str) -> sqlite3.Connection:
     """Open the only connection that may create a database.
 
-    The path is required and explicit. The protected ``data/app.db`` is
+    The path is required and explicit. The protected ``app/db/data/app.db`` is
     always refused. The parent directory must already exist, sidecar
     files must be absent, and an existing non-empty file must be a
     rollback-journal SQLite database. ``":memory:"`` is allowed for

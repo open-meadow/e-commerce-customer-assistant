@@ -50,7 +50,7 @@ def set_version(path: str, version: int) -> None:
 class TestResolvePath:
     def test_default_is_the_d2_file_under_project_root(self):
         assert resolve_db_path() == os.path.normpath(
-            str(PROJECT_ROOT / "data" / "app_d2.db")
+            str(PROJECT_ROOT / "app" / "db" / "data" / "app_d2.db")
         )
         assert os.path.isabs(DEFAULT_DB_PATH)
 
@@ -87,9 +87,9 @@ class TestResolvePath:
 
     def test_relative_env_path_resolves_from_project_root(self, monkeypatch, tmp_path):
         monkeypatch.chdir(tmp_path)
-        monkeypatch.setenv("APP_DB_PATH", os.path.join("data", "other.db"))
+        monkeypatch.setenv("APP_DB_PATH", os.path.join("app", "db", "data", "other.db"))
         assert resolve_db_path() == os.path.normpath(
-            str(PROJECT_ROOT / "data" / "other.db")
+            str(PROJECT_ROOT / "app" / "db" / "data" / "other.db")
         )
 
     def test_explicit_argument_beats_environment(self, monkeypatch, tmp_path):

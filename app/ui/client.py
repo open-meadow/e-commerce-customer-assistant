@@ -27,6 +27,13 @@ _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
+# Settings (APP_DB_PATH, UI_BACKEND, LLM_*) may live in a ``.env`` file at the project
+# root. Real environment variables win (override=False). Loaded here, at the UI entry
+# point, and not in the library modules, so tests never read a developer's .env.
+from dotenv import load_dotenv  # noqa: E402
+
+load_dotenv(_PROJECT_ROOT / ".env", override=False)
+
 BACKEND_ENV = "UI_BACKEND"
 _BACKENDS = ("real", "fake")
 

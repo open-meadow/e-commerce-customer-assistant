@@ -21,7 +21,7 @@ Data conventions
   fixed offsets from an injectable ``reference_time``; this module never
   calls ``datetime.now()``.
 - **Products:** every ``product_id`` is validated against the read-only
-  ``data/source/Products.json`` catalog. An unknown ID causes the seed
+  ``app/db/data/source/Products.json`` catalog. An unknown ID causes the seed
   operation to abort immediately with a ``ValueError`` before any rows
   are written.
 - **Atomicity:** the entire seed operation runs inside one explicit
@@ -51,7 +51,7 @@ from app.db.connection import ConnectionError_
 # Resolved at import time so that the module can be used from any working
 # directory. __file__ → .../app/db/seed_data.py → up two levels = project root.
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-_PRODUCTS_JSON_PATH = os.path.join(_PROJECT_ROOT, "data", "source", "Products.json")
+_PRODUCTS_JSON_PATH = os.path.join(_PROJECT_ROOT, "app", "db", "data", "source", "Products.json")
 
 # Default reference "now" value: the fixed approved baseline.
 # This is intentionally a constant string, not a call to datetime.now().
@@ -676,9 +676,9 @@ def main(argv=None) -> int:
     """Command line: create the schema in a NEW database and seed it.
 
     The target is ``--db-path`` or, when omitted, the same path the
-    application uses (``APP_DB_PATH``, default ``data/app_d2.db``). The
+    application uses (``APP_DB_PATH``, default ``app/db/data/app_d2.db``). The
     parent directory must already exist. The protected legacy
-    ``data/app.db``, any existing database and any unsafe file are
+    ``app/db/data/app.db``, any existing database and any unsafe file are
     refused before anything is opened or changed.
     """
     import argparse
@@ -693,8 +693,8 @@ def main(argv=None) -> int:
         description=(
             "Initialize and seed a NEW database. Without --db-path the "
             "application's configured path is used (APP_DB_PATH, default "
-            "data/app_d2.db). The parent directory must already exist. The "
-            "protected data/app.db and any existing database are refused."
+            "app/db/data/app_d2.db). The parent directory must already exist. The "
+            "protected app/db/data/app.db and any existing database are refused."
         ),
     )
     parser.add_argument("--db-path", default=None, help="path of the new database")
@@ -731,5 +731,11 @@ def main(argv=None) -> int:
 
 if __name__ == "__main__":
     import sys
+
+    # Command-line entry point only (not on import, so tests never read a developer's
+    # .env). Real environment variables win: override=False.
+    from dotenv import load_dotenv
+
+    load_dotenv(os.path.join(_PROJECT_ROOT, ".env"), override=False)
 
     sys.exit(main())

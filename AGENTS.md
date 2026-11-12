@@ -6,8 +6,8 @@ Capstone: text customer-support assistant. Synthetic data only. No real store, p
 
 Target: Streamlit chat for order, delivery, payment, return, refund, product, and policy questions. Current chat behavior is a local fake-backend demo, not a connected AI support assistant.
 
-- Planned: RAG over `data/source/FAQ.md` and `Policies.md` (policy source of truth).
-- Planned: product lookup from `data/source/Products.json` (read-only; not RAG; not a DB FK).
+- Planned: RAG over `app/db/data/source/FAQ.md` and `Policies.md` (policy source of truth).
+- Planned: product lookup from `app/db/data/source/Products.json` (read-only; not RAG; not a DB FK).
 - Database/repository operations exist, but the chat UI does not call them. The current fake backend performs no real order lookups, returns, ticket writes, or policy retrieval.
 - Simulated login (Streamlit session) is not production authentication. Any future identity must come from application context, never message or LLM text.
 - Out of MVP: marketplace, cart, checkout, real auth, real refunds/couriers, voice (stretch only).
@@ -16,7 +16,7 @@ Target: Streamlit chat for order, delivery, payment, return, refund, product, an
 
 Phase 0–1 docs approved. Phase 2 plan approved. Database Checkpoints 1–10 complete and merged to `master`. The D2 database contract (D3–D8) is **committed and pushed** on `rukum/db` as `7dfd2f0` (412 database tests, 7 files). The backend (A2–A5) is implemented in the working tree of `rukum/backend` (created from `7dfd2f0`, not pushed) and is **uncommitted**. **Current full-suite result: 939 passed** (`uv run python -m pytest tests -q`, 2026-11-11). The older 497 and 207 figures are obsolete.
 
-- **1** `app/db/connection.py` (rewritten for D2): three factories, `APP_DB_PATH`, default `data/app_d2.db`, `user_version` checks, typed errors; the legacy `data/app.db` is protected and never opened. `main.py` only prints the run command.
+- **1** `app/db/connection.py` (rewritten for D2): three factories, `APP_DB_PATH`, default `app/db/data/app_d2.db`, `user_version` checks, typed errors; the legacy `app/db/data/app.db` is protected and never opened. `main.py` only prints the run command.
 - **2** `app/db/schema.py`: `create_schema(connection)` creates the five tables. It does not open a connection.
 - **3** `tests/test_schema.py`.
 - **4** `app/db/seed_data.py`: deterministic seed, fixed baseline `2026-11-07T00:00:00Z`.
@@ -32,20 +32,20 @@ Phase 0–1 docs approved. Phase 2 plan approved. Database Checkpoints 1–10 co
 
 Do not treat these as existing. Do not start a checkpoint that has not been authorized.
 
-- **Committed and pushed (`rukum/db`, `7dfd2f0`):** the D2 database contract: three connection factories, `APP_DB_PATH` (default `data/app_d2.db`), `user_version = 1`, persisted `reason_category`, exact-text validation, canonical timestamps, eligibility outcomes, typed errors, health check, `list_customers_for_login`, the seed command and the rewritten database tests (including `tests/conftest.py`).
+- **Committed and pushed (`rukum/db`, `7dfd2f0`):** the D2 database contract: three connection factories, `APP_DB_PATH` (default `app/db/data/app_d2.db`), `user_version = 1`, persisted `reason_category`, exact-text validation, canonical timestamps, eligibility outcomes, typed errors, health check, `list_customers_for_login`, the seed command and the rewritten database tests (including `tests/conftest.py`).
 - **Uncommitted on `rukum/backend`:** the tool layer, session registry and pending actions, scope guard, issue lifecycle, ticket summaries with fallback, lexical RAG, the provider-agnostic LLM layer and `app.backend`, with their tests, plus three audit fixes (confirm-time return-window message, typed `cancel` while a ticket description is awaited, graceful handling of a missing product catalog or FAQ source). See `docs/03` Section 19 and `docs/04_frontend_handover.md`.
 - **Not verified:** the OpenAI-compatible and Anthropic adapters have never been run against a live service (no credentials). The rule-based LLM is a deterministic stand-in. RAG is lexical, not embeddings. Durable pending actions and idempotency are out of scope (single process, in-memory).
 - **Open for Person B:** `app/ui/streamlit_app.py` (stub, not connected), Docker, evaluation set, report, deck. Person B's unmerged branches use `DATABASE_PATH` and `get_connection(db_path)`; they must move to `APP_DB_PATH` and the seed command (see `docs/04_frontend_handover.md`).
-- **Current state:** branch `rukum/backend` (from `7dfd2f0`, not pushed). The backend code, its tests and the full-version documentation are uncommitted and not staged. `data/app.db` has not been opened or modified, and `data/app_d2.db` has not been created.
+- **Current state:** branch `rukum/backend` (from `7dfd2f0`, not pushed). The backend code, its tests and the full-version documentation are uncommitted and not staged. `app/db/data/app.db` has not been opened or modified, and `app/db/data/app_d2.db` has not been created.
 
 ## Constraints
 
 - This is a **uv** project. Run Python with `uv run`. Do not create a separate venv or use pip.
 - SQLite is Python’s standard-library `sqlite3` module (confirmed via `uv run`; library 3.50.4). It is not a `pyproject.toml` dependency. Do not `uv add` a SQLite package.
 - Five tables: `customers`, `orders`, `order_items`, `return_requests`, `support_tickets`. No payment or shipment tables. Design: `docs/01` §C.
-- Every connection via the three factories in `app/db/connection.py`. Never `sqlite3.connect()` elsewhere. `APP_DB_PATH` selects the database; only the initialization factory creates files and it refuses `data/app.db`.
+- Every connection via the three factories in `app/db/connection.py`. Never `sqlite3.connect()` elsewhere. `APP_DB_PATH` selects the database; only the initialization factory creates files and it refuses `app/db/data/app.db`.
 - **All database work happens on branch `rukum/db`** (remote `origin/rukum/db`, at `7dfd2f0`). Do not commit database work on `master`, and do not merge `rukum/db` into `master` without explicit authorization. Backend work happens on `rukum/backend`, created from `rukum/db` at `7dfd2f0` and not yet pushed.
-- Never open, read, seed, reset, migrate or delete `data/app.db`. It is a legacy pre-D2 database (`user_version` 0, never stamped) and is protected in code: no connection factory opens it. The application's default database is `data/app_d2.db` (override with `APP_DB_PATH`); do not create or seed it unless the Technical Lead asks. Initialization is an explicit, separately authorized operator operation (`python -m app.db.seed_data`); there is no migration engine (M2).
+- Never open, read, seed, reset, migrate or delete `app/db/data/app.db`. It is a legacy pre-D2 database (`user_version` 0, never stamped) and is protected in code: no connection factory opens it. The application's default database is `app/db/data/app_d2.db` (override with `APP_DB_PATH`); seed it with the seed command when needed (it is git-ignored). Initialization is an explicit, separately authorized operator operation (`python -m app.db.seed_data`); there is no migration engine (M2).
 - Money: INTEGER paise. Timestamps: TEXT ISO-8601 UTC.
 - `orders.status`: Processing, Packed, Shipped, Out for Delivery, Delivered, Cancelled, Returned (`FAQ.md` Q1.4).
 - Repository functions take `authenticated_customer_id` and filter in SQL. Composite FKs backstop consistency, not authorization.

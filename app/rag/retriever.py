@@ -2,8 +2,8 @@
 
 Design and honest limits
 ------------------------
-* Source documents: ``data/source/FAQ.md`` (one chunk per Q&A) and
-  ``data/source/Policies.md`` (one chunk per numbered section). They are
+* Source documents: ``app/db/data/source/FAQ.md`` (one chunk per Q&A) and
+  ``app/db/data/source/Policies.md`` (one chunk per numbered section). They are
   the source of truth for support rules and are never modified.
 * Retrieval is **lexical BM25 implemented in pure Python**. There are no
   embeddings and no vector database in this MVP. The ``KnowledgeBase``
@@ -30,7 +30,7 @@ from typing import Iterable, Optional
 
 from app.db.connection import PROJECT_ROOT
 
-SOURCE_DIR = PROJECT_ROOT / "data" / "source"
+SOURCE_DIR = PROJECT_ROOT / "app" / "db" / "data" / "source"
 
 
 class KnowledgeBaseError(Exception):

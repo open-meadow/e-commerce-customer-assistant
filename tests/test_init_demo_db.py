@@ -83,9 +83,9 @@ def test_help_includes_required_demo_window_warning(capsys):
 @pytest.mark.parametrize(
     "path",
     [
-        "data/app.db",
-        "data/./app.db",
-        "data/nested/../app.db",
+        "app/db/data/app.db",
+        "app/db/data/./app.db",
+        "app/db/data/nested/../app.db",
     ],
 )
 def test_real_database_path_and_aliases_are_rejected(path):
@@ -195,9 +195,9 @@ def test_cli_refuses_non_empty_database_without_changing_existing_data(tmp_path)
 @pytest.mark.parametrize(
     "db_path",
     [
-        str(PROJECT_ROOT / "data" / "app.db"),
-        "data/./app.db",
-        str(PROJECT_ROOT / "data" / "nested" / ".." / "app.db"),
+        str(PROJECT_ROOT / "app" / "db" / "data" / "app.db"),
+        "app/db/data/./app.db",
+        str(PROJECT_ROOT / "app" / "db" / "data" / "nested" / ".." / "app.db"),
     ],
 )
 def test_cli_refuses_real_database_path_before_connecting(db_path):

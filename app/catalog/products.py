@@ -17,7 +17,7 @@ from typing import Any, Optional
 
 from app.db.connection import PROJECT_ROOT
 
-PRODUCTS_JSON = PROJECT_ROOT / "data" / "source" / "Products.json"
+PRODUCTS_JSON = PROJECT_ROOT / "app" / "db" / "data" / "source" / "Products.json"
 _TOKEN_RE = re.compile(r"[a-z0-9]+")
 _STOP = frozenset({"a", "an", "the", "is", "are", "of", "for", "do", "does", "have",
                    "has", "it", "this", "that", "what", "which", "how", "much", "does",

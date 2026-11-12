@@ -22,7 +22,7 @@ htmlcov
 .DS_Store
 Thumbs.db
 *.log
-data/*.db
-data/*.db-shm
-data/*.db-wal
-data/generated/
+app/db/data/*.db
+app/db/data/*.db-shm
+app/db/data/*.db-wal
+app/db/data/generated/

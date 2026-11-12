@@ -7,7 +7,7 @@ P2-3  Typing ``cancel`` after the assistant offered a ticket, before the issue
 P2-4  A missing or invalid product catalog or FAQ/policy source must not break
       unrelated messages. Only the features that need the source say it is unavailable.
 
-All databases are temporary. The real ``data/source`` files are never modified: the
+All databases are temporary. The real ``app/db/data/source`` files are never modified: the
 resource tests point the loaders at temporary folders.
 """
 

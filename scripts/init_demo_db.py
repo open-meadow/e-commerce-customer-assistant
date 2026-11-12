@@ -59,10 +59,10 @@ def resolve_safe_db_path(value: str, *, project_root: Path | None = None) -> Pat
     if not candidate.is_absolute():
         candidate = root / candidate
     candidate = candidate.resolve()
-    protected_database = (root / "data" / "app.db").resolve()
+    protected_database = (root / "app" / "db" / "data" / "app.db").resolve()
     if candidate == protected_database:
         raise argparse.ArgumentTypeError(
-            "refusing to use the real project database at data/app.db"
+            "refusing to use the real project database at app/db/data/app.db"
         )
     return candidate
 
@@ -79,7 +79,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--db-path",
         required=True,
-        help="database file path (refuses the real project data/app.db)",
+        help="database file path (refuses the real project app/db/data/app.db)",
     )
     parser.add_argument(
         "--reference-time",

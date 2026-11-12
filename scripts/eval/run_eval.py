@@ -24,7 +24,7 @@ from app.ui.fake_backend import (
     start_session,
 )
 
-_DEFAULT_CASES = _PROJECT_ROOT / "data" / "eval" / "queries.csv"
+_DEFAULT_CASES = _PROJECT_ROOT / "app" / "db" / "data" / "eval" / "queries.csv"
 _FIELDS = (
     "id",
     "query",

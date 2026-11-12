@@ -24,14 +24,14 @@ flowchart LR
             Init["scripts/init_demo_db.py"] --> Connection["Connection factory"]
             Connection --> Schema["Schema and seed"]
             Connection --> Repository["Customer-scoped repository"]
-            Schema --> SQLite["SQLite database<br/>data/app.db by default"]
+            Schema --> SQLite["SQLite database<br/>app/db/data/app.db by default"]
             Repository --> SQLite
             DBTests["Database tests<br/>(temporary databases)"] -. "exercise separately" .-> Schema
             DBTests -. "exercise separately" .-> Repository
         end
 
         subgraph Eval["Demo-only evaluation"]
-            Cases["70 labeled synthetic cases<br/>data/eval/queries.csv"] --> Runner["scripts/eval/run_eval.py"]
+            Cases["70 labeled synthetic cases<br/>app/db/data/eval/queries.csv"] --> Runner["scripts/eval/run_eval.py"]
             Runner --> EvalFake["Fake backend<br/>fresh session per case"]
             EvalFake --> Report["JSON replies and labels<br/>quality / safety / tools: not assessed"]
             Logs["Sample conversations<br/>demo_only / not_assessed"]

@@ -1,4 +1,4 @@
-"""Read-only product catalog backed by ``data/source/Products.json``."""
+"""Read-only product catalog backed by ``app/db/data/source/Products.json``."""
 
 from app.catalog.products import (
     Catalog,

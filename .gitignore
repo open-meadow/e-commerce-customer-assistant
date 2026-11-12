@@ -17,12 +17,12 @@ env/
 .ipynb_checkpoints/
 
 # SQLite database
-data/*.db
-data/*.db-shm
-data/*.db-wal
+app/db/data/*.db
+app/db/data/*.db-shm
+app/db/data/*.db-wal
 
 # Generated data
-data/generated/*
+app/db/data/generated/*
 
 # Test and coverage
 .pytest_cache/
@@ -40,7 +40,7 @@ Thumbs.db
 # Streamlit agent skills (environment-specific symlinks)
 .agents/skills/developing-with-streamlit
 .claude/skills/developing-with-streamlit
-# Databases: never committed (data/app.db legacy, data/app_d2.db default, demo copies, sidecars)
+# Databases: never committed (app/db/data/app.db legacy, app/db/data/app_d2.db default, demo copies, sidecars)
 *.db
 *.db-journal
 *.db-shm

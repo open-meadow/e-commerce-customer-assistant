@@ -7,7 +7,7 @@ You build `app/ui`, Docker, the evaluation set, the report and the deck. You do 
 ## 1. Rules
 
 - Import only `app.backend` (and its types). Never import `app.db`, `sqlite3` or the orchestrator. Never read a database file directly.
-- Never open, seed or modify the legacy `data/app.db`. It is protected in code (no connection factory opens it).
+- Never open, seed or modify the legacy `app/db/data/app.db`. It is protected in code (no connection factory opens it).
 - Treat `ChatReply.text` as untrusted: render plain text, never HTML or markdown with raw HTML.
 - Never log, display, store or put in a URL the `ConversationState` value. It is a bearer credential. Keep it in `st.session_state` only.
 - Do not build your own confirmation by parsing text. Confirmation is a button that sends `ConfirmationDecision`.
@@ -22,13 +22,13 @@ uv sync
 
 ### The database variable
 
-The one canonical variable is **`APP_DB_PATH`** (not `DATABASE_PATH`, which no code reads). If it is not set, the application and the seed command both use `data/app_d2.db` under the project root. A relative value resolves from the project root, not from the working directory.
+The one canonical variable is **`APP_DB_PATH`** (not `DATABASE_PATH`, which no code reads). If it is not set, the application and the seed command both use `app/db/data/app_d2.db` under the project root. A relative value resolves from the project root, not from the working directory.
 
 Normal startup **never creates** a database. Until you initialize one, `check_backend().status` is `not_initialized` and the login list is empty.
 
 ### Initialize (explicit, run once)
 
-The parent directory must already exist; the file must not. The command creates the schema and the demo data in a new file, and refuses the legacy `data/app.db` and any existing database.
+The parent directory must already exist; the file must not. The command creates the schema and the demo data in a new file, and refuses the legacy `app/db/data/app.db` and any existing database.
 
 For a separate demo file:
 
@@ -40,7 +40,7 @@ mkdir demo
 uv run python -m app.db.seed_data --db-path demo/demo.db --reference-time 2026-11-12T00:00:00Z
 ```
 
-For the default location (`data/app_d2.db`, the same path the application uses), omit `--db-path`:
+For the default location (`app/db/data/app_d2.db`, the same path the application uses), omit `--db-path`:
 
 ```bash
 uv run python -m app.db.seed_data --reference-time 2026-11-12T00:00:00Z
@@ -71,8 +71,10 @@ Because the stub imports with a package-or-script fallback (`from .client ...` /
 Launch from the repository root with `python -m streamlit`, which puts the repository root on `sys.path` so that `import app.backend` works. (`app` is not an installed package, and the bare `streamlit run` command puts only the script's own folder on the path, so it can fail with `ModuleNotFoundError: No module named 'app'`.)
 
 ```bash
-APP_DB_PATH=demo/demo.db uv run python -m streamlit run app/ui/streamlit_app.py
+uv run python -m streamlit run app/ui/streamlit_app.py
 ```
+
+(`APP_DB_PATH` and the other settings are read from the git-ignored `.env` at the project root; see `.env.example`.)
 
 PowerShell:
 
@@ -128,7 +130,7 @@ options = list_login_options()
 
 There is no `.env.example` in the repository; the table above is the configuration reference. Do not commit real keys.
 
-For Docker: set `APP_DB_PATH` to a file on a mounted volume (not `DATABASE_PATH`). The image must also contain `data/source/` (`FAQ.md`, `Policies.md`, `Products.json`); retrieval and the catalog read them at runtime. Run the seed command as a separate one-off step, never on container start. A health check can call `check_backend()` and expect `ready`.
+For Docker: set `APP_DB_PATH` to a file on a mounted volume (not `DATABASE_PATH`). The image must also contain `app/db/data/source/` (`FAQ.md`, `Policies.md`, `Products.json`); retrieval and the catalog read them at runtime. Run the seed command as a separate one-off step, never on container start. A health check can call `check_backend()` and expect `ready`.
 
 `rule_based` needs no key and no network. It is a deterministic stand-in for a language model: it understands a fixed set of phrasings (order IDs like `ORD1001`, "return ... IT101", "my tickets", "refund", product words). The OpenAI-compatible and Anthropic adapters have only been tested against a mocked transport (`tests/test_providers.py`); **no live provider call has ever been made (unverified)**.
 
@@ -224,7 +226,7 @@ Integration notes from the backend audit:
 3. Walk the C101 flow: "Where is my order ORD1001?", "I want to return item IT101 from order ORD1001 because I changed my mind", pick "Another reason", Confirm. Then ask "show my returns".
 4. Try cross-customer access (`ORD1003` as C101), an out-of-scope message, a typed "cancel" during a choice, and an expired confirmation (wait ten minutes).
 5. Evaluation runner: call `handle_message` directly; no UI needed. Each case should use a fresh `start_session`. Seeded customers are C101 to C106; see `app/db/seed_data.py` for orders.
-6. Docker: Python 3.13, `uv sync --frozen`, copy `app/`, `data/source/`, `main.py` and `pyproject.toml`; set `APP_DB_PATH` to a mounted file; seed once as a separate step.
+6. Docker: Python 3.13, `uv sync --frozen`, copy `app/`, `app/db/data/source/`, `main.py` and `pyproject.toml`; set `APP_DB_PATH` to a mounted file; seed once as a separate step.
 
 ## 8. Error states summary
 
@@ -247,4 +249,4 @@ Integration notes from the backend audit:
 - Login is simulated (pick a customer). There is no authentication.
 - No durable pending actions or idempotency; a crash between a write and its reply can leave an ambiguous result, which the backend reports honestly and does not retry.
 - Single process; no multi-worker deployment.
-- Policy and catalog text is read from `data/source/` at first use and cached for the life of the process.
+- Policy and catalog text is read from `app/db/data/source/` at first use and cached for the life of the process.

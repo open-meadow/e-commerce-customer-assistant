@@ -1,7 +1,7 @@
 """app/ui/client.py: backend selection and the real backend through the adapter.
 
 All databases are temporary (``temp_db`` sets ``APP_DB_PATH``); no test opens
-``data/app.db`` or ``data/app_d2.db``, and no provider is ever configured.
+``app/db/data/app.db`` or ``app/db/data/app_d2.db``, and no provider is ever configured.
 """
 
 import os

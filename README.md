@@ -166,25 +166,32 @@ Each checkpoint must be reviewed and tested before moving to the next.
 
 ## 10. Running the Project
 
-From the repository root, create a demo database once (the parent folder must
-exist; the command refuses to overwrite an existing file). Pass a reference time
-close to the demo day, because return windows are measured from it:
+Settings live in a git-ignored `.env` at the repository root; copy the template
+once (the app and the seed command load it with python-dotenv, and real
+environment variables override it):
 
 ```bash
-mkdir demo
-uv run python -m app.db.seed_data --db-path demo/demo.db --reference-time 2026-11-12T00:00:00Z
+cp .env.example .env
 ```
 
-Then start the UI, pointing it at that file:
+The database is `app/db/data/app_d2.db` (`APP_DB_PATH` in `.env`). Create it
+once; the command refuses to overwrite an existing file, so to reseed delete the
+file first. Pass a reference time close to the demo day, because return windows
+are measured from it:
 
 ```bash
-APP_DB_PATH=demo/demo.db uv run python -m streamlit run app/ui/streamlit_app.py
+uv run python -m app.db.seed_data --reference-time 2026-11-12T00:00:00Z
 ```
 
-On Windows PowerShell set `$env:APP_DB_PATH = "demo/demo.db"` first. If the
-database is missing, or a language-model provider is requested but not
+Then start the UI:
+
+```bash
+uv run python -m streamlit run app/ui/streamlit_app.py
+```
+
+If the database is missing, or a language-model provider is requested but not
 configured, the page shows a message instead of the login. To run without a
-database, set `UI_BACKEND=fake`.
+database, set `UI_BACKEND=fake` in `.env`.
 
 Open the local URL printed by Streamlit, then choose a customer in the
 sidebar. Use **New chat** to start another conversation or select a listed chat
@@ -230,7 +237,7 @@ It reads the synthetic case CSV, starts a fresh fake session per case, and
 prints JSON replies and expected labels. It does not score answer accuracy,
 safety, hallucinations, or tool-call correctness: the fake backend has no
 real tools or observable tool-call trace. Sample outputs are in
-`data/eval/logs/sample_conversations.jsonl` and are explicitly marked
+`app/db/data/eval/logs/sample_conversations.jsonl` and are explicitly marked
 `demo_only` / `not_assessed`.
 
 ## Security and scope limitations

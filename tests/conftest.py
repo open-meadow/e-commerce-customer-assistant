@@ -4,8 +4,8 @@ Rules every test follows:
 
 * Databases are built in pytest's ``tmp_path`` (or ``:memory:``) with the
   real ``get_initialization_connection``, ``create_schema`` and
-  ``seed_database``. Neither the protected legacy ``data/app.db`` nor the
-  default ``data/app_d2.db`` is ever used or created.
+  ``seed_database``. Neither the protected legacy ``app/db/data/app.db`` nor the
+  default ``app/db/data/app_d2.db`` is ever used or created.
 * No test may launch a subprocess or call a function with the real
   protected path. Protected-path behavior is tested with the
   ``protected_sentinel`` fixture (a temporary stand-in file and a mocked
@@ -49,8 +49,8 @@ def _norm(path: str) -> str:
 
 @pytest.fixture(autouse=True)
 def _never_open_real_database(monkeypatch):
-    """Fail if anything tries to open the legacy ``data/app.db`` or the
-    default ``data/app_d2.db`` (paths are compared only, never opened)."""
+    """Fail if anything tries to open the legacy ``app/db/data/app.db`` or the
+    default ``app/db/data/app_d2.db`` (paths are compared only, never opened)."""
     protected = {_norm(PROTECTED_DB_PATH), _norm(DEFAULT_DB_PATH)}
     real_connect = sqlite3.connect
 

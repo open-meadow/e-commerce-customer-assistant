@@ -192,8 +192,8 @@ def test_run_cases_reports_unavailable_answer_tool_hallucination_and_safety_scor
 
 
 def test_sample_logs_are_linked_to_real_demo_runner_output():
-    cases_path = Path("data/eval/queries.csv")
-    logs_path = Path("data/eval/logs/sample_conversations.jsonl")
+    cases_path = Path("app/db/data/eval/queries.csv")
+    logs_path = Path("app/db/data/eval/logs/sample_conversations.jsonl")
     cases = {case["id"]: case for case in run_eval.load_cases(cases_path)}
     report = run_eval.run_cases(cases_path)
     results = {result["case_id"]: result for result in report["results"]}
