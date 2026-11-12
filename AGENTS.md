@@ -15,7 +15,7 @@ Target: Streamlit chat for order, delivery, payment, return, refund, product, an
 
 ## Built
 
-Phase 0–1 docs approved. Phase 2 plan approved. Database Checkpoints 1–10 complete. The D2 database contract (D3–D8), the backend (A2–A5), Person B's UI/Docker/evaluation/report work, the UI wiring to the real backend and the OpenAI Responses adapter (`f25b7c4`, merge `967cfe9`, pushed) are all merged on `master`. **Local `master` is two commits ahead of `origin/master`:** A3 `66c60fe` (real-backend evaluation runner) and A4 `746b9b1` (documentation refresh). Neither has been pushed. **Latest full-suite result: 1172 passed** (offline, 2026-11-12; 59 passed for the targeted evaluation tests). Older figures (497, 207, 939 and others) are obsolete.
+Phase 0–1 docs approved. Phase 2 plan approved. Database Checkpoints 1–10 complete. The D2 database contract (D3–D8), the backend (A2–A5), Person B's UI/Docker/evaluation/report work, the UI wiring to the real backend and the OpenAI Responses adapter (`f25b7c4`, merge `967cfe9`, pushed) are all merged on `master`. **Local `master` is four commits ahead of `origin/master`:** A3 `66c60fe` (real-backend evaluation runner), A4 `746b9b1` (documentation refresh), A5 `e8ab746` (verification script and demo runbook) and A6 (clean-clone acceptance and status refresh, the commit on top of `e8ab746`). All four are committed locally; none has been pushed. **Latest full-suite result: 1181 passed** (A6 clean-clone acceptance of `e8ab746`, offline, 2026-11-12, exit code 0; `scripts/verify_real_backend.py` 28/28 passed in the same clone). Older figures (497, 207, 939 and others) are obsolete.
 
 - **1** `app/db/connection.py` (rewritten for D2): three factories, `APP_DB_PATH`, default `app/db/data/app_d2.db`, `user_version` checks, typed errors; the legacy `app/db/data/app.db` is protected and never opened. `main.py` only prints the run command.
 - **2** `app/db/schema.py`: `create_schema(connection)` creates the five tables. It does not open a connection.
@@ -26,9 +26,10 @@ Phase 0–1 docs approved. Phase 2 plan approved. Database Checkpoints 1–10 co
 - **7A** Write-function contracts approved, committed, and pushed (`8ce2d43`): `docs/01` §F–§H, `docs/02` §4–§5.
 - **7** `create_return_request` and `create_support_ticket` in `app/db/repository.py` (`6a2c11a`).
 - **8** `tests/test_returns.py` and `tests/test_tickets.py` (`0f27739`).
-- **9** Full-suite verification (the 497-test suite was replaced by the D2 suite; current full-suite result 1172 passed, see above). **10** Read-only repository inspection.
+- **9** Full-suite verification (the 497-test suite was replaced by the D2 suite; current full-suite result 1181 passed, see above). **10** Read-only repository inspection.
 - **11A** `docs/03_backend_architecture.md` Revision 3.2 is the approved architecture baseline; the backend it describes is now implemented and merged.
 - **Evaluation (A3, `66c60fe`, local):** `scripts/eval/real_eval.py` and `tests/test_real_eval.py`. See "Evaluation" below.
+- **Demo and verification (A5, `e8ab746`, local):** `scripts/verify_real_backend.py` (28 offline business-behaviour checks on a fresh temporary database, `RuleBasedLLM` only; run `uv run python scripts/verify_real_backend.py`), `tests/test_verify_real_backend.py` and the runbook `docs/06_demo_runbook.md`. **A6 clean-clone acceptance** (local clone of `e8ab746`; full suite 1181 passed, verification script 28/28, fake-backend Streamlit smoke test on loopback with a temporary `APP_DB_PATH`, all offline) is recorded in `PROJECT_STATUS.md`. It does not cover the real-backend UI path or any language model.
 
 ## Not built, not verified, or pending
 
@@ -37,7 +38,7 @@ Do not treat these as existing. Do not start a checkpoint that has not been auth
 - **Not verified live:** the OpenAI Responses and Anthropic adapters are tested only with a mocked transport (`tests/test_providers.py`). One guarded one-request OpenAI probe is reported to have succeeded (technical lead); it is not an application, tool-calling or multi-turn evaluation. **No full live evaluation has been done, and none may be run without explicit authorization.**
 - **Not a language model:** `RuleBasedLLM`. Offline evaluation results describe it, not a model.
 - **Out of scope by design:** embeddings, durable pending actions and idempotency (single process, in-memory), real authentication, voice.
-- **Pending:** A5 demo runbook, A6 final acceptance, Person B's report/diagram/README/deck refresh for the real backend, Docker from a clean clone (the image still runs the fake UI), publishing `66c60fe`, and path corrections in `docs/01` to `docs/03`.
+- **Pending:** review of Person B's work, Person B's report/diagram/README/deck refresh for the real backend, Docker from a clean clone (the image still runs the fake UI; not run in A6), publishing the four local commits (A3, A4, A5, A6), and path corrections in `docs/01` to `docs/03`. **A real-backend UI smoke test in a clean clone remains outstanding** (the A6 Streamlit smoke test passed on the fake backend only). Full live application and tool-calling evaluation with a real provider remains outstanding and needs explicit authorization; everything measured so far is offline (`RuleBasedLLM`).
 - **Known assistant gaps (not fixed):** Q034 cancel pattern, Q070 clarification, and the placeholder `support@example.com` in the source documents repeated in replies. See `PROJECT_STATUS.md`.
 
 ## Evaluation

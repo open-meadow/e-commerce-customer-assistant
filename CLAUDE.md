@@ -6,7 +6,7 @@ Capstone: a text customer-support assistant. A modular Python monolith: Streamli
 
 ## Where the code stands
 
-Everything is merged on `master`: Person A's database layer and backend, Person B's UI, Docker, evaluation and report work, the UI wired to the real backend (`app/ui/client.py`; `UI_BACKEND=fake` still selects the canned `app/ui/fake_backend.py`) and the OpenAI Responses API adapter (`f25b7c4`, merge `967cfe9`, pushed). **Local `master` is two commits ahead of `origin/master`:** A3 `66c60fe` (the real-backend evaluation runner) and A4 `746b9b1` (the documentation refresh). Neither has been pushed. Verify with `git status -sb`.
+Everything is merged on `master`: Person A's database layer and backend, Person B's UI, Docker, evaluation and report work, the UI wired to the real backend (`app/ui/client.py`; `UI_BACKEND=fake` still selects the canned `app/ui/fake_backend.py`) and the OpenAI Responses API adapter (`f25b7c4`, merge `967cfe9`, pushed). **Local `master` is four commits ahead of `origin/master`:** A3 `66c60fe` (the real-backend evaluation runner), A4 `746b9b1` (the documentation refresh), A5 `e8ab746` (`scripts/verify_real_backend.py`, its tests and the demo runbook `docs/06_demo_runbook.md`) and A6 (the clean-clone acceptance and status refresh, the commit on top of `e8ab746`). All four are committed locally; none has been pushed. Verify with `git status -sb`.
 
 The default assistant is the offline `RuleBasedLLM` (safe demo path, no key, no network). A real provider has been exercised only by one guarded one-request probe (reported by the technical lead); full live application and tool-calling evaluation has **not** been done. Docker still runs the fake-backend UI and does not use the database. The fake-backend eval runner (`run_eval.py`) measures nothing; the real-backend runner (`real_eval.py`) measures mechanical checks only (see "Evaluation").
 
@@ -35,6 +35,12 @@ uv run python scripts/eval/run_eval.py
 ```bash
 uv run python scripts/eval/real_eval.py --output <path>.json
 ```
+
+```bash
+uv run python scripts/verify_real_backend.py
+```
+
+`scripts/verify_real_backend.py` runs 28 offline business-behaviour checks on a fresh temporary database with `RuleBasedLLM` only (exit 0 when all pass). It never reads `.env` and refuses the protected databases. `docs/06_demo_runbook.md` is the demo runbook (modes, PowerShell commands, fallback plan).
 
 ```bash
 docker compose up --build
@@ -110,7 +116,7 @@ Two runners read the same 70-case file `app/db/data/eval/queries.csv` (columns `
 
 ## Tests
 
-Latest measured (2026-11-12, offline): `uv run --offline --no-sync python -m pytest tests -q -p net_guard_plugin` gave **1172 passed**, nothing failed or skipped; the targeted run `tests/test_real_eval.py tests/test_eval_runner.py` gave **59 passed**. `net_guard_plugin` is a scratch plugin outside the repository that counts external network attempts (0); the documented command is `uv run python -m pytest tests -q`. Earlier counts in older notes (939, 990, 1023, 1028, 1119, 1143) are historical.
+Latest measured (A6 clean-clone acceptance, 2026-11-12, offline): `python -m pytest tests -q -p net_guard_plugin` in a local clone of `master` at `e8ab746` gave **1181 passed** in 42.52 s, exit code 0, nothing failed or skipped, and `python scripts/verify_real_backend.py` in the same clone gave **28/28 checks passed**. A fake-backend Streamlit smoke test on loopback (`UI_BACKEND=fake`, a temporary `APP_DB_PATH`) returned health `ok` and the demo login page; it does not cover the real-backend UI or any language model. `net_guard_plugin` is a scratch plugin outside the repository that counts external network attempts (0); the documented command is `uv run python -m pytest tests -q`. The A3 targeted run `tests/test_real_eval.py tests/test_eval_runner.py` gave **59 passed** (not re-run in A6). Earlier counts in older notes (939, 990, 1023, 1028, 1119, 1143, 1172) are historical. All of this is offline (`RuleBasedLLM`). Still outstanding: a real-backend UI smoke test in a clean clone (the A6 smoke test passed on the fake backend only) and any full live-provider application evaluation (none has been done).
 
 - `tests/` root: database tests (`test_authorization`, `test_returns`, `test_schema`, `test_tickets`, `test_connection`, `test_clock_validation`, `test_seed`) and backend tests (`test_backend*`, `test_choice_expiry`, `test_components`, `test_issues`, `test_providers`, `test_retrieval*`, `test_return_reason`).
 - `tests/ui/` covers the fake backend, the real-backend client and the session helpers; `tests/test_eval_runner.py` covers the fake runner; `tests/test_real_eval.py` covers the real-backend runner (scoring, environment cleanup on failure, live-call gating, provenance and deliberately bad models); `tests/test_init_demo_db.py` covers `scripts/init_demo_db.py`.

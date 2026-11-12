@@ -10,7 +10,7 @@ This file is a snapshot. Verify against files and Git rather than trusting any s
 
 - Branch `master`, working tree clean when this refresh began.
 - `origin/master` is at `967cfe9` (the merge of `feature/openai-responses-adapter`, which carries the adapter commit `f25b7c4`). Both were pushed on 2026-11-12.
-- **Local `master` is two commits ahead of `origin/master`:** `66c60fe` `feat(eval): add real-backend evaluation runner` (A3) and the A4 documentation refresh (`docs: refresh project status and evaluation guidance`). Both are committed locally. **Neither A3 nor A4 has been pushed.**
+- **Local `master` is four commits ahead of `origin/master`:** A3 `66c60fe` `feat(eval): add real-backend evaluation runner`, A4 `746b9b1` `docs: refresh project status and evaluation guidance`, A5 `e8ab746` `feat(demo): add real-backend verification and demo runbook`, and A6, the clean-clone acceptance and status refresh (this update to `PROJECT_STATUS.md`, `AGENTS.md` and `CLAUDE.md`). All four are committed locally. **None of A3, A4, A5 or A6 has been pushed.** (This describes the state once the A6 refresh is committed; its commit is the one on top of `e8ab746`.)
 - Every other local and remote feature branch (`rukum/db`, `rukum/backend`, `wire-ui-backend`, `feature/openai-responses-adapter`) is an ancestor of `master`. Person B's `rohan/*` branches still exist on the remote and are stale.
 
 ## Scope decision (confirmed by student)
@@ -35,16 +35,25 @@ This file is a snapshot. Verify against files and Git rather than trusting any s
 - `scripts/eval/run_eval.py`: fake UI backend only; every score is `not_assessed`.
 - `scripts/eval/real_eval.py` (A3, `66c60fe`): runs the real `app.backend.Backend` on a temporary seeded database with 70 cases and 5 multi-turn scenarios, offline with `RuleBasedLLM` by default.
 
+**Demo and scripted verification (A5, `e8ab746`).** `scripts/verify_real_backend.py` runs 28 business-behaviour checks (customer scoping, return eligibility and rejection, explicit confirmation, exact reason, duplicate protection, ticket flow, customer-scoped retrieval, final database state) against a fresh temporary database with `RuleBasedLLM` only, refuses to open the protected databases and requires zero network attempts. `tests/test_verify_real_backend.py` tests the script (9 tests). `docs/06_demo_runbook.md` is the demo runbook: modes (real backend on a demo database, fake UI backend as the safest fallback, Docker), PowerShell commands, the demo conversation, expected output, cleanup, fallback plan and what is simulated versus implemented.
+
 ## Latest measured results (2026-11-12)
 
 Commands were run offline (`--offline --no-sync`); no live calls and no database other than temporary ones.
 
 | Run | Command | Result |
 |---|---|---|
-| Targeted | `uv run --offline --no-sync python -m pytest tests/test_real_eval.py tests/test_eval_runner.py -q` | **59 passed** (53 real-runner tests, 6 fake-runner tests) |
-| Full suite | `uv run --offline --no-sync python -m pytest tests -q -p net_guard_plugin` | **1172 passed**, 0 failed, 0 skipped; the audit plugin counted 0 external network attempts (it allowed 26 loopback connections, asyncio's Windows self-pipe) |
+| Targeted (A3, not re-run in A6) | `uv run --offline --no-sync python -m pytest tests/test_real_eval.py tests/test_eval_runner.py -q` | **59 passed** (53 real-runner tests, 6 fake-runner tests) |
+| **Full suite, clean clone (A6)** | `python -m pytest tests -q -p net_guard_plugin` in a clone of local `master` at `e8ab746` | **1181 passed** in 42.52 s (66 s wall-clock), exit code 0, nothing failed or skipped; the audit plugin counted 0 external network attempts (it allowed 26 loopback connections, asyncio's Windows self-pipe) |
 
-`net_guard_plugin` is a scratch audit plugin kept outside the repository; the documented command is `uv run python -m pytest tests -q`. Earlier figures (939, 1023, 1028, 1119, 1143) are historical.
+`net_guard_plugin` is a scratch audit plugin kept outside the repository; the documented command is `uv run python -m pytest tests -q`. Earlier figures (939, 1023, 1028, 1119, 1143 and 1172) are historical; 1181 is the 1172 measured after A3/A4 plus the 9 tests added in A5.
+
+**A6 clean-clone acceptance (2026-11-12, on `e8ab746`).**
+- **Clone:** `git clone` of the **local** `master` into a temporary folder (no fetch, no remote contact); the clone HEAD equalled the source HEAD `e8ab74645e4f8a8dc3f77628f6a605b759e3584a`, and the source tree was clean. No `.env`, `.venv`, database file, ignored file or user data was copied (the clone held 0 `*.db` files before and after). The existing project interpreter was reused (Python 3.13.9, pytest 9.2.0, streamlit 1.67.0); nothing was installed or downloaded.
+- **Backend verification:** `python scripts/verify_real_backend.py` in the clone gave **RESULT: PASS (28/28 checks passed)**, exit code 0: `RuleBasedLLM` only, zero network attempts, only its own temporary database opened, no temporary path in the output, no temporary directory left behind.
+- **Streamlit smoke test (fake backend only):** `UI_BACKEND=fake`, `APP_DB_PATH` pointing at a temporary folder outside the project database directory (no file was created), bound to `127.0.0.1` on a free local port, headless, usage statistics off. `/_stcore/health` returned `200 ok`, `GET /` returned `200` (7,863 bytes), and the page showed the demo login ("Please choose a customer in the sidebar to begin"). The listener was loopback-only and the process had no non-loopback connection. Only the processes started for the test were stopped. This smoke test does **not** cover the real-backend UI path or any language model.
+- **Safety:** the protected databases in the source repository kept the same size and modification time before and after (they were not opened); the clone's copies of those paths did not exist and were never created. All clone and temporary resources were removed.
+- **Not done in A6:** nothing was pushed; the review of Person B's work was not part of this acceptance run; Docker was not run.
 
 **A3 offline results (`RuleBasedLLM`, 70 cases).** These measure a deterministic keyword stand-in against mechanical rules. They are **not live-provider results and not response-quality results.**
 
@@ -69,9 +78,10 @@ All 5 multi-turn scenarios pass. No case wrote without confirmation. Semantic an
 ## Remaining work
 
 - **Live evaluation (A1, remainder):** run the real backend with a real provider through `real_eval.py --llm env --allow-live`, only after explicit authorization, and review replies by hand. Nothing has been verified about real-model tool selection or answer quality.
-- **A5:** demo runbook (reseed steps, phrasing cheat-sheet, the scripted verification kept as a script).
-- **A6:** final acceptance from a clean clone and review of Person B's work.
-- **Publish:** push the two local commits (A3 `66c60fe` and the A4 documentation commit) when approved. Neither has been pushed.
+- **A5 (done, `e8ab746`):** `scripts/verify_real_backend.py` and `docs/06_demo_runbook.md`.
+- **A6 (clean-clone acceptance done, see above):** review of Person B's work remains.
+- **Real-backend UI smoke test in a clean clone (outstanding):** the A6 Streamlit smoke test used `UI_BACKEND=fake` and passed; a smoke test of the UI on the **real backend** (a demo database, `RuleBasedLLM`) in a clean clone has **not** been completed. The earlier 7 of 7 browser checks on the real backend were run before this acceptance and are historical.
+- **Publish:** push the four local commits (A3 `66c60fe`, A4 `746b9b1`, A5 `e8ab746` and the A6 clean-clone acceptance and status refresh) when approved. None has been pushed.
 - **Person B (`docs/05_handover_person_b.md`):** report, diagram, README and deck still describe the fake backend; Docker from a clean clone and a fake-versus-real decision; evaluation write-up; rehearsal; consistency pass.
 - **Stale remote branches:** `rohan/*` and the already-merged feature branches; decide whether to delete.
 - **Path and content corrections in `docs/01` to `docs/03`:** listed for approval, not made (see the A4 review notes).
@@ -99,4 +109,4 @@ Recorded in `docs/01_database_design.md` Section L. Not re-verified in this refr
 - Phase 0 discovery (`docs/00`), Phase 1 database design (`docs/01`) and Phase 2 implementation plan (`docs/02`) were approved. Database checkpoints 1 to 10 and the D2 contract (D3 to D8) were completed and merged, commit `7dfd2f0` among them.
 - The backend (tools, sessions, scope guard, issue lifecycle, ticket summaries, BM25 retrieval, LLM layer, `app.backend`) was implemented on `rukum/backend`; Person B's UI, Docker, evaluation and report work were merged with it (merge commit `3b68b12`).
 - The UI was wired to the real backend on `wire-ui-backend` (plan: `docs/plans/ui_real_backend_plan.md`), data moved to `app/db/data/`, `.env` loading added, Docker configuration cleaned.
-- 2026-11-12: OpenAI Responses adapter (`f25b7c4`), its merge (`967cfe9`), real-backend evaluation runner (`66c60fe`).
+- 2026-11-12: OpenAI Responses adapter (`f25b7c4`), its merge (`967cfe9`), real-backend evaluation runner (`66c60fe`), documentation refresh (`746b9b1`), verification script and demo runbook (`e8ab746`), clean-clone acceptance (A6).
