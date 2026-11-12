@@ -838,7 +838,7 @@ The authoritative contract is `docs/01` Section I, D2 amendment. This section st
 - **Versions (`PRAGMA user_version`):** 0 is uninitialized when there are no tables and legacy or unknown when tables exist; 1 is the current D2 schema; greater than 1 is a future schema and fails closed. Legacy databases were never stamped, so they are "legacy pre-D2" at `user_version = 0`. New schema creation stamps 1 in the same transaction.
 - **Fresh database only (M2).** There is no legacy migration in the MVP. A legacy database is rejected and preserved unchanged, and a missing or empty database is created only through the controlled initialization factory.
 - **Three factories in `app/db/connection.py`:** `get_connection()` (`mode=rw`, never creates, verifies foreign keys, checks `user_version` on every connection), `get_readonly_connection()` (`mode=ro`, `query_only`, health only) and `get_initialization_connection()` (`mode=rwc`, the only creation path). Normal and read-only connections never initialize a database.
-- **Path:** `APP_DB_PATH`; default `<project-root>/data/app_d2.db` (the legacy `data/app.db` is protected: no factory opens it and nothing migrates it); absolute values as given; relative values from the project root; tests supply temporary paths. The SQLite lock-wait timeout is 5.0 seconds and bounds lock waiting only, consistent with Section 8.4.
+- **Path:** `APP_DB_PATH`; default `<project-root>/app/db/data/app_d2.db` (the legacy `app/db/data/app.db` is protected: no factory opens it and nothing migrates it); absolute values as given; relative values from the project root; tests supply temporary paths. The SQLite lock-wait timeout is 5.0 seconds and bounds lock waiting only, consistent with Section 8.4.
 - **Health:** unchanged in approach from Revision 3.2 (Section 9.4) with the statuses in 9.4.5. A request that reaches a normal connection to an incompatible or missing database fails closed with a typed exception, which the backend maps to `unavailable` for reads and to a safe failure for writes. Nothing is created, migrated or altered.
 
 ---
@@ -919,7 +919,7 @@ Proposed durations are marked **[Proposed]**.
 ## 12. Product lookup, money and presentation
 
 ### 12.1 Product catalog (`app/catalog`, proposed)
-- Loads `data/source/Products.json` once, validates it (unique `id`, required fields, positive integer `price_inr`), and exposes it read-only. It never edits the file.
+- Loads `app/db/data/source/Products.json` once, validates it (unique `id`, required fields, positive integer `price_inr`), and exposes it read-only. It never edits the file.
 - `get_product(product_id) -> ProductView | None`.
 - `search_products(query, limit) -> list[ProductView]`: deterministic matching over name, category and description tokens. No LLM, no embeddings.
 - `ProductView`: `product_id`, `name`, `category`, `price_inr`, `description`, `specs`, `stock_status`.
@@ -1132,7 +1132,7 @@ The reads' raising behavior is deliberately not changed here. The tool layer is 
 
 ## 16. Testing strategy for later implementation checkpoints
 
-All tests use temporary databases, never `data/app.db` or the default `data/app_d2.db`. An autouse guard in `tests/conftest.py` fails any test that opens either path. Protected-path behavior is tested with a temporary sentinel file and a mocked low-level opener (`protected_sentinel`); no test launches the seed command or any subprocess with a real protected path. No test calls an LLM. The scope guard tests are in Section 13.7.
+All tests use temporary databases, never `app/db/data/app.db` or the default `app/db/data/app_d2.db`. An autouse guard in `tests/conftest.py` fails any test that opens either path. Protected-path behavior is tested with a temporary sentinel file and a mocked low-level opener (`protected_sentinel`); no test launches the seed command or any subprocess with a real protected path. No test calls an LLM. The scope guard tests are in Section 13.7.
 
 - **Eligibility parity:** for a matrix of states, `check_return_eligibility` returns `eligible` exactly when `create_return_request` on an identical fresh database returns `created`, and otherwise reports the same ineligible outcome, including the status-first precedence and inclusive boundaries. `reason_category` is echoed in every check result, and `order_status` appears only for an owned order.
 - **Prechecks read-only:** the check never changes any table, including on failure paths.
