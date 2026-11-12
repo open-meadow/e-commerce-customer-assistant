@@ -1,20 +1,21 @@
 # Agent guide
 
-Capstone: text customer-support assistant. Synthetic data only. No real store, payments, or shipping. Deadline ~2026-11-13. `docs/01` and `docs/02` are canonical for database design and checkpoint authorization; `.claude/plans/rest-plan.md` tracks delivery tasks. See `PROJECT_STATUS.md` for the current snapshot and the documented discrepancy between the checkpoint 7–9 status in `docs/02` and files present in this checkout. Do not silently resolve it.
+Capstone: text customer-support assistant. Synthetic data only. No real store, payments, or shipping. Deadline ~2026-11-13. `docs/01` and `docs/02` are canonical for database design and checkpoint authorization; `.claude/plans/rest-plan.md` tracks delivery tasks. See `PROJECT_STATUS.md` for the current snapshot (refreshed 2026-11-12). `docs/01` to `docs/03` still carry some pre-merge path and status wording; report such conflicts, do not silently resolve them.
 
 ## Aim
 
-Target: Streamlit chat for order, delivery, payment, return, refund, product, and policy questions. Current chat behavior is a local fake-backend demo, not a connected AI support assistant.
+Target: Streamlit chat for order, delivery, payment, return, refund, product, and policy questions, as a **modular Python monolith**: Streamlit UI, an in-process backend, and SQLite.
 
-- Planned: RAG over `app/db/data/source/FAQ.md` and `Policies.md` (policy source of truth).
-- Planned: product lookup from `app/db/data/source/Products.json` (read-only; not RAG; not a DB FK).
-- Database/repository operations exist, but the chat UI does not call them. The current fake backend performs no real order lookups, returns, ticket writes, or policy retrieval.
-- Simulated login (Streamlit session) is not production authentication. Any future identity must come from application context, never message or LLM text.
+- The UI talks to the real backend by default (`UI_BACKEND=real`); `UI_BACKEND=fake` keeps a canned demo. Docker still runs the fake-backend UI.
+- The default assistant is the offline `RuleBasedLLM`, a deterministic keyword stand-in and **not a language model**. It is the safe offline demo path (no key, no network). A configurable provider layer selects it, the OpenAI Responses API or Anthropic through `LLM_PROVIDER`, `LLM_MODEL` and a key variable. A misconfigured real provider fails closed; it never falls back to the stand-in.
+- RAG over `app/db/data/source/FAQ.md` and `Policies.md` (policy source of truth) is lexical BM25 (no embeddings, no vector store).
+- Product lookup from `app/db/data/source/Products.json` (read-only; not RAG; not a DB FK).
+- The LLM proposes; code decides. The engine validates every tool call and writes only after an explicit confirmation on a pending action. Identity comes from the simulated login (Streamlit session), never from message or LLM text; it is not production authentication.
 - Out of MVP: marketplace, cart, checkout, real auth, real refunds/couriers, voice (stretch only).
 
 ## Built
 
-Phase 0–1 docs approved. Phase 2 plan approved. Database Checkpoints 1–10 complete and merged to `master`. The D2 database contract (D3–D8) is **committed and pushed** on `rukum/db` as `7dfd2f0` (412 database tests, 7 files). The backend (A2–A5) is implemented in the working tree of `rukum/backend` (created from `7dfd2f0`, not pushed) and is **uncommitted**. **Current full-suite result: 939 passed** (`uv run python -m pytest tests -q`, 2026-11-11). The older 497 and 207 figures are obsolete.
+Phase 0–1 docs approved. Phase 2 plan approved. Database Checkpoints 1–10 complete. The D2 database contract (D3–D8), the backend (A2–A5), Person B's UI/Docker/evaluation/report work, the UI wiring to the real backend and the OpenAI Responses adapter (`f25b7c4`, merge `967cfe9`, pushed) are all merged on `master`. **Local `master` is one commit ahead of `origin/master`:** `66c60fe` (real-backend evaluation runner, A3), not pushed. **Latest full-suite result: 1172 passed** (offline, 2026-11-12; 59 passed for the targeted evaluation tests). Older figures (497, 207, 939 and others) are obsolete.
 
 - **1** `app/db/connection.py` (rewritten for D2): three factories, `APP_DB_PATH`, default `app/db/data/app_d2.db`, `user_version` checks, typed errors; the legacy `app/db/data/app.db` is protected and never opened. `main.py` only prints the run command.
 - **2** `app/db/schema.py`: `create_schema(connection)` creates the five tables. It does not open a connection.
@@ -25,18 +26,26 @@ Phase 0–1 docs approved. Phase 2 plan approved. Database Checkpoints 1–10 co
 - **7A** Write-function contracts approved, committed, and pushed (`8ce2d43`): `docs/01` §F–§H, `docs/02` §4–§5.
 - **7** `create_return_request` and `create_support_ticket` in `app/db/repository.py` (`6a2c11a`).
 - **8** `tests/test_returns.py` and `tests/test_tickets.py` (`0f27739`).
-- **9** Full-suite verification (the 497-test suite was replaced by the D2 suite; current full-suite result 939 passed, see above). **10** Read-only repository inspection.
-- **11A** `docs/03_backend_architecture.md` Revision 3.2 is the approved architecture baseline (design only; nothing in it is implemented).
+- **9** Full-suite verification (the 497-test suite was replaced by the D2 suite; current full-suite result 1172 passed, see above). **10** Read-only repository inspection.
+- **11A** `docs/03_backend_architecture.md` Revision 3.2 is the approved architecture baseline; the backend it describes is now implemented and merged.
+- **Evaluation (A3, `66c60fe`, local):** `scripts/eval/real_eval.py` and `tests/test_real_eval.py`. See "Evaluation" below.
 
-## Not built, pending, or in progress
+## Not built, not verified, or pending
 
 Do not treat these as existing. Do not start a checkpoint that has not been authorized.
 
-- **Committed and pushed (`rukum/db`, `7dfd2f0`):** the D2 database contract: three connection factories, `APP_DB_PATH` (default `app/db/data/app_d2.db`), `user_version = 1`, persisted `reason_category`, exact-text validation, canonical timestamps, eligibility outcomes, typed errors, health check, `list_customers_for_login`, the seed command and the rewritten database tests (including `tests/conftest.py`).
-- **Uncommitted on `rukum/backend`:** the tool layer, session registry and pending actions, scope guard, issue lifecycle, ticket summaries with fallback, lexical RAG, the provider-agnostic LLM layer and `app.backend`, with their tests, plus three audit fixes (confirm-time return-window message, typed `cancel` while a ticket description is awaited, graceful handling of a missing product catalog or FAQ source). See `docs/03` Section 19 and `docs/04_frontend_handover.md`.
-- **Not verified:** the OpenAI-compatible and Anthropic adapters have never been run against a live service (no credentials). The rule-based LLM is a deterministic stand-in. RAG is lexical, not embeddings. Durable pending actions and idempotency are out of scope (single process, in-memory).
-- **Open for Person B:** `app/ui/streamlit_app.py` (stub, not connected), Docker, evaluation set, report, deck. Person B's unmerged branches use `DATABASE_PATH` and `get_connection(db_path)`; they must move to `APP_DB_PATH` and the seed command (see `docs/04_frontend_handover.md`).
-- **Current state:** branch `rukum/backend` (from `7dfd2f0`, not pushed). The backend code, its tests and the full-version documentation are uncommitted and not staged. `app/db/data/app.db` has not been opened or modified, and `app/db/data/app_d2.db` has not been created.
+- **Not verified live:** the OpenAI Responses and Anthropic adapters are tested only with a mocked transport (`tests/test_providers.py`). One guarded one-request OpenAI probe is reported to have succeeded (technical lead); it is not an application, tool-calling or multi-turn evaluation. **No full live evaluation has been done, and none may be run without explicit authorization.**
+- **Not a language model:** `RuleBasedLLM`. Offline evaluation results describe it, not a model.
+- **Out of scope by design:** embeddings, durable pending actions and idempotency (single process, in-memory), real authentication, voice.
+- **Pending:** A5 demo runbook, A6 final acceptance, Person B's report/diagram/README/deck refresh for the real backend, Docker from a clean clone (the image still runs the fake UI), publishing `66c60fe`, and path corrections in `docs/01` to `docs/03`.
+- **Known assistant gaps (not fixed):** Q034 cancel pattern, Q070 clarification, and the placeholder `support@example.com` in the source documents repeated in replies. See `PROJECT_STATUS.md`.
+
+## Evaluation
+
+- `uv run python scripts/eval/run_eval.py` is the **fake-runner**: it exercises the canned fake UI backend; every score is `not_assessed`. It measures nothing about the real assistant.
+- `uv run python scripts/eval/real_eval.py [--output PATH] [--cases PATH]` runs the 70 cases of `app/db/data/eval/queries.csv` plus five multi-turn scenarios against the **real backend** on a temporary seeded database, offline with `RuleBasedLLM`. Checks are mechanical and tagged `backend_code`, `llm_proposals`, `llm_text` or `provider_and_backend`; semantic answer quality is never scored. `--compare FIRST SECOND` compares two result files.
+- `--llm env` requires an explicit real provider (`LLM_PROVIDER` of `openai` or `anthropic`, `LLM_MODEL`, the key) and `--allow-live`. An unset, blank or `rule_based` provider is an error. **Never run it, or any live LLM call, without explicit authorization.** Never write credentials to logs or result files.
+- Detail, limits and evidence: `docs/04_frontend_handover.md` Section 10.
 
 ## Constraints
 
@@ -44,8 +53,11 @@ Do not treat these as existing. Do not start a checkpoint that has not been auth
 - SQLite is Python’s standard-library `sqlite3` module (confirmed via `uv run`; library 3.50.4). It is not a `pyproject.toml` dependency. Do not `uv add` a SQLite package.
 - Five tables: `customers`, `orders`, `order_items`, `return_requests`, `support_tickets`. No payment or shipment tables. Design: `docs/01` §C.
 - Every connection via the three factories in `app/db/connection.py`. Never `sqlite3.connect()` elsewhere. `APP_DB_PATH` selects the database; only the initialization factory creates files and it refuses `app/db/data/app.db`.
-- **All database work happens on branch `rukum/db`** (remote `origin/rukum/db`, at `7dfd2f0`). Do not commit database work on `master`, and do not merge `rukum/db` into `master` without explicit authorization. Backend work happens on `rukum/backend`, created from `rukum/db` at `7dfd2f0` and not yet pushed.
-- Never open, read, seed, reset, migrate or delete `app/db/data/app.db`. It is a legacy pre-D2 database (`user_version` 0, never stamped) and is protected in code: no connection factory opens it. The application's default database is `app/db/data/app_d2.db` (override with `APP_DB_PATH`); seed it with the seed command when needed (it is git-ignored). Initialization is an explicit, separately authorized operator operation (`python -m app.db.seed_data`); there is no migration engine (M2).
+- **Branches and Git.** Database work was done on `rukum/db` and backend work on `rukum/backend`; both are now merged into `master`, and that branch rule predates the merge. Do not create or switch branches, stage, commit, push, amend, rebase or merge without the user's explicit approval for that operation; approval for one operation does not extend to the next. Ask where new work should go.
+- **`app/db/data/app.db` must NEVER be opened or accessed** (open, read, seed, reset, migrate or delete). It is a legacy pre-D2 database (`user_version` 0, never stamped) and is protected in code: no connection factory opens it. No authorization changes this.
+- **`app/db/data/app_d2.db` is protected.** It is the application's default database (override with `APP_DB_PATH`; git-ignored). It must not be opened, read, initialized, seeded or modified unless the technical lead explicitly authorizes that specific access (initializing or seeding it is an operator action, `python -m app.db.seed_data`).
+- Normal development, tests, evaluation and UI verification use a **temporary or demo database** (`temp_db` in tests; `real_eval.py` builds its own; a seeded `demo/demo.db` for the UI). Before running Streamlit, check that `APP_DB_PATH` (real environment first, then `.env`, whose template `.env.example` sets `app/db/data/app_d2.db`) resolves to such a database. If it resolves to `app_d2.db`, do not start the application without the technical lead's explicit authorization. There is no migration engine (M2).
+- **No live LLM call** without explicit authorization. Offline (`RuleBasedLLM`) is the default for tests, evaluations and demos. Never log or store credentials.
 - Money: INTEGER paise. Timestamps: TEXT ISO-8601 UTC.
 - `orders.status`: Processing, Packed, Shipped, Out for Delivery, Delivered, Cancelled, Returned (`FAQ.md` Q1.4).
 - Repository functions take `authenticated_customer_id` and filter in SQL. Composite FKs backstop consistency, not authorization.
