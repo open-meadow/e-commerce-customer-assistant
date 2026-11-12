@@ -15,7 +15,7 @@ Target: Streamlit chat for order, delivery, payment, return, refund, product, an
 
 ## Built
 
-Phase 0–1 docs approved. Phase 2 plan approved. Database Checkpoints 1–10 complete. The D2 database contract (D3–D8), the backend (A2–A5), Person B's UI/Docker/evaluation/report work, the UI wiring to the real backend and the OpenAI Responses adapter (`f25b7c4`, merge `967cfe9`, pushed) are all merged on `master`. **Local `master` is one commit ahead of `origin/master`:** `66c60fe` (real-backend evaluation runner, A3), not pushed. **Latest full-suite result: 1172 passed** (offline, 2026-11-12; 59 passed for the targeted evaluation tests). Older figures (497, 207, 939 and others) are obsolete.
+Phase 0–1 docs approved. Phase 2 plan approved. Database Checkpoints 1–10 complete. The D2 database contract (D3–D8), the backend (A2–A5), Person B's UI/Docker/evaluation/report work, the UI wiring to the real backend and the OpenAI Responses adapter (`f25b7c4`, merge `967cfe9`, pushed) are all merged on `master`. **Local `master` is two commits ahead of `origin/master`:** A3 `66c60fe` (real-backend evaluation runner) and A4 `746b9b1` (documentation refresh). Neither has been pushed. **Latest full-suite result: 1172 passed** (offline, 2026-11-12; 59 passed for the targeted evaluation tests). Older figures (497, 207, 939 and others) are obsolete.
 
 - **1** `app/db/connection.py` (rewritten for D2): three factories, `APP_DB_PATH`, default `app/db/data/app_d2.db`, `user_version` checks, typed errors; the legacy `app/db/data/app.db` is protected and never opened. `main.py` only prints the run command.
 - **2** `app/db/schema.py`: `create_schema(connection)` creates the five tables. It does not open a connection.

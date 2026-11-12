@@ -6,7 +6,7 @@ Capstone: a text customer-support assistant. A modular Python monolith: Streamli
 
 ## Where the code stands
 
-Everything is merged on `master`: Person A's database layer and backend, Person B's UI, Docker, evaluation and report work, the UI wired to the real backend (`app/ui/client.py`; `UI_BACKEND=fake` still selects the canned `app/ui/fake_backend.py`) and the OpenAI Responses API adapter (`f25b7c4`, merge `967cfe9`, pushed). **Local `master` is one commit ahead of `origin/master`:** `66c60fe`, the real-backend evaluation runner (A3), not pushed. Verify with `git status -sb`.
+Everything is merged on `master`: Person A's database layer and backend, Person B's UI, Docker, evaluation and report work, the UI wired to the real backend (`app/ui/client.py`; `UI_BACKEND=fake` still selects the canned `app/ui/fake_backend.py`) and the OpenAI Responses API adapter (`f25b7c4`, merge `967cfe9`, pushed). **Local `master` is two commits ahead of `origin/master`:** A3 `66c60fe` (the real-backend evaluation runner) and A4 `746b9b1` (the documentation refresh). Neither has been pushed. Verify with `git status -sb`.
 
 The default assistant is the offline `RuleBasedLLM` (safe demo path, no key, no network). A real provider has been exercised only by one guarded one-request probe (reported by the technical lead); full live application and tool-calling evaluation has **not** been done. Docker still runs the fake-backend UI and does not use the database. The fake-backend eval runner (`run_eval.py`) measures nothing; the real-backend runner (`real_eval.py`) measures mechanical checks only (see "Evaluation").
 
