@@ -21,8 +21,8 @@ backend (C101 and C102 only, no database).
 | Customer context | Simulated authenticated customer identity |
 | SQLite database | Customers, orders, order items, returns, and support tickets |
 | Policy retrieval | Persistent Chroma vector search over FAQ and policy documents using OpenAI embeddings |
-| Voice input | OpenAI Whisper transcription of microphone recordings |
-| Spoken replies | Local Kokoro text-to-speech with a playable audio response |
+| Voice input | LiveKit microphone streaming with OpenAI speech-to-text |
+| Spoken replies | Fish Audio text-to-speech through LiveKit Inference |
 | Product lookup | Read-only lookup from `Products.json`, separate from policy retrieval |
 | Backend tools | Customer-scoped order, return, and ticket operations |
 | LLM orchestration | Provider-agnostic orchestration; offline rule-based behavior is the default |
@@ -53,16 +53,19 @@ backend (C101 and C102 only, no database).
 | Knowledge base | Markdown documents |
 | AI orchestration | Provider-agnostic LLM interface; deterministic rule-based default |
 | Knowledge retrieval | ChromaDB with OpenAI `text-embedding-3-small` embeddings over Markdown FAQ and policy documents |
-| Voice input | OpenAI `whisper-1` speech-to-text |
-| Voice output | Local Kokoro TTS (`af_heart`, American English) |
+| Voice input | LiveKit Agents with OpenAI speech-to-text |
+| Voice output | Fish Audio TTS through LiveKit Inference |
 | Testing | Pytest |
 | Version control | Git and GitHub |
 
 OpenAI Responses API and Anthropic adapters are available but have only mock-tested transports; neither has been verified against a live provider. The default is `rule_based`, which matches a limited set of phrasings. Policy retrieval uses OpenAI embeddings and requires `OPENAI_API_KEY` when searching or indexing, even when the LLM remains in `rule_based` mode.
 
-Voice input also requires `OPENAI_API_KEY`: microphone recordings are sent to
-OpenAI's hosted `whisper-1` transcription API. Spoken replies are synthesized
-locally with Kokoro; reply text is not sent to a TTS service.
+Voice calls use a LiveKit room and agent. OpenAI handles speech transcription
+and voice-agent turn routing; the exact transcript is sent to the support
+backend. Backend reply text is sent to Fish Audio through LiveKit Inference for
+speech synthesis. The voice transcript appears in the voice panel and is not
+merged into the Streamlit text-chat history. `FISH_API_KEY` is not used for
+this LiveKit Inference path.
 
 ## 5. High-Level Architecture
 
@@ -74,8 +77,9 @@ app.backend -> orchestrator -> customer-scoped tools -> SQLite
                             -> Chroma vector search -> FAQ.md / Policies.md
                             -> product lookup -> Products.json
                             -> LLM interface -> RuleBasedLLM (default)
-Microphone audio -> OpenAI Whisper -> transcript -> existing chat input
-Assistant text -> local Kokoro -> audio player
+Browser microphone -> LiveKit room -> voice agent
+                                  -> OpenAI STT -> transcript -> support backend
+Support reply -> Fish Audio via LiveKit Inference -> LiveKit room -> browser
 ```
 
 `UI_BACKEND=real` is the local default. `UI_BACKEND=fake` selects the canned,
@@ -172,21 +176,25 @@ business database at `VECTOR_STORE_DIR` (default
 `app/db/data/generated/vector_store`). It is rebuilt from the source documents
 when their content changes.
 
-Voice input records through the Streamlit chat widget and sends the recording
-to OpenAI for transcription; the transcript is then handled like typed text.
-Kokoro generates spoken replies locally. For local macOS use, install
-`espeak-ng` and sync the Python dependencies:
-
-```bash
-brew install espeak-ng
-uv sync
-```
-
 To use the existing default database, simply run:
 
 ```bash
 uv run python -m streamlit run app/ui/streamlit_app.py
 ```
+
+Voice calls additionally require the LiveKit URL, API key and secret,
+`OPENAI_API_KEY`, and the voice model/ID settings shown in `.env.example`.
+`FISH_API_KEY` is not required. For local voice development, set
+`SUPPORT_API_URL=http://127.0.0.1:8000` in `.env`, then run the support API and
+LiveKit worker in separate terminals in addition to Streamlit:
+
+```bash
+uv run uvicorn app.backend.http_api:app --host 127.0.0.1 --port 8000
+uv run python -m app.voice.agent start
+```
+
+The API uses the same initialized database as the local UI. The worker and
+Streamlit process read settings from the repository-root `.env`.
 
 The local UI uses the real backend by default. If the database is missing or
 incompatible, or a selected provider is misconfigured, the startup gate shows a
@@ -210,25 +218,31 @@ From the repository root:
 
 ```bash
 cp .env.example .env
-# Set OPENAI_API_KEY for retrieval and voice transcription; optionally configure the LLM provider.
+uv lock
+uv sync
+# Set OpenAI and LiveKit values in .env; see the configuration notes below.
 docker compose up --build
 ```
 
 Open <http://localhost:8501>. On first start, the container seeds a new database
-in the `app-data` volume and uses it through `APP_DB_PATH`. The Chroma index and
-Kokoro model cache are stored separately at `/app/data/vector_store` and
-`/app/data/huggingface` on the same persistent volume. Later starts reuse them.
-The image installs the `espeak-ng` and `libsndfile` runtimes required by Kokoro
-and audio encoding. On first use, Kokoro downloads its model weights into the
-persistent cache. Set `OPENAI_API_KEY` in `.env` for FAQ/policy retrieval and
-voice transcription; microphone audio is sent to OpenAI. Spoken replies are
-generated locally. The default LLM remains offline and rule-based unless a
-provider is configured. The Streamlit UI and backend run together in one
-process; there is no separate API service.
+in the `app-data` volume and uses it through `APP_DB_PATH`; the Chroma index is
+also persistent at `/app/data/vector_store`. Compose runs separate Streamlit,
+FastAPI, and LiveKit worker services; only Streamlit publishes a host port.
+Set `OPENAI_API_KEY` for retrieval and voice processing, plus `LIVEKIT_URL`,
+`LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`, `LIVEKIT_STT_MODEL`,
+`LIVEKIT_TTS_MODEL`, and `FISH_AUDIO_VOICE` in `.env`. The API and worker use
+the LiveKit credentials; the Streamlit container receives blank API-secret
+values. The browser connects to LiveKit with a short-lived participant token.
+The browser also loads the pinned LiveKit JavaScript SDK from JSDelivr, so it
+needs internet access.
+Microphone audio is streamed through LiveKit to the voice agent; OpenAI
+provides speech transcription and voice-agent turn routing, while Fish Audio
+generates speech from backend reply text through LiveKit Inference. The default
+support LLM remains offline and rule-based unless configured otherwise.
 
 Stop the service with `Ctrl+C`; use `docker compose down` to stop and remove the
-container and network. The `app-data` volume preserves the database, Chroma
-index, and Kokoro model cache.
+container and network. The `app-data` volume preserves the database and Chroma
+index.
 
 ## Tests and evaluation smoke run
 
@@ -259,9 +273,13 @@ evaluation of the real assistant. Sample outputs in
   language model. Provider adapters are not live-tested.
 - If an external LLM provider is explicitly configured, prompts may be sent to
   that provider; the offline rule-based default makes no LLM provider call.
-- Voice recordings are sent to OpenAI for transcription even when the
-  rule-based LLM is selected. Kokoro produces speech locally; its model weights
-  are downloaded from Hugging Face on first use.
+- Voice audio is streamed through LiveKit. OpenAI provides speech
+  transcription and voice-agent turn routing; the transcript is sent to the
+  support backend, and backend reply text is sent to Fish Audio through LiveKit
+  Inference for speech synthesis. The browser receives a short-lived LiveKit
+  participant token, not the LiveKit API credentials. Voice transcripts are
+  shown in the voice panel and are not merged into Streamlit's text-chat
+  history.
 - FAQ and policy retrieval uses Chroma with OpenAI embeddings. It requires an
   OpenAI API key and sends source text when indexing and each search query to
   OpenAI. The local index is persistent; Docker Compose stores it on the
