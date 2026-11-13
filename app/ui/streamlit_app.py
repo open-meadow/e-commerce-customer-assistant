@@ -1,5 +1,6 @@
 import logging
 
+import httpx
 import streamlit as st
 
 st.set_page_config(
@@ -11,6 +12,7 @@ st.set_page_config(
 
 if __package__:
     from .client import (
+        BACKEND_MODE,
         ChoiceSelection,
         ConfirmationDecision,
         backend_status,
@@ -18,12 +20,8 @@ if __package__:
         list_login_options,
         start_session,
     )
-    from .voice import (
-        VoiceSynthesisError,
-        VoiceTranscriptionError,
-        synthesize_speech,
-        transcribe_audio,
-    )
+    from .livekit_client import end_voice_session, start_voice_session
+    from .livekit_component import livekit_voice_call
     from .session import (
         ACTIVE_CHAT_ID_KEY,
         AUTHENTICATED_CUSTOMER_ID_KEY,
@@ -32,6 +30,7 @@ if __package__:
         REQUEST_ID_KEY,
         UI_ERROR_KEY,
         UI_NOTICE_KEY,
+        VOICE_SESSION_KEY,
         ChatSession,
         append_chat_message,
         create_chat,
@@ -43,6 +42,7 @@ if __package__:
     )
 else:
     from client import (
+        BACKEND_MODE,
         ChoiceSelection,
         ConfirmationDecision,
         backend_status,
@@ -50,12 +50,8 @@ else:
         list_login_options,
         start_session,
     )
-    from voice import (
-        VoiceSynthesisError,
-        VoiceTranscriptionError,
-        synthesize_speech,
-        transcribe_audio,
-    )
+    from livekit_client import end_voice_session, start_voice_session
+    from livekit_component import livekit_voice_call
     from session import (
         ACTIVE_CHAT_ID_KEY,
         AUTHENTICATED_CUSTOMER_ID_KEY,
@@ -64,6 +60,7 @@ else:
         REQUEST_ID_KEY,
         UI_ERROR_KEY,
         UI_NOTICE_KEY,
+        VOICE_SESSION_KEY,
         ChatSession,
         append_chat_message,
         create_chat,
@@ -95,12 +92,62 @@ _ERROR_MESSAGES = {
 }
 
 
+def _close_voice_session() -> bool:
+    """Close the current LiveKit session before switching chats."""
+    voice_session = st.session_state.get(VOICE_SESSION_KEY)
+    if voice_session is None:
+        return True
+    if not isinstance(voice_session, dict) or not isinstance(
+        voice_session.get("session_id"), str
+    ):
+        raise RuntimeError("The stored LiveKit voice session is invalid.")
+
+    try:
+        with st.spinner("Ending the voice call..."):
+            end_voice_session(voice_session["session_id"])
+    except httpx.HTTPError:
+        LOGGER.exception("Could not close the LiveKit voice session")
+        st.session_state[UI_ERROR_KEY] = (
+            "Could not end the voice call. Please try again before switching chats."
+        )
+        return False
+
+    st.session_state[VOICE_SESSION_KEY] = None
+    return True
+
+
+def _start_voice_session(customer_id: str) -> None:
+    """Create a server-side backend session and expose only its room token."""
+    try:
+        with st.spinner("Starting a voice call..."):
+            voice_session = start_voice_session(customer_id)
+    except httpx.HTTPError:
+        LOGGER.exception("Could not start the LiveKit voice session")
+        st.session_state[UI_ERROR_KEY] = (
+            "Voice calling is unavailable. Please try again or continue by text."
+        )
+        st.rerun()
+    except ValueError:
+        LOGGER.exception("The LiveKit API returned an invalid session")
+        st.session_state[UI_ERROR_KEY] = (
+            "Voice calling is unavailable. Please try again or continue by text."
+        )
+        st.rerun()
+
+    st.session_state[VOICE_SESSION_KEY] = voice_session
+    st.session_state[UI_ERROR_KEY] = None
+    st.rerun()
+
+
 def _begin_session(
     customer_id: str,
     *,
     restart_chat: ChatSession | None = None,
 ) -> None:
     """Start a chat or replace an expired chat session."""
+    if not _close_voice_session():
+        return
+
     if restart_chat is not None:
         restart_chat["conversation_state"] = None
         restart_chat["messages"] = []
@@ -195,6 +242,10 @@ def _set_customer_from_sidebar() -> None:
         key="customer_selector",
     )
 
+    if selected_customer is not None and current_customer != selected_customer:
+        if not _close_voice_session():
+            return
+
     changed = set_authenticated_customer_id(
         st.session_state,
         selected_customer,
@@ -228,6 +279,8 @@ def _render_sidebar_chats(customer_id: str) -> None:
             icon=":material/chat_bubble_outline:",
             width="stretch",
         ):
+            if chat_id != active_chat_id and not _close_voice_session():
+                return
             select_chat(st.session_state, chat_id)
             st.rerun()
 
@@ -320,12 +373,6 @@ def _send_backend_request(
         return
 
     append_chat_message(st.session_state, "assistant", reply.text)
-    assistant_message = chat["messages"][-1]
-    try:
-        with st.spinner("Preparing voice reply..."):
-            assistant_message["audio"] = synthesize_speech(reply.text)
-    except VoiceSynthesisError as exc:
-        assistant_message["audio_error"] = str(exc)
     chat["pending_view"] = reply.pending
     chat["choice_view"] = reply.choice
     _show_backend_error(None, reply.request_id)
@@ -389,6 +436,46 @@ def _render_actions() -> None:
                         st.rerun()
 
 
+def _render_livekit_voice() -> None:
+    """Render the browser voice client for the selected real backend."""
+    if BACKEND_MODE != "real":
+        return
+
+    with st.container(border=True):
+        st.subheader("Voice call")
+        st.caption(
+            "The voice transcript is shown here and is separate from the text chat."
+        )
+        voice_session = st.session_state.get(VOICE_SESSION_KEY)
+        if voice_session is None:
+            customer_id = st.session_state.get(AUTHENTICATED_CUSTOMER_ID_KEY)
+            if not isinstance(customer_id, str):
+                return
+            if st.button(
+                "Start voice call",
+                key="start-livekit-voice",
+                icon=":material/phone_in_talk:",
+            ):
+                _start_voice_session(customer_id)
+            return
+
+        if not isinstance(voice_session, dict):
+            raise RuntimeError("The stored LiveKit voice session is invalid.")
+        url = voice_session.get("url")
+        token = voice_session.get("token")
+        if not isinstance(url, str) or not isinstance(token, str):
+            raise RuntimeError("The stored LiveKit voice session is invalid.")
+
+        livekit_voice_call(url, token, key="livekit-voice-call")
+        if st.button(
+            "End voice call",
+            key="end-livekit-voice",
+            icon=":material/call_end:",
+        ):
+            if _close_voice_session():
+                st.rerun()
+
+
 def _render_chat() -> None:
     """Render the active transcript and message composer."""
     st.title("Customer support", icon=":material/support_agent:")
@@ -419,6 +506,8 @@ def _render_chat() -> None:
 
     chat = get_active_chat(st.session_state)
     assert chat is not None
+    _render_livekit_voice()
+
     has_user_message = any(
         message["role"] == "user" for message in chat["messages"]
     )
@@ -433,16 +522,6 @@ def _render_chat() -> None:
         )
         with st.chat_message(chat_message["role"], avatar=avatar):
             st.text(chat_message["content"])
-            audio = chat_message.get("audio")
-            if audio is not None:
-                st.audio(
-                    audio,
-                    format="audio/wav",
-                    alt="Spoken assistant reply",
-                )
-            audio_error = chat_message.get("audio_error")
-            if audio_error is not None:
-                st.warning(audio_error)
 
     if not has_user_message:
         suggestion = st.pills(
@@ -455,31 +534,19 @@ def _render_chat() -> None:
 
     _render_actions()
     st.caption(
-        "Voice recordings are sent to OpenAI for transcription. If both voice "
-        "and text are submitted, voice takes priority."
+        "Voice calls stream through LiveKit, use OpenAI for transcription, and "
+        "use Fish Audio through LiveKit for spoken replies."
     )
     prompt = st.chat_input(
         "Ask about an order, return, product, or policy",
-        accept_audio=True,
         key="chat_input",
     )
     if suggestion is not None:
         message = _SUGGESTIONS[suggestion]
-        audio = None
     elif prompt is None:
         message = None
-        audio = None
     else:
-        message = prompt.text
-        audio = prompt.audio
-
-    if audio is not None:
-        try:
-            with st.spinner("Transcribing voice message..."):
-                message = transcribe_audio(audio)
-        except VoiceTranscriptionError as exc:
-            st.error(str(exc))
-            return
+        message = prompt
 
     if message:
         append_chat_message(st.session_state, "user", message)
