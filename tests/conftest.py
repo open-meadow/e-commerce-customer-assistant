@@ -28,6 +28,17 @@ from urllib.parse import unquote, urlparse
 
 import pytest
 
+# Chroma telemetry must be forced off BEFORE any test module imports ``chromadb`` (its native core reads the
+# setting once, at import), so this conftest applies the override immediately. See telemetry_guard.py.
+import telemetry_guard
+
+telemetry_guard.apply()
+
+
+def pytest_sessionfinish(session, exitstatus):
+    telemetry_guard.restore()  # put back the developer's original value (or its absence)
+
+
 from app.db import clock
 from app.db import connection as connection_module
 from app.db.connection import (
@@ -188,3 +199,64 @@ def fingerprint(path: str) -> tuple[int, str]:
 
 def dir_entries(path: str) -> list[str]:
     return sorted(os.listdir(path))
+
+
+# ---------------------------------------------------------------------------
+# Retrieval: the real Chroma code path with an injected, local embedding function
+# ---------------------------------------------------------------------------
+
+@pytest.fixture(scope="session")
+def _vector_store_dir(tmp_path_factory):
+    """One temporary Chroma storage folder for the whole run, removed at the end."""
+    import shutil
+
+    folder = tmp_path_factory.mktemp("vector-store")
+    try:
+        yield folder
+    finally:
+        try:  # release Chroma's file handles first, or Windows cannot delete the folder
+            from app.rag import release_default_knowledge_base
+            from chromadb.api.shared_system_client import SharedSystemClient
+
+            release_default_knowledge_base()
+            SharedSystemClient.clear_system_cache()
+        except Exception:  # noqa: BLE001 - cleanup must never mask a test failure
+            pass
+        shutil.rmtree(folder, ignore_errors=True)
+
+
+@pytest.fixture(autouse=True)
+def _local_test_embeddings(monkeypatch, _vector_store_dir):
+    """Every test uses the SAME Chroma retrieval code as production, with a deterministic
+    local embedding function injected: no API key, no network, no model download.
+
+    The embedding (``app.rag.local_embeddings``) is deterministic and lexical: BM25-weighted term
+    vectors over the fitted corpus, so cosine ranking follows the BM25 score. It is NOT a semantic
+    embedding and says nothing about the quality of OpenAI embeddings; tests that use it prove the
+    wiring (indexing, cut-off, citations, failure handling), not OpenAI retrieval quality.
+    Tests of the production configuration use the ``production_embeddings`` fixture.
+    """
+    from app.rag import configure_embeddings
+    from app.rag import local_embeddings
+
+    monkeypatch.setenv("VECTOR_STORE_DIR", str(_vector_store_dir))
+    configure_embeddings(local_embeddings.factory, max_distance=local_embeddings.DEFAULT_MAX_DISTANCE,
+                         label=local_embeddings.LABEL)
+    try:
+        yield
+    finally:
+        configure_embeddings(None)  # restore production configuration and drop the cached index
+
+
+@pytest.fixture
+def production_embeddings(monkeypatch, tmp_path):
+    """The real production configuration: OpenAI embeddings, which need OPENAI_API_KEY.
+
+    The key is removed, so initialization must fail honestly; no request is ever made.
+    """
+    from app.rag import configure_embeddings
+
+    configure_embeddings(None)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setenv("VECTOR_STORE_DIR", str(tmp_path / "production-store"))
+    return None

@@ -47,6 +47,8 @@ if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
 from app import catalog as catalog_module  # noqa: E402
+from app import rag  # noqa: E402
+from app.rag import local_embeddings  # noqa: E402
 from app.backend import Backend  # noqa: E402
 from app.backend import clock as backend_clock  # noqa: E402
 from app.backend.types import ChoiceSelection, ConfirmationDecision  # noqa: E402
@@ -69,6 +71,7 @@ _DEFAULT_CASES = run_eval._DEFAULT_CASES
 _KNOWLEDGE_TOOLS = frozenset({"search_policies"})  # may run for an expected_tool of "none"
 _OK_STATUSES = frozenset({"ok", "needs_choice", "needs_confirmation"})
 _KEY_VARIABLES = ("OPENAI_API_KEY", "ANTHROPIC_API_KEY")
+_RETRIEVAL_MODES = ("local", "production")
 _STAND_IN_NAMES = ("rule_based", "offline", "fake")  # LLM_PROVIDER values build_llm_client maps to RuleBasedLLM
 
 _ID_RE = re.compile(r"\b(?:ORD|IT)\d+\b|\bP\d{4}\b", re.I)
@@ -145,6 +148,11 @@ SEMANTIC_NOTE = ("Semantic answer quality (helpfulness, correct meaning, tone, c
                  "by this runner. Replies are recorded in results for human or separately validated review.")
 
 LIMITATIONS = (
+    "Retrieval (policy/FAQ) is a separate provider requirement from the LLM. The default offline "
+    "retrieval mode (local) injects a deterministic BM25-weighted vector embedding into the SAME Chroma "
+    "retrieval code; it is lexical, not semantic, and says nothing about the quality of OpenAI embeddings. "
+    "Production retrieval (--retrieval production) needs OPENAI_API_KEY and --allow-live; without a key "
+    "policy questions report that retrieval is unavailable.",
     "RuleBasedLLM is a deterministic keyword stand-in, not a language model: llm_* checks measure it, not a model.",
     SEMANTIC_NOTE,
     "No provider adapter has been run against a live service; live mode exists but is gated by --allow-live.",
@@ -195,6 +203,8 @@ class Environment:
     recorder: RecordingLLM
     db_path: str
     executed: list[dict[str, Any]] = field(default_factory=list)
+    retrieval_mode: str = "local"
+    retrieval_label: str = ""
 
     def counts(self) -> dict[str, int]:
         connection = db_connection.get_readonly_connection(self.db_path)
@@ -216,9 +226,28 @@ def _refuse_real_paths(path: str) -> None:
         raise RuntimeError("refusing to use a protected or default database")
 
 
+def _release_vector_store() -> None:
+    """Release Chroma's file handles so the temporary folder can be deleted (best effort)."""
+    try:
+        from chromadb.api.shared_system_client import SharedSystemClient
+
+        rag.release_default_knowledge_base()
+        SharedSystemClient.clear_system_cache()
+    except Exception:  # noqa: BLE001 - cleanup must never mask the real result or error
+        pass
+
+
 @contextlib.contextmanager
-def environment(llm_factory: Callable[[], LLMClient]) -> Iterator[Environment]:
-    """A fresh seeded temporary database, fixed clocks and a Backend around the given LLM."""
+def environment(llm_factory: Callable[[], LLMClient], retrieval: str = "local") -> Iterator[Environment]:
+    """A fresh seeded temporary database, fixed clocks and a Backend around the given LLM.
+
+    ``retrieval`` selects the embeddings behind policy retrieval, always through the same Chroma
+    code and a temporary vector store: ``local`` (default, offline) injects the deterministic
+    lexical test embedding; ``production`` uses the configured OpenAI embeddings, which need
+    ``OPENAI_API_KEY`` (without it policy questions report retrieval as unavailable).
+    """
+    if retrieval not in _RETRIEVAL_MODES:
+        raise ValueError(f"retrieval must be one of {', '.join(_RETRIEVAL_MODES)}")
     with tempfile.TemporaryDirectory(prefix="support-eval-") as folder:
         path = os.path.join(folder, "eval.db")
         _refuse_real_paths(path)
@@ -229,12 +258,20 @@ def environment(llm_factory: Callable[[], LLMClient]) -> Iterator[Environment]:
         finally:
             connection.close()
         previous = os.environ.get(db_connection.ENV_DB_PATH)
+        previous_store = os.environ.get("VECTOR_STORE_DIR")
+        previous_embeddings = rag.configure_embeddings(None)  # also drops any cached index
         try:
             # Everything after the variable is changed sits inside this try, so a failure while
             # building the LLM or Backend still restores it (and the folder is removed on exit).
             os.environ[db_connection.ENV_DB_PATH] = path
+            os.environ["VECTOR_STORE_DIR"] = os.path.join(folder, "vector-store")  # never the app's store
+            if retrieval == "local":
+                rag.configure_embeddings(local_embeddings.factory,
+                                         max_distance=local_embeddings.DEFAULT_MAX_DISTANCE,
+                                         label=local_embeddings.LABEL)
             recorder = RecordingLLM(llm_factory())
-            env = Environment(Backend(llm=recorder), recorder, path)
+            env = Environment(Backend(llm=recorder), recorder, path, retrieval_mode=retrieval,
+                              retrieval_label=rag.embedding_configuration())
             real_execute = engine_module.execute_tool
 
             def recording_execute(ctx, name, arguments):
@@ -252,6 +289,12 @@ def environment(llm_factory: Callable[[], LLMClient]) -> Iterator[Environment]:
                 os.environ.pop(db_connection.ENV_DB_PATH, None)
             else:
                 os.environ[db_connection.ENV_DB_PATH] = previous
+            if previous_store is None:
+                os.environ.pop("VECTOR_STORE_DIR", None)
+            else:
+                os.environ["VECTOR_STORE_DIR"] = previous_store
+            rag.restore_embeddings(previous_embeddings)
+            _release_vector_store()
 
 
 # ---------------------------------------------------------------------------
@@ -540,8 +583,10 @@ def _observations(env: Environment) -> dict[str, Any]:
             "chat_calls": env.recorder.chat_calls, "complete_calls": env.recorder.complete_calls}
 
 
-def run(cases_path: Path, llm_factory: Callable[[], LLMClient], *, live: bool = False) -> dict[str, Any]:
-    with environment(llm_factory) as env:
+def run(cases_path: Path, llm_factory: Callable[[], LLMClient], *, live: bool = False,
+        retrieval: str = "local") -> dict[str, Any]:
+    with environment(llm_factory, retrieval) as env:
+        retrieval_label = env.retrieval_label
         truth = Truth.load()
         known = {o.customer_id for o in env.backend.list_login_options()}
         cases = run_eval.load_cases(cases_path, known)
@@ -571,10 +616,16 @@ def run(cases_path: Path, llm_factory: Callable[[], LLMClient], *, live: bool = 
                 "writes": before != after,
             })
         llm = llm_description(env.recorder.inner, live=live)
-    scenarios = [run_scenario(name, build, llm_factory) for name, build in SCENARIOS.items()]
+    scenarios = [run_scenario(name, build, llm_factory, retrieval) for name, build in SCENARIOS.items()]
     return {
         "schema_version": SCHEMA_VERSION, "evaluation_mode": "real_backend", "backend": "app.backend.Backend",
         "llm": llm, "database": {"kind": "temporary_seeded", "reference_time": "2026-11-07T00:00:00Z"},
+        "retrieval": {"vector_store": "chroma (temporary, per run)", "mode": retrieval,
+                      "embeddings": retrieval_label,
+                      "embedding_quality_assessed": False,
+                      "note": ("local mode: deterministic lexical test embedding through the production Chroma "
+                               "code; it does not measure OpenAI embedding quality" if retrieval == "local" else
+                               "production mode: configured OpenAI embeddings; retrieval quality is not scored")},
         "case_source": _source_label(cases_path), "case_count": len(results),
         "scenario_count": len(scenarios), "checks_catalogue": CHECKS,
         "summary": summarize(results, scenarios), "limitations": list(LIMITATIONS),
@@ -582,9 +633,10 @@ def run(cases_path: Path, llm_factory: Callable[[], LLMClient], *, live: bool = 
     }
 
 
-def run_scenario(name: str, build: Callable, llm_factory: Callable[[], LLMClient]) -> dict[str, Any]:
+def run_scenario(name: str, build: Callable, llm_factory: Callable[[], LLMClient],
+                 retrieval: str = "local") -> dict[str, Any]:
     """Run one scenario on a fresh database. A model that derails it makes it fail; it never aborts the run."""
-    with environment(llm_factory) as scenario_env:
+    with environment(llm_factory, retrieval) as scenario_env:
         try:
             chat, outcomes = build(scenario_env)
             steps, error = chat.steps, None
@@ -630,8 +682,34 @@ def summarize(results: list[dict[str, Any]], scenarios: list[dict[str, Any]]) ->
     }
 
 
+def _llm_identity(report: dict[str, Any]) -> Optional[dict[str, Any]]:
+    section = report.get("llm")
+    if not isinstance(section, dict):
+        return None
+    return {"provider": section.get("provider"), "model": section.get("model")}
+
+
+def _retrieval_identity(report: dict[str, Any]) -> Optional[dict[str, Any]]:
+    """The retrieval mode a report recorded, or ``None`` for an older report without the section."""
+    section = report.get("retrieval")
+    if not isinstance(section, dict):
+        return None
+    return {"mode": section.get("mode"), "embeddings": section.get("embeddings")}
+
+
+def _same_or_unknown(first: Optional[dict[str, Any]], second: Optional[dict[str, Any]]) -> Optional[bool]:
+    """True/False when both sides recorded the setting; ``None`` (unknown) when either did not."""
+    if first is None or second is None:
+        return None
+    return first == second
+
+
 def compare_reports(first: dict[str, Any], second: dict[str, Any]) -> dict[str, Any]:
-    """Side-by-side of two result files. Never compares semantic quality (it is not scored)."""
+    """Side-by-side of two result files. Never compares semantic quality (it is not scored).
+
+    Both the LLM mode and the retrieval mode are shown and compared. A report written before the
+    ``retrieval`` section existed has none: that is reported as unknown (``None``), never guessed.
+    """
     names = list(CHECKS)
     rows = {}
     for name in names:
@@ -645,11 +723,30 @@ def compare_reports(first: dict[str, Any], second: dict[str, Any]) -> dict[str, 
         if other and r["checks"] != other["checks"]:
             differing.append({"case_id": r["case_id"], "differences": {
                 k: [r["checks"][k], other["checks"][k]] for k in names if r["checks"][k] != other["checks"][k]}})
+    llm_a, llm_b = _llm_identity(first), _llm_identity(second)
+    retrieval_a, retrieval_b = _retrieval_identity(first), _retrieval_identity(second)
+    llm_same = _same_or_unknown(llm_a, llm_b)
+    retrieval_same = _same_or_unknown(retrieval_a, retrieval_b)
+    notes = []
+    if llm_same is False:
+        notes.append(f"LLM modes differ (first: {llm_a}, second: {llm_b}).")
+    if retrieval_same is False:
+        notes.append(f"Retrieval modes differ (first: {retrieval_a}, second: {retrieval_b}); policy answers, "
+                     "citations and the contact-detail checks are not directly comparable.")
+    elif retrieval_same is None:
+        missing = [name for name, identity in (("first", retrieval_a), ("second", retrieval_b)) if identity is None]
+        notes.append(f"Retrieval mode not recorded in the {' and '.join(missing)} report (written before the "
+                     "retrieval section existed); retrieval modes were not compared.")
     return {
-        "first_llm": first["llm"], "second_llm": second["llm"], "checks": rows, "cases_that_differ": differing,
+        "first_llm": first["llm"], "second_llm": second["llm"],
+        "llm_modes_differ": None if llm_same is None else not llm_same,
+        "first_retrieval": retrieval_a, "second_retrieval": retrieval_b,
+        "retrieval_modes_differ": None if retrieval_same is None else not retrieval_same,
+        "mode_notes": notes,
+        "checks": rows, "cases_that_differ": differing,
         "warning": ("backend_code checks are comparable across LLMs. llm_proposals and llm_text checks compare "
                     "a keyword stand-in with a model only on these mechanical rules. provider_and_backend "
-                    "also reflects provider failures. " + SEMANTIC_NOTE),
+                    "also reflects provider failures. " + " ".join(notes) + (" " if notes else "") + SEMANTIC_NOTE),
     }
 
 
@@ -686,6 +783,10 @@ def main(argv: Optional[list[str]] = None) -> int:
                         help="rule_based (default, offline) or env (LLM_PROVIDER/LLM_MODEL/key; live)")
     parser.add_argument("--allow-live", action="store_true",
                         help="permit live provider requests (env mode with a real provider)")
+    parser.add_argument("--retrieval", choices=_RETRIEVAL_MODES, default="local",
+                        help="local (default, offline deterministic test embedding through the production "
+                             "Chroma code) or production (OpenAI embeddings; needs OPENAI_API_KEY and "
+                             "--allow-live)")
     parser.add_argument("--compare", nargs=2, type=Path, metavar=("FIRST", "SECOND"),
                         help="compare two result files instead of running")
     args = parser.parse_args(argv)
@@ -695,7 +796,10 @@ def main(argv: Optional[list[str]] = None) -> int:
             report = compare_reports(*loaded)
         else:
             factory = _factory(args.llm, args.allow_live)
-            report = run(args.cases, factory, live=args.allow_live)
+            if args.retrieval == "production" and not args.allow_live:
+                raise RuntimeError("--retrieval production uses OpenAI embeddings (live, billed requests); "
+                                   "pass --allow-live only after explicit approval")
+            report = run(args.cases, factory, live=args.allow_live, retrieval=args.retrieval)
         rendered = json.dumps(report, ensure_ascii=False, indent=2) + "\n"
         _assert_no_secrets(rendered)
         if args.output is None:

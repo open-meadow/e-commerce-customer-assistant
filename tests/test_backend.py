@@ -619,7 +619,9 @@ class TestDatabaseFailure:
     def test_check_backend(self, backend):
         health = backend.check_backend()
         assert health.status == "ready" and health.llm_mode == "scripted"
-        assert any("lexical" in n for n in health.notes)
+        # Readiness reports how policy retrieval is configured (Chroma + the embedding provider);
+        # it used to say "lexical" before the approved BM25 -> Chroma/OpenAI embeddings migration.
+        assert any("Chroma" in n and "Embeddings:" in n for n in health.notes)
 
     def test_check_backend_not_initialized(self, tmp_path, monkeypatch):
         monkeypatch.setenv("APP_DB_PATH", str(tmp_path / "missing.db"))

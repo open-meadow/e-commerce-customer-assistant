@@ -24,6 +24,7 @@ from app.db.health import check_database_health
 from app.llm.base import LLMClient, LLMError
 from app.llm.providers import build_llm_client
 from app.orchestrator.engine import Engine, Turn
+from app.rag import embedding_configuration
 
 log = logging.getLogger("app.backend")
 
@@ -123,7 +124,9 @@ class Backend:
 
     def check_backend(self) -> BackendHealth:
         health = check_database_health()
-        notes = ("Policy retrieval is lexical (BM25), not embedding based.",)
+        # Retrieval has its own provider requirement, separate from the LLM: say which embeddings
+        # are configured (production OpenAI embeddings need OPENAI_API_KEY) without calling them.
+        notes = (f"Policy retrieval uses a persistent Chroma index. Embeddings: {embedding_configuration()}.",)
         if getattr(self.llm, "name", "") == "rule_based":
             notes += ("Using the offline rule-based assistant, not a language model.",)
         return BackendHealth(health.status, health.reason, getattr(self.llm, "name", "unknown"), notes)

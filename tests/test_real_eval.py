@@ -90,6 +90,8 @@ def test_backend_code_checks_have_no_failures(rule_based_report):
 def test_known_stand_in_failures_are_reported_not_hidden(rule_based_report):
     checks = rule_based_report["summary"]["checks"]
     # The FAQ passage lists support@example.com, a placeholder that must not be shown as a real channel.
+    # (Offline "local" retrieval runs the same Chroma code with a deterministic test embedding, so the
+    # passage is retrieved and the contact-detail check fires, exactly as it did with lexical retrieval.)
     assert "Q033" in checks["no_invented_contact_details"]["failed_case_ids"]
     # Demo-era "none" labels for cancellation cases: the stand-in checks the order first.
     assert "Q034" in checks["no_unexpected_tool"]["failed_case_ids"]
@@ -466,3 +468,141 @@ def test_cli_writes_a_report_file(tmp_path, monkeypatch):
     compared = tmp_path / "compare.json"
     assert ev.main(["--compare", str(out), str(out), "--output", str(compared)]) == 0
     assert json.loads(compared.read_text(encoding="utf-8"))["cases_that_differ"] == []
+
+
+# --- retrieval backend: explicit, labelled, never silently production -------------------------------
+
+def test_the_report_labels_the_retrieval_backend_and_does_not_claim_embedding_quality(rule_based_report):
+    retrieval = rule_based_report["retrieval"]
+    assert retrieval["mode"] == "local" and retrieval["vector_store"].startswith("chroma")
+    assert "local deterministic" in retrieval["embeddings"] and "not semantic" in retrieval["embeddings"]
+    assert retrieval["embedding_quality_assessed"] is False
+    assert "does not measure OpenAI embedding quality" in retrieval["note"]
+    assert any("Retrieval (policy/FAQ) is a separate provider requirement" in text
+               for text in rule_based_report["limitations"])
+
+
+def test_offline_policy_cases_retrieve_through_chroma_with_citations(rule_based_report):
+    by_id = {r["case_id"]: r for r in rule_based_report["results"]}
+    assert by_id["Q014"]["reply"]["citations"] == [{"source": "FAQ.md", "section": "Q3.1"}]
+    assert any(call["name"] == "search_policies" and call["status"] == "ok"
+               for call in by_id["Q014"]["executed_tool_calls"])
+    assert by_id["Q033"]["checks"]["no_invented_contact_details"] == ev.FAIL  # the problem stays visible
+
+
+def test_production_retrieval_through_the_cli_needs_allow_live(monkeypatch, tmp_path):
+    monkeypatch.delenv("LLM_PROVIDER", raising=False)
+    out = tmp_path / "never.json"
+    with pytest.raises(SystemExit) as raised:
+        ev.main(["--retrieval", "production", "--output", str(out)])
+    assert raised.value.code == 2 and not out.exists()
+
+
+def test_production_retrieval_without_a_key_reports_policy_as_unavailable_not_as_answered(monkeypatch):
+    def forbidden(*args, **kwargs):
+        raise AssertionError("a network request was attempted")
+
+    monkeypatch.setattr(urllib.request, "urlopen", forbidden)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    report = ev.run(CASES, RuleBasedLLM, retrieval="production")
+    assert report["retrieval"]["mode"] == "production"
+    assert "requires OPENAI_API_KEY" in report["retrieval"]["embeddings"]
+    by_id = {r["case_id"]: r for r in report["results"]}
+    for case_id in ("Q014", "Q033", "Q030"):
+        reply = by_id[case_id]["reply"]
+        assert reply["citations"] == [] and "can't look up our FAQ and policies" in reply["text"], case_id
+        assert any(call["status"] == "unavailable" for call in by_id[case_id]["executed_tool_calls"])
+    # Q033 is no longer flagged only because no policy text is retrieved at all: the report says so.
+    assert "Q033" not in report["summary"]["checks"]["no_invented_contact_details"]["failed_case_ids"]
+    assert report["summary"]["cases_that_wrote_without_confirmation"] == []  # business rules unaffected
+    assert report["summary"]["scenarios"]["passed"] == report["summary"]["scenarios"]["total"]
+
+
+def test_environment_restores_embeddings_and_the_vector_store_variable_on_failure(monkeypatch):
+    from app import rag
+
+    monkeypatch.setenv("VECTOR_STORE_DIR", "sentinel-store")
+    before = rag.embedding_configuration()
+    monkeypatch.setattr(ev, "Backend", _boom)
+    with pytest.raises(ValueError, match="setup failure"):
+        with ev.environment(RuleBasedLLM):
+            pytest.fail("the body must not run")
+    assert os.environ["VECTOR_STORE_DIR"] == "sentinel-store"
+    assert rag.embedding_configuration() == before
+    monkeypatch.undo()
+    with pytest.raises(ValueError, match="retrieval must be one of"):
+        with ev.environment(RuleBasedLLM, "bogus"):
+            pytest.fail("the body must not run")
+
+
+def test_the_offline_run_uses_a_temporary_vector_store_never_the_applications(monkeypatch):
+    from app import rag
+    from app.db.connection import PROJECT_ROOT
+
+    used = []
+    real = rag.local_embeddings.factory
+
+    def spy(chunks):
+        used.append(os.environ["VECTOR_STORE_DIR"])
+        return real(chunks)
+
+    monkeypatch.setattr(ev.local_embeddings, "factory", spy)
+    ev.run(CASES, RuleBasedLLM)
+    assert used and all("support-eval-" in path for path in used)
+    assert all(not str(PROJECT_ROOT / "app" / "db" / "data") in path for path in used)
+
+
+# --- compare_reports: LLM mode and retrieval mode ----------------------------------------------------------
+
+def _with_retrieval(report, mode, embeddings):
+    import copy
+
+    clone = copy.deepcopy(report)
+    clone["retrieval"] = {**clone["retrieval"], "mode": mode, "embeddings": embeddings}
+    return clone
+
+
+def test_comparing_the_same_retrieval_mode_reports_no_difference(rule_based_report):
+    comparison = ev.compare_reports(rule_based_report, rule_based_report)
+    assert comparison["retrieval_modes_differ"] is False and comparison["llm_modes_differ"] is False
+    assert comparison["first_retrieval"] == comparison["second_retrieval"]
+    assert comparison["first_retrieval"]["mode"] == "local"
+    assert comparison["mode_notes"] == []
+    assert "Retrieval modes differ" not in comparison["warning"]
+
+
+def test_comparing_local_and_production_retrieval_says_the_modes_differ(rule_based_report):
+    production = _with_retrieval(rule_based_report, "production",
+                                 "openai:text-embedding-3-small (production; requires OPENAI_API_KEY)")
+    comparison = ev.compare_reports(rule_based_report, production)
+    assert comparison["retrieval_modes_differ"] is True
+    assert comparison["first_retrieval"]["mode"] == "local" and comparison["second_retrieval"]["mode"] == "production"
+    assert any("Retrieval modes differ" in note for note in comparison["mode_notes"])
+    assert "Retrieval modes differ" in comparison["warning"] and "not directly comparable" in comparison["warning"]
+    assert comparison["llm_modes_differ"] is False  # the LLM mode is compared separately
+
+
+def test_comparing_different_llm_modes_is_reported_separately(rule_based_report):
+    import copy
+
+    other = copy.deepcopy(rule_based_report)
+    other["llm"] = {**other["llm"], "provider": "openai", "model": "some-model"}
+    comparison = ev.compare_reports(rule_based_report, other)
+    assert comparison["llm_modes_differ"] is True and comparison["retrieval_modes_differ"] is False
+    assert any("LLM modes differ" in note for note in comparison["mode_notes"])
+
+
+def test_an_older_report_without_retrieval_metadata_is_reported_as_unknown_not_guessed(rule_based_report):
+    import copy
+
+    old = copy.deepcopy(rule_based_report)
+    del old["retrieval"]  # what reports written before the retrieval section look like
+    comparison = ev.compare_reports(old, rule_based_report)
+    assert comparison["first_retrieval"] is None  # nothing invented for the missing side
+    assert comparison["second_retrieval"]["mode"] == "local"
+    assert comparison["retrieval_modes_differ"] is None  # unknown, neither True nor False
+    assert any("not recorded in the first report" in note for note in comparison["mode_notes"])
+    both_old = ev.compare_reports(old, old)
+    assert both_old["retrieval_modes_differ"] is None and both_old["first_retrieval"] is None
+    assert any("first and second report" in note for note in both_old["mode_notes"])
+    assert comparison["checks"]  # the rest of the comparison still works on an older report
