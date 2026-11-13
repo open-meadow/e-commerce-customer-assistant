@@ -17,16 +17,17 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 COPY pyproject.toml uv.lock ./
+
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev --no-install-project
 
-COPY app/ ./app/
-COPY .streamlit/ ./.streamlit/
-COPY docker-entrypoint.sh ./docker-entrypoint.sh
-
 RUN useradd --create-home --uid 10001 --user-group app \
     && mkdir -p /app/data \
-    && chown -R app:app /app
+    && chown app:app /app/data
+
+COPY --chown=app:app app/ ./app/
+COPY --chown=app:app .streamlit/ ./.streamlit/
+COPY --chown=app:app docker-entrypoint.sh ./docker-entrypoint.sh
 
 USER app
 
