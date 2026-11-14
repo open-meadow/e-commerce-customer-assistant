@@ -153,7 +153,10 @@ def _list_my_orders(ctx: CustomerContext, args: dict[str, Any]) -> ToolResult:
 def _get_order_status(ctx: CustomerContext, args: dict[str, Any]) -> ToolResult:
     order = repository.get_order(ctx.customer_id, args["order_id"])
     if order is None:
-        return ToolResult("not_found", "order_not_found")
+        return ToolResult("not_found", "order_not_found",
+                          note="That order is not on this customer's account. Say plainly that you could not find "
+                               "it on their account; do not say whose it is, and do not describe the customer's "
+                               "own orders as belonging to anyone else. You may offer to list their own orders.")
     try:
         catalog = catalog_module.default_catalog()
     except CatalogError:
@@ -196,6 +199,19 @@ def _get_my_tickets(ctx: CustomerContext, args: dict[str, Any]) -> ToolResult:
     return ToolResult("ok", "tickets", {"tickets": shown, "total_tickets": len(tickets)})
 
 
+def _log_retrieval_failure(error: KnowledgeBaseError) -> None:
+    """Log why retrieval is unavailable using exception TYPES only.
+
+    The exception message, the query, customer data, environment values and document text are never
+    logged. ``cause=none`` means the failure was raised directly (for example a missing OPENAI_API_KEY,
+    a configuration problem); a cause type such as ``ChromaError`` or ``OSError`` means the store or the
+    embedding service failed.
+    """
+    cause = error.__cause__ if error.__cause__ is not None else error.__context__
+    log.warning("FAQ and policy retrieval unavailable (error=%s, cause=%s)", type(error).__name__,
+                type(cause).__name__ if cause is not None else "none")
+
+
 def _passages(query: str, k: int = 3) -> list[dict[str, str]]:
     hits = rag_module.default_knowledge_base().search(query, k=k)
     return [{"text": h.chunk.text, "source": h.chunk.source, "section": h.chunk.section}
@@ -209,8 +225,8 @@ _KNOWLEDGE_UNAVAILABLE_NOTE = ("Policy retrieval is temporarily unavailable. Say
 def _search_policies(ctx: CustomerContext, args: dict[str, Any]) -> ToolResult:
     try:
         passages = _passages(args["query"])
-    except KnowledgeBaseError:
-        log.warning("FAQ and policy retrieval unavailable")
+    except KnowledgeBaseError as error:
+        _log_retrieval_failure(error)
         return ToolResult("unavailable", "knowledge_unavailable", note=_KNOWLEDGE_UNAVAILABLE_NOTE)
     return ToolResult("ok", "policy_passages" if passages else "no_match",
                       {"passages": passages},
@@ -224,8 +240,8 @@ def _get_refund_policy(ctx: CustomerContext, args: dict[str, Any]) -> ToolResult
     policy_unavailable = False
     try:
         data["passages"] = _passages("refund returns refunds timeline quality check")
-    except KnowledgeBaseError:
-        log.warning("FAQ and policy retrieval unavailable")
+    except KnowledgeBaseError as error:
+        _log_retrieval_failure(error)
         policy_unavailable = True
         data["policy_unavailable"] = True
     if "order_id" in args:

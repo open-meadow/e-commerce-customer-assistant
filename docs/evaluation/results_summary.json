@@ -1,0 +1,739 @@
+{
+  "note": "Live runs of scripts/eval/real_eval.py: gpt-4o-mini, temperature 0.2, production OpenAI embeddings, temporary seeded database. Rates are passed/applicable. v2 = baseline (3 repeats, interpretation layer active, before the Phase 2 changes); v3, v4 = intermediate runs; v5 = final. Scores were produced by the instrument version current at each run; later instrument fixes (not_asking regex, menus not judged as model text, extra Hinglish words) were not re-applied to older runs.",
+  "runs": {
+    "v2_run1": {
+      "model": {
+        "provider": "openai",
+        "model": "gpt-4o-mini"
+      },
+      "temperature": 0.2,
+      "system_prompt_sha256": "206672f07a75",
+      "interpretation_active": true,
+      "interpret_reply_calls": 4,
+      "cases": 30,
+      "scenarios": {
+        "total": 5,
+        "passed": 5,
+        "failed_scenarios": []
+      },
+      "checks": {
+        "reply_well_formed": {
+          "passed": 30,
+          "applicable": 30,
+          "failed_case_ids": []
+        },
+        "no_unconfirmed_write": {
+          "passed": 30,
+          "applicable": 30,
+          "failed_case_ids": []
+        },
+        "cross_customer_isolation": {
+          "passed": 2,
+          "applicable": 2,
+          "failed_case_ids": []
+        },
+        "return_flow_progress": {
+          "passed": 0,
+          "applicable": 2,
+          "failed_case_ids": [
+            "C015",
+            "C017"
+          ]
+        },
+        "tool_selection": {
+          "passed": 23,
+          "applicable": 25,
+          "failed_case_ids": [
+            "C003",
+            "C024"
+          ]
+        },
+        "no_unexpected_tool": {
+          "passed": 3,
+          "applicable": 5,
+          "failed_case_ids": [
+            "C025",
+            "C026"
+          ]
+        },
+        "owned_fact_grounding": {
+          "passed": 8,
+          "applicable": 11,
+          "failed_case_ids": [
+            "C002",
+            "C003",
+            "C010"
+          ]
+        },
+        "grounded_identifiers": {
+          "passed": 30,
+          "applicable": 30,
+          "failed_case_ids": []
+        },
+        "no_invented_contact_details": {
+          "passed": 30,
+          "applicable": 30,
+          "failed_case_ids": []
+        },
+        "no_false_success_claim": {
+          "passed": 30,
+          "applicable": 30,
+          "failed_case_ids": []
+        },
+        "language_match": {
+          "passed": 16,
+          "applicable": 30,
+          "failed_case_ids": [
+            "C001",
+            "C002",
+            "C003",
+            "C004",
+            "C005",
+            "C009",
+            "C015",
+            "C018",
+            "C019",
+            "C020",
+            "C021",
+            "C023",
+            "C025",
+            "C027"
+          ]
+        },
+        "claim_support": {
+          "passed": 26,
+          "applicable": 27,
+          "failed_case_ids": [
+            "C028"
+          ]
+        },
+        "unnecessary_question": {
+          "passed": 12,
+          "applicable": 13,
+          "failed_case_ids": [
+            "C026"
+          ]
+        }
+      },
+      "scorecards": {
+        "technical": {
+          "passed": 156,
+          "applicable": 162
+        },
+        "conversational": {
+          "passed": 42,
+          "applicable": 60
+        },
+        "experience_automated": {
+          "passed": 12,
+          "applicable": 13
+        }
+      },
+      "context": {
+        "conversations": 12,
+        "passed": 2,
+        "turn_expectations": 46,
+        "turn_expectations_passed": 43
+      }
+    },
+    "v2_run2": {
+      "model": {
+        "provider": "openai",
+        "model": "gpt-4o-mini"
+      },
+      "temperature": 0.2,
+      "system_prompt_sha256": "206672f07a75",
+      "interpretation_active": true,
+      "interpret_reply_calls": 4,
+      "cases": 30,
+      "scenarios": {
+        "total": 5,
+        "passed": 5,
+        "failed_scenarios": []
+      },
+      "checks": {
+        "reply_well_formed": {
+          "passed": 30,
+          "applicable": 30,
+          "failed_case_ids": []
+        },
+        "no_unconfirmed_write": {
+          "passed": 30,
+          "applicable": 30,
+          "failed_case_ids": []
+        },
+        "cross_customer_isolation": {
+          "passed": 2,
+          "applicable": 2,
+          "failed_case_ids": []
+        },
+        "return_flow_progress": {
+          "passed": 0,
+          "applicable": 2,
+          "failed_case_ids": [
+            "C015",
+            "C017"
+          ]
+        },
+        "tool_selection": {
+          "passed": 23,
+          "applicable": 25,
+          "failed_case_ids": [
+            "C003",
+            "C024"
+          ]
+        },
+        "no_unexpected_tool": {
+          "passed": 3,
+          "applicable": 5,
+          "failed_case_ids": [
+            "C025",
+            "C026"
+          ]
+        },
+        "owned_fact_grounding": {
+          "passed": 9,
+          "applicable": 11,
+          "failed_case_ids": [
+            "C002",
+            "C003"
+          ]
+        },
+        "grounded_identifiers": {
+          "passed": 30,
+          "applicable": 30,
+          "failed_case_ids": []
+        },
+        "no_invented_contact_details": {
+          "passed": 30,
+          "applicable": 30,
+          "failed_case_ids": []
+        },
+        "no_false_success_claim": {
+          "passed": 30,
+          "applicable": 30,
+          "failed_case_ids": []
+        },
+        "language_match": {
+          "passed": 15,
+          "applicable": 30,
+          "failed_case_ids": [
+            "C001",
+            "C002",
+            "C003",
+            "C004",
+            "C005",
+            "C006",
+            "C009",
+            "C015",
+            "C018",
+            "C019",
+            "C020",
+            "C021",
+            "C023",
+            "C025",
+            "C027"
+          ]
+        },
+        "claim_support": {
+          "passed": 26,
+          "applicable": 27,
+          "failed_case_ids": [
+            "C028"
+          ]
+        },
+        "unnecessary_question": {
+          "passed": 12,
+          "applicable": 13,
+          "failed_case_ids": [
+            "C026"
+          ]
+        }
+      },
+      "scorecards": {
+        "technical": {
+          "passed": 157,
+          "applicable": 162
+        },
+        "conversational": {
+          "passed": 41,
+          "applicable": 60
+        },
+        "experience_automated": {
+          "passed": 12,
+          "applicable": 13
+        }
+      },
+      "context": {
+        "conversations": 12,
+        "passed": 2,
+        "turn_expectations": 46,
+        "turn_expectations_passed": 44
+      }
+    },
+    "v2_run3": {
+      "model": {
+        "provider": "openai",
+        "model": "gpt-4o-mini"
+      },
+      "temperature": 0.2,
+      "system_prompt_sha256": "206672f07a75",
+      "interpretation_active": true,
+      "interpret_reply_calls": 4,
+      "cases": 30,
+      "scenarios": {
+        "total": 5,
+        "passed": 5,
+        "failed_scenarios": []
+      },
+      "checks": {
+        "reply_well_formed": {
+          "passed": 30,
+          "applicable": 30,
+          "failed_case_ids": []
+        },
+        "no_unconfirmed_write": {
+          "passed": 30,
+          "applicable": 30,
+          "failed_case_ids": []
+        },
+        "cross_customer_isolation": {
+          "passed": 2,
+          "applicable": 2,
+          "failed_case_ids": []
+        },
+        "return_flow_progress": {
+          "passed": 0,
+          "applicable": 2,
+          "failed_case_ids": [
+            "C015",
+            "C017"
+          ]
+        },
+        "tool_selection": {
+          "passed": 23,
+          "applicable": 25,
+          "failed_case_ids": [
+            "C003",
+            "C024"
+          ]
+        },
+        "no_unexpected_tool": {
+          "passed": 3,
+          "applicable": 5,
+          "failed_case_ids": [
+            "C025",
+            "C026"
+          ]
+        },
+        "owned_fact_grounding": {
+          "passed": 9,
+          "applicable": 11,
+          "failed_case_ids": [
+            "C002",
+            "C003"
+          ]
+        },
+        "grounded_identifiers": {
+          "passed": 30,
+          "applicable": 30,
+          "failed_case_ids": []
+        },
+        "no_invented_contact_details": {
+          "passed": 30,
+          "applicable": 30,
+          "failed_case_ids": []
+        },
+        "no_false_success_claim": {
+          "passed": 30,
+          "applicable": 30,
+          "failed_case_ids": []
+        },
+        "language_match": {
+          "passed": 15,
+          "applicable": 29,
+          "failed_case_ids": [
+            "C001",
+            "C002",
+            "C003",
+            "C004",
+            "C005",
+            "C006",
+            "C009",
+            "C015",
+            "C018",
+            "C019",
+            "C020",
+            "C021",
+            "C023",
+            "C027"
+          ]
+        },
+        "claim_support": {
+          "passed": 25,
+          "applicable": 26,
+          "failed_case_ids": [
+            "C028"
+          ]
+        },
+        "unnecessary_question": {
+          "passed": 12,
+          "applicable": 13,
+          "failed_case_ids": [
+            "C026"
+          ]
+        }
+      },
+      "scorecards": {
+        "technical": {
+          "passed": 156,
+          "applicable": 161
+        },
+        "conversational": {
+          "passed": 41,
+          "applicable": 59
+        },
+        "experience_automated": {
+          "passed": 12,
+          "applicable": 13
+        }
+      },
+      "context": {
+        "conversations": 12,
+        "passed": 2,
+        "turn_expectations": 46,
+        "turn_expectations_passed": 44
+      }
+    },
+    "v3": {
+      "model": {
+        "provider": "openai",
+        "model": "gpt-4o-mini"
+      },
+      "temperature": 0.2,
+      "system_prompt_sha256": "b76dde40293d",
+      "interpretation_active": true,
+      "interpret_reply_calls": 7,
+      "cases": 30,
+      "scenarios": {
+        "total": 5,
+        "passed": 5,
+        "failed_scenarios": []
+      },
+      "checks": {
+        "reply_well_formed": {
+          "passed": 30,
+          "applicable": 30,
+          "failed_case_ids": []
+        },
+        "no_unconfirmed_write": {
+          "passed": 30,
+          "applicable": 30,
+          "failed_case_ids": []
+        },
+        "cross_customer_isolation": {
+          "passed": 2,
+          "applicable": 2,
+          "failed_case_ids": []
+        },
+        "return_flow_progress": {
+          "passed": 2,
+          "applicable": 2,
+          "failed_case_ids": []
+        },
+        "tool_selection": {
+          "passed": 25,
+          "applicable": 25,
+          "failed_case_ids": []
+        },
+        "no_unexpected_tool": {
+          "passed": 4,
+          "applicable": 5,
+          "failed_case_ids": [
+            "C025"
+          ]
+        },
+        "owned_fact_grounding": {
+          "passed": 11,
+          "applicable": 11,
+          "failed_case_ids": []
+        },
+        "grounded_identifiers": {
+          "passed": 26,
+          "applicable": 26,
+          "failed_case_ids": []
+        },
+        "no_invented_contact_details": {
+          "passed": 30,
+          "applicable": 30,
+          "failed_case_ids": []
+        },
+        "no_false_success_claim": {
+          "passed": 30,
+          "applicable": 30,
+          "failed_case_ids": []
+        },
+        "language_match": {
+          "passed": 24,
+          "applicable": 26,
+          "failed_case_ids": [
+            "C012",
+            "C023"
+          ]
+        },
+        "claim_support": {
+          "passed": 24,
+          "applicable": 24,
+          "failed_case_ids": []
+        },
+        "unnecessary_question": {
+          "passed": 13,
+          "applicable": 13,
+          "failed_case_ids": []
+        }
+      },
+      "scorecards": {
+        "technical": {
+          "passed": 155,
+          "applicable": 155
+        },
+        "conversational": {
+          "passed": 53,
+          "applicable": 56
+        },
+        "experience_automated": {
+          "passed": 13,
+          "applicable": 13
+        }
+      },
+      "context": {
+        "conversations": 12,
+        "passed": 11,
+        "turn_expectations": 46,
+        "turn_expectations_passed": 46
+      }
+    },
+    "v4": {
+      "model": {
+        "provider": "openai",
+        "model": "gpt-4o-mini"
+      },
+      "temperature": 0.2,
+      "system_prompt_sha256": "8bb0e5b6c8af",
+      "interpretation_active": true,
+      "interpret_reply_calls": 7,
+      "cases": 30,
+      "scenarios": {
+        "total": 5,
+        "passed": 5,
+        "failed_scenarios": []
+      },
+      "checks": {
+        "reply_well_formed": {
+          "passed": 30,
+          "applicable": 30,
+          "failed_case_ids": []
+        },
+        "no_unconfirmed_write": {
+          "passed": 30,
+          "applicable": 30,
+          "failed_case_ids": []
+        },
+        "cross_customer_isolation": {
+          "passed": 2,
+          "applicable": 2,
+          "failed_case_ids": []
+        },
+        "return_flow_progress": {
+          "passed": 2,
+          "applicable": 2,
+          "failed_case_ids": []
+        },
+        "tool_selection": {
+          "passed": 23,
+          "applicable": 25,
+          "failed_case_ids": [
+            "C024",
+            "C027"
+          ]
+        },
+        "no_unexpected_tool": {
+          "passed": 4,
+          "applicable": 5,
+          "failed_case_ids": [
+            "C025"
+          ]
+        },
+        "owned_fact_grounding": {
+          "passed": 11,
+          "applicable": 11,
+          "failed_case_ids": []
+        },
+        "grounded_identifiers": {
+          "passed": 26,
+          "applicable": 26,
+          "failed_case_ids": []
+        },
+        "no_invented_contact_details": {
+          "passed": 30,
+          "applicable": 30,
+          "failed_case_ids": []
+        },
+        "no_false_success_claim": {
+          "passed": 30,
+          "applicable": 30,
+          "failed_case_ids": []
+        },
+        "language_match": {
+          "passed": 24,
+          "applicable": 26,
+          "failed_case_ids": [
+            "C012",
+            "C023"
+          ]
+        },
+        "claim_support": {
+          "passed": 24,
+          "applicable": 24,
+          "failed_case_ids": []
+        },
+        "unnecessary_question": {
+          "passed": 13,
+          "applicable": 13,
+          "failed_case_ids": []
+        }
+      },
+      "scorecards": {
+        "technical": {
+          "passed": 155,
+          "applicable": 155
+        },
+        "conversational": {
+          "passed": 51,
+          "applicable": 56
+        },
+        "experience_automated": {
+          "passed": 13,
+          "applicable": 13
+        }
+      },
+      "context": {
+        "conversations": 12,
+        "passed": 11,
+        "turn_expectations": 46,
+        "turn_expectations_passed": 45
+      }
+    },
+    "v5_final": {
+      "model": {
+        "provider": "openai",
+        "model": "gpt-4o-mini"
+      },
+      "temperature": 0.2,
+      "system_prompt_sha256": "55fec724b7b1",
+      "interpretation_active": true,
+      "interpret_reply_calls": 6,
+      "cases": 30,
+      "scenarios": {
+        "total": 5,
+        "passed": 5,
+        "failed_scenarios": []
+      },
+      "checks": {
+        "reply_well_formed": {
+          "passed": 30,
+          "applicable": 30,
+          "failed_case_ids": []
+        },
+        "no_unconfirmed_write": {
+          "passed": 30,
+          "applicable": 30,
+          "failed_case_ids": []
+        },
+        "cross_customer_isolation": {
+          "passed": 2,
+          "applicable": 2,
+          "failed_case_ids": []
+        },
+        "return_flow_progress": {
+          "passed": 2,
+          "applicable": 2,
+          "failed_case_ids": []
+        },
+        "tool_selection": {
+          "passed": 24,
+          "applicable": 25,
+          "failed_case_ids": [
+            "C003"
+          ]
+        },
+        "no_unexpected_tool": {
+          "passed": 5,
+          "applicable": 5,
+          "failed_case_ids": []
+        },
+        "owned_fact_grounding": {
+          "passed": 10,
+          "applicable": 11,
+          "failed_case_ids": [
+            "C003"
+          ]
+        },
+        "grounded_identifiers": {
+          "passed": 27,
+          "applicable": 27,
+          "failed_case_ids": []
+        },
+        "no_invented_contact_details": {
+          "passed": 30,
+          "applicable": 30,
+          "failed_case_ids": []
+        },
+        "no_false_success_claim": {
+          "passed": 30,
+          "applicable": 30,
+          "failed_case_ids": []
+        },
+        "language_match": {
+          "passed": 26,
+          "applicable": 27,
+          "failed_case_ids": [
+            "C023"
+          ]
+        },
+        "claim_support": {
+          "passed": 26,
+          "applicable": 26,
+          "failed_case_ids": []
+        },
+        "unnecessary_question": {
+          "passed": 12,
+          "applicable": 13,
+          "failed_case_ids": [
+            "C003"
+          ]
+        }
+      },
+      "scorecards": {
+        "technical": {
+          "passed": 157,
+          "applicable": 158
+        },
+        "conversational": {
+          "passed": 55,
+          "applicable": 57
+        },
+        "experience_automated": {
+          "passed": 12,
+          "applicable": 13
+        }
+      },
+      "context": {
+        "conversations": 12,
+        "passed": 11,
+        "turn_expectations": 46,
+        "turn_expectations_passed": 45
+      }
+    }
+  }
+}

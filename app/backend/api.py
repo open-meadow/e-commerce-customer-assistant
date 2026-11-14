@@ -36,11 +36,16 @@ class Backend:
     """One backend instance: registry, engine, LLM client and settings."""
 
     def __init__(self, llm: Optional[LLMClient] = None, settings: Optional[Settings] = None,
-                 env: Optional[Mapping[str, str]] = None):
+                 env: Optional[Mapping[str, str]] = None, interpret_replies: Optional[bool] = None):
         self.settings = settings or Settings()
         self.llm = llm if llm is not None else build_llm_client(env if env is not None else os.environ)
         self.registry = SessionRegistry(self.settings)
-        self.engine = Engine(self.registry, self.llm, self.settings)
+        self.engine = Engine(self.registry, self.llm, self.settings, interpret=interpret_replies)
+
+    @property
+    def interpretation_active(self) -> bool:
+        """True when a language model interprets replies at open prompts (see ``Engine.interpret``)."""
+        return self.engine.interpret
 
     # -- login ----------------------------------------------------------
 

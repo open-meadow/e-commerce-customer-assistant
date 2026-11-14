@@ -201,9 +201,12 @@ class OpenAIResponsesClient:
     """OpenAI Responses API (``POST {base}/responses``), stateless (``store: false``)."""
 
     name = "openai"
+    interprets_language = True  # a real language model: the orchestrator may ask it for labels
 
-    def __init__(self, api_key: str, model: str, base_url: str, timeout: float) -> None:
+    def __init__(self, api_key: str, model: str, base_url: str, timeout: float,
+                 temperature: Optional[float] = None) -> None:
         self._key, self._model, self._base, self._timeout = api_key, model, base_url.rstrip("/"), timeout
+        self._temperature = temperature  # None: not sent (reasoning models reject the parameter)
 
     def _unusable(self) -> LLMError:
         return _fail(self.name, self._model, "invalid_response")
@@ -217,6 +220,8 @@ class OpenAIResponsesClient:
             "max_output_tokens": max(_MIN_OUTPUT_TOKENS, int(max_output_tokens)),
             "store": False,
         }
+        if self._temperature is not None:
+            payload["temperature"] = self._temperature
         if tools:
             payload["tools"] = [_responses_tool(t) for t in tools]
         data = _post_json(f"{self._base}/responses", {"Authorization": f"Bearer {self._key}"},
@@ -302,9 +307,12 @@ class AnthropicClient:
     """Messages API (``/v1/messages``)."""
 
     name = "anthropic"
+    interprets_language = True
 
-    def __init__(self, api_key: str, model: str, base_url: str, timeout: float) -> None:
+    def __init__(self, api_key: str, model: str, base_url: str, timeout: float,
+                 temperature: Optional[float] = None) -> None:
         self._key, self._model, self._base, self._timeout = api_key, model, base_url.rstrip("/"), timeout
+        self._temperature = temperature  # None: not sent (reasoning models reject the parameter)
 
     def _unusable(self) -> LLMError:
         return _fail(self.name, self._model, "invalid_response")
@@ -315,6 +323,8 @@ class AnthropicClient:
             "model": self._model, "max_tokens": max_output_tokens,
             "system": system, "messages": _flatten(messages),
         }
+        if self._temperature is not None:
+            payload["temperature"] = self._temperature
         if tools:
             payload["tools"] = [{"name": t["name"], "description": t["description"],
                                  "input_schema": t["parameters"]} for t in tools]
@@ -346,6 +356,20 @@ class AnthropicClient:
 # Selection and readiness (no network access)
 # ---------------------------------------------------------------------------
 
+def _temperature(env: Mapping[str, str]) -> Optional[float]:
+    """``LLM_TEMPERATURE`` as a float in [0, 2], ``None`` when unset or blank, else a configuration error."""
+    raw = (env.get("LLM_TEMPERATURE") or "").strip()
+    if not raw:
+        return None
+    try:
+        value = float(raw)
+    except ValueError as exc:
+        raise LLMConfigError("LLM_TEMPERATURE is not a number between 0 and 2") from exc
+    if not 0.0 <= value <= 2.0:  # also rejects nan
+        raise LLMConfigError("LLM_TEMPERATURE is not a number between 0 and 2")
+    return value
+
+
 def build_llm_client(env: Optional[Mapping[str, str]] = None) -> LLMClient:
     """Build the configured client. Defaults to the offline rule-based client.
 
@@ -364,17 +388,20 @@ def build_llm_client(env: Optional[Mapping[str, str]] = None) -> LLMClient:
         timeout = float(env.get("LLM_TIMEOUT_SECONDS") or _DEFAULT_TIMEOUT)
     except ValueError as exc:
         raise LLMConfigError("LLM_TIMEOUT_SECONDS is not a number") from exc
+    temperature = _temperature(env)
     model = env.get("LLM_MODEL")
     if provider == "openai":
         key = env.get("OPENAI_API_KEY")
         if not key or not model:
             raise LLMConfigError("OPENAI_API_KEY and LLM_MODEL are required for the openai provider")
-        return OpenAIResponsesClient(key, model, env.get("OPENAI_BASE_URL") or "https://api.openai.com/v1", timeout)
+        return OpenAIResponsesClient(key, model, env.get("OPENAI_BASE_URL") or "https://api.openai.com/v1", timeout,
+                                    temperature)
     if provider == "anthropic":
         key = env.get("ANTHROPIC_API_KEY")
         if not key or not model:
             raise LLMConfigError("ANTHROPIC_API_KEY and LLM_MODEL are required for the anthropic provider")
-        return AnthropicClient(key, model, env.get("ANTHROPIC_BASE_URL") or "https://api.anthropic.com", timeout)
+        return AnthropicClient(key, model, env.get("ANTHROPIC_BASE_URL") or "https://api.anthropic.com", timeout,
+                               temperature)
     raise LLMConfigError("unknown LLM_PROVIDER")
 
 
@@ -403,4 +430,8 @@ def readiness(env: Optional[Mapping[str, str]] = None) -> dict[str, Any]:
         float(env.get("LLM_TIMEOUT_SECONDS") or _DEFAULT_TIMEOUT)
     except ValueError:
         missing.append("LLM_TIMEOUT_SECONDS (not a number)")
+    try:
+        _temperature(env)
+    except LLMConfigError:
+        missing.append("LLM_TEMPERATURE (not a number between 0 and 2)")
     return {"provider": provider, "configured": not missing, "missing": missing, "live": not missing}

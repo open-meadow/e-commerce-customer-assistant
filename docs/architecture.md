@@ -1,3 +1,5 @@
+> **Superseded diagram.** The diagram below shows the earlier fake-backend wiring and is kept for history only. The current system is: Streamlit UI -> `app.backend` -> orchestrator -> nine customer-scoped tools -> SQLite, with Chroma retrieval over `FAQ.md` and `Policies.md`, an LLM adapter (OpenAI Responses live-evaluated; Anthropic mock-tested; offline rule-based stand-in), and an optional LiveKit voice channel. See `docs/technical_report.md` section 2.
+
 # Project Architecture
 
 > **Update (branch `wire-ui-backend`):** the Streamlit UI now reaches the real

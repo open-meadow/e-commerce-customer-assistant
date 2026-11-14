@@ -37,6 +37,13 @@ _FIELDS = (
     "expected_tool",
 )
 _CATEGORIES = {
+    # conversational set (queries_conversational.csv): how the customer writes, not what they ask about
+    "frustrated",
+    "abusive",
+    "hinglish",
+    "indirect",
+    "human_request",
+    "unsupported",
     "order_status",
     "delivery",
     "payment",
@@ -70,6 +77,7 @@ _TOOLS = {
     "list_my_orders",
     "get_order_status",
     "get_refund_policy",
+    "search_policies",  # a real backend tool (policy and FAQ retrieval)
     "lookup_product",
     "start_return_request",
     "start_support_ticket",
@@ -122,7 +130,7 @@ def load_cases(
                 f"{path}:{line_number}: unknown expected behavior "
                 f"{row['expected_behavior']!r}"
             )
-        if row["expected_tool"] not in _TOOLS:
+        if any(tool not in _TOOLS for tool in row["expected_tool"].split("|")):  # "a|b": either is correct
             raise ValueError(
                 f"{path}:{line_number}: unknown expected tool "
                 f"{row['expected_tool']!r}"

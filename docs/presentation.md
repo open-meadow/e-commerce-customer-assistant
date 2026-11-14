@@ -5,6 +5,8 @@ author: "Rukum Maurya"
 date: "2026-11-11"
 ---
 
+> **Superseded.** This outline describes an earlier prototype state (fake backend, 545 tests, no LLM or RAG) and is kept for history. The current deck is `docs/Capstone_Presentation.pptx`.
+
 ## Project at a glance
 
 **Goal:** Explore a text-based assistant for common e-commerce support questions.

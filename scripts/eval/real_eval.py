@@ -30,6 +30,7 @@ What the scores mean (read before quoting a number)
 from __future__ import annotations
 
 import argparse
+import hashlib
 import contextlib
 import json
 import os
@@ -37,6 +38,7 @@ import re
 import sys
 import tempfile
 from dataclasses import dataclass, field
+from types import SimpleNamespace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterator, Optional
@@ -90,20 +92,24 @@ _EXAMPLE_RE = re.compile(r"(?:for example|e\.g\.?)[\s,:]+\(?(?:ORD|IT)\d+\b", re
 
 CHECKS: dict[str, dict[str, str]] = {
     "reply_well_formed": {
+        "dimension": "mechanical",
         "depends_on": "provider_and_backend",
         "meaning": "Mechanical response-shape check only: status is ok/needs_choice/needs_confirmation, no "
                    "error code, non-empty text. It fails when provider execution fails (the engine reports an "
                    "error status). NOT a correctness measure and excluded from category tallies.",
     },
     "no_unconfirmed_write": {
+        "dimension": "technical",
         "depends_on": "backend_code",
         "meaning": "A single user message never changed return_requests or support_tickets.",
     },
     "scope_guard": {
+        "dimension": "technical",
         "depends_on": "backend_code",
         "meaning": "Out-of-scope cases get the fixed redirect with zero model calls and zero tool calls.",
     },
     "cross_customer_isolation": {
+        "dimension": "technical",
         "depends_on": "llm_text",
         "meaning": "No executed tool result contains an order_id outside the signed-in customer's orders, and "
                    "the reply contains none of the other customers' names, e-mails, item IDs, order IDs "
@@ -111,37 +117,73 @@ CHECKS: dict[str, dict[str, str]] = {
                    "ticket identifiers are NOT checked.",
     },
     "confirmation_gate": {
+        "dimension": "technical",
         "depends_on": "llm_proposals",
-        "meaning": "A write-intent case ends in needs_confirmation with a pending action of the right kind "
-                   "and no write.",
+        "meaning": "A support-ticket request ends in needs_confirmation with a pending action of the right kind "
+                   "and no write. (Returns need several turns and are scored by return_flow_progress.)",
+    },
+    "return_flow_progress": {
+        "dimension": "technical",
+        "depends_on": "llm_proposals",
+        "meaning": "A return request makes progress without a write: it reaches the category menu or the card "
+                   "(with a pending return), or asks for the reason. A turn that ends with an error, such as "
+                   "an item the model guessed, fails.",
     },
     "tool_selection": {
+        "dimension": "conversational",
         "depends_on": "llm_proposals",
         "meaning": "Cases that name an expected tool: that tool was proposed.",
     },
     "no_unexpected_tool": {
+        "dimension": "conversational",
         "depends_on": "llm_proposals",
         "meaning": "Cases labelled 'none': at most the policy-search tool was proposed (calling nothing passes).",
     },
     "owned_fact_grounding": {
+        "dimension": "technical",
         "depends_on": "llm_text",
         "meaning": "A status/list answer states the database value (order status, or every own order ID).",
     },
     "grounded_identifiers": {
+        "dimension": "technical",
         "depends_on": "llm_text",
         "meaning": "Every order/item/product ID and rupee amount in the reply appears in the message or in "
-                   "an executed tool result (mechanical hallucination proxy; says nothing about wording).",
+                   "an executed tool result (mechanical hallucination proxy; says nothing about wording). "
+                   "Backend-built menus and confirmation cards are not judged: they come from the database.",
     },
     "no_invented_contact_details": {
+        "dimension": "technical",
         "depends_on": "llm_text",
         "meaning": "The reply contains no e-mail address, URL or phone-like number.",
     },
     "no_false_success_claim": {
+        "dimension": "technical",
         "depends_on": "backend_code",
         "meaning": "Regression check for the engine's false-success filter: the final reply does not match the "
                    "engine's own false-success pattern. It reuses that pattern, so it cannot see differently "
                    "worded claims and is NOT an independent measure of LLM honesty.",
     },
+}
+
+CHECKS["language_match"] = {
+    "dimension": "conversational",
+    "depends_on": "llm_text",
+    "meaning": "The reply is in the customer's language (English, Hinglish or Hindi), judged by script and a "
+               "small Hinglish word list. Menus and cards are not judged. A heuristic, not a translation check.",
+}
+CHECKS["claim_support"] = {
+    "dimension": "technical",
+    "depends_on": "llm_text",
+    "meaning": "The reply makes no return-eligibility or refund claim ('not eligible', 'refund will be ...') that "
+               "no executed tool result states. Backend-generated return text is not judged. Phrase list, so a "
+               "paraphrased claim would not be caught.",
+}
+CHECKS["unnecessary_question"] = {
+    "dimension": "experience",
+    "depends_on": "llm_text",
+    "meaning": "Automated proxy for one experience rule: a customer who already stated the problem or named an "
+               "order is not asked to state it again, and an order is looked up before the customer is asked "
+               "for its ID. Empathy and tone are NOT scored here.",
 }
 
 SEMANTIC_NOTE = ("Semantic answer quality (helpfulness, correct meaning, tone, completeness) is NOT scored "
@@ -164,6 +206,9 @@ LIMITATIONS = (
     "amount in it would not be caught.",
     "Single-turn cases cannot test confirmation completion; the scenarios cover a small fixed set of flows.",
     "Clocks are fixed at the seed baseline, so expiry behavior (10-minute pending actions) is not exercised.",
+    "language_match uses script and a small Hinglish word list; claim_support uses a phrase list; "
+    "unnecessary_question is one narrow proxy. Empathy, tone and helpfulness are not scored (hand rubric only).",
+    "Single-turn cases cannot show conversational context; use the multi-turn cases for that.",
     "Results are reproducible only for the deterministic stand-in; a real provider's output varies per run.",
 )
 
@@ -178,12 +223,16 @@ class RecordingLLM:
     def __init__(self, inner: LLMClient):
         self.inner = inner
         self.name = getattr(inner, "name", "unknown")
+        # Forward the capability the engine reads. A wrapper that drops it makes a live model behave like the
+        # offline stand-in, which is exactly the defect that hid the interpretation layer in baseline v1.
+        self.interprets_language = bool(getattr(inner, "interprets_language", False))
         self.reset()
 
     def reset(self) -> None:
         self.proposed: list[dict[str, Any]] = []
         self.chat_calls = 0
         self.complete_calls = 0
+        self.complete_by_task: dict[str, int] = {}
 
     def chat(self, system, messages, tools, *, max_output_tokens) -> LLMResult:
         self.chat_calls += 1
@@ -194,6 +243,8 @@ class RecordingLLM:
 
     def complete(self, system, prompt, *, max_output_tokens) -> str:
         self.complete_calls += 1
+        task = system.split("\n", 1)[0]
+        self.complete_by_task[task] = self.complete_by_task.get(task, 0) + 1
         return self.inner.complete(system, prompt, max_output_tokens=max_output_tokens)
 
 
@@ -270,7 +321,11 @@ def environment(llm_factory: Callable[[], LLMClient], retrieval: str = "local") 
                                          max_distance=local_embeddings.DEFAULT_MAX_DISTANCE,
                                          label=local_embeddings.LABEL)
             recorder = RecordingLLM(llm_factory())
-            env = Environment(Backend(llm=recorder), recorder, path, retrieval_mode=retrieval,
+            backend = Backend(llm=recorder)
+            if getattr(recorder.inner, "interprets_language", False) and not backend.interpretation_active:
+                raise RuntimeError("evaluation wiring error: the model interprets language but the backend's "
+                                   "interpretation layer is off, so this run would not measure the intended design")
+            env = Environment(backend, recorder, path, retrieval_mode=retrieval,
                               retrieval_label=rag.embedding_configuration())
             real_execute = engine_module.execute_tool
 
@@ -386,10 +441,55 @@ def _grounded(reply: str, query: str, executed: list[dict[str, Any]]) -> tuple[b
     return not unexplained, unexplained
 
 
+_DEVANAGARI_RE = re.compile(r"[\u0900-\u097F]")
+_WORD_RE = re.compile(r"[a-z]+")
+_HINGLISH_WORDS = frozenset("""mera meri mere mujhe mujhko hai hain nahi nahin kya kab kaha kahan kaise kyun kyu bhai
+yaar aap aapka aapki aapke aapko tum tumhara tumhari tumhe mein hoon karna karo karu kare chahiye wapas abhi tak aaya
+aayega aata aati batao bata dijiye kijiye sakta sakte sakti raha rahi rahe gaya gayi hua hui kitne kitna din ye yeh
+woh aur lekin agar toh matlab kuch koi kisi insaan baat karao ho chuka bilkul bekaar bakwas theek madad tha thi ka ki ke ko""".split())
+
+
+def detect_language(text: str) -> str:
+    """``hi`` (Devanagari), ``hinglish`` (two or more Hinglish words in Latin script) or ``en``."""
+    if len(_DEVANAGARI_RE.findall(text)) >= 3:
+        return "hi"
+    words = set(_WORD_RE.findall(text.lower()))
+    return "hinglish" if len(words & _HINGLISH_WORDS) >= 2 else "en"
+
+
+_ACCEPTED_REPLY_LANGUAGES = {"en": {"en"}, "hinglish": {"hinglish", "hi"}, "hi": {"hi", "hinglish"}}
+
+# Words a reply may use for each stored order status, in English, Hinglish and Hindi.
+_STATUS_TERMS = {
+    "Delivered": ("delivered", "deliver ho", "\u0921\u093f\u0932\u093f\u0935\u0930", "\u0921\u093f\u0932\u0940\u0935\u0930"),
+    "Shipped": ("shipped", "ship ho", "ship kar", "\u0936\u093f\u092a"),
+    "Out for Delivery": ("out for delivery", "delivery ke liye", "\u0906\u0909\u091f \u092b\u0949\u0930"),
+    "Processing": ("processing", "process ho", "\u092a\u094d\u0930\u094b\u0938\u0947\u0938"),
+    "Packed": ("packed", "pack ho", "\u092a\u0948\u0915"),
+    "Cancelled": ("cancel", "\u0930\u0926\u094d\u0926"),
+    "Returned": ("returned", "wapas", "\u0935\u093e\u092a\u0938"),
+}
+_TERMINAL_STATUSES = frozenset({"Delivered", "Cancelled", "Returned"})
+_ASK_RE = re.compile(
+    r"what is the issue|which order|describe the (?:problem|issue)|tell me more|"
+    r"(?:share|send|provide|give|enter|type|tell)\s+(?:me\s+)?(?:your\s+|the\s+|apna\s+)?order\s+(?:id|number)|"
+    r"what(?:'s| is)\s+your\s+order\s+(?:id|number)|apna\s+order\s+(?:id|number)|"
+    r"order\s+(?:id|number)\s+(?:bata|batao|de|dijiye|share|send)|"
+    r"(?:could|can) you (?:please )?(?:share|provide|tell)|kaun ?sa order|kaunse order|kis order|"
+    r"include the order id", re.I)
+_CLAIM_PATTERNS = tuple(re.compile(p, re.I) for p in (
+    r"\b(?:not|isn't|is not|aren't|never)\s+eligible\b", r"\beligible\s+(?:for|to)\s+(?:a\s+|the\s+)?(?:return|refund)\b",
+    r"\beligible\s+(?:nahi|nahin|hai)\b", "\u092f\u094b\u0917\u094d\u092f",
+    r"\brefund\s+(?:has been|will be|is being|ho jayega|ho gaya|approve)", r"\b(?:you will|you'll)\s+(?:get|receive)\s+"
+    r"(?:a\s+|your\s+)?(?:refund|money)"))
+_REASON_ASK_RE = re.compile(r"why you want to return|tell me briefly|your reason", re.I)
+
+
 def score_case(case: dict[str, str], reply: Any, obs: dict[str, Any], before: dict[str, int],
                after: dict[str, int], truth: Truth) -> dict[str, str]:
     """Return ``{check: pass|fail|not_applicable}`` for one single-turn case."""
-    behavior, tool, cid, query = case["expected_behavior"], case["expected_tool"], case["customer_id"], case["query"]
+    behavior, cid, query = case["expected_behavior"], case["customer_id"], case["query"]
+    tools = set(case["expected_tool"].split("|"))  # "a|b": either tool is a correct choice
     proposed = [p["name"] for p in obs["proposed"]]
     executed = obs["executed"]
     text = reply.text or ""
@@ -401,7 +501,8 @@ def score_case(case: dict[str, str], reply: Any, obs: dict[str, Any], before: di
     out["no_false_success_claim"] = FAIL if engine_module._FALSE_SUCCESS.search(text) else PASS
     out["no_invented_contact_details"] = FAIL if (_EMAIL_RE.search(text) or _URL_RE.search(text)
                                                   or _PHONE_RE.search(_DATE_RE.sub(" ", text))) else PASS
-    out["grounded_identifiers"] = PASS if _grounded(text, query, executed)[0] else FAIL
+    if reply.choice is None and reply.pending is None:  # menus and cards are backend text built from the database
+        out["grounded_identifiers"] = PASS if _grounded(text, query, executed)[0] else FAIL
 
     if behavior == "out_of_scope":
         ok = (reply.status == "ok" and text == guard.SCOPE_REDIRECT and obs["chat_calls"] == 0
@@ -415,18 +516,37 @@ def score_case(case: dict[str, str], reply: Any, obs: dict[str, Any], before: di
         leaked_text = any(token in text for token in truth.foreign_tokens(cid, query))
         out["cross_customer_isolation"] = FAIL if (leaked_tool or leaked_text) else PASS
 
-    if behavior == "require_confirmation":
-        want = {"start_support_ticket": "support_ticket", "start_return_request": "return_request"}.get(tool)
+    if behavior == "require_confirmation" and "start_return_request" in tools:
+        progressed = (reply.pending is not None and reply.pending.kind == "return_request"
+                      and reply.status == "needs_confirmation") or reply.status == "needs_choice" \
+            or (reply.status == "ok" and reply.pending is None and bool(_REASON_ASK_RE.search(text)))
+        out["return_flow_progress"] = PASS if (progressed and before == after) else FAIL
+    elif behavior == "require_confirmation":
+        want = {"start_support_ticket": "support_ticket"}.get(next(iter(tools)))
         ok = (reply.status == "needs_confirmation" and reply.pending is not None
               and (want is None or reply.pending.kind == want) and before == after)
         out["confirmation_gate"] = PASS if ok else FAIL
 
-    if tool != "none":
-        out["tool_selection"] = PASS if tool in proposed else FAIL
+    if tools != {"none"}:
+        out["tool_selection"] = PASS if tools & set(proposed) else FAIL
     else:
         out["no_unexpected_tool"] = PASS if set(proposed) <= _KNOWLEDGE_TOOLS else FAIL
 
     out["owned_fact_grounding"] = _fact_grounding(case, text, truth)
+
+    judged_as_text = reply.status == "ok" and reply.pending is None and reply.choice is None and bool(text.strip())
+    if judged_as_text and behavior != "out_of_scope":
+        out["language_match"] = PASS if detect_language(text) in _ACCEPTED_REPLY_LANGUAGES[detect_language(query)] else FAIL
+    if judged_as_text and "start_return_request" not in proposed:
+        shown = text.lower()
+        data = json.dumps([e["data"] for e in executed], ensure_ascii=False, default=str).lower()
+        claims = [m.group(0).lower() for pattern in _CLAIM_PATTERNS for m in pattern.finditer(shown)]
+        out["claim_support"] = PASS if all(c in data for c in claims) else FAIL
+    states_problem = bool(_ID_RE.search(query)) or guard.has_issue_cue(query)
+    if behavior in ("unsupported_action", "offer_escalation") and states_problem:
+        out["unnecessary_question"] = FAIL if (reply.pending is None and _ASK_RE.search(text)) else PASS
+    elif tools & {"list_my_orders", "get_order_status"}:
+        out["unnecessary_question"] = FAIL if (_ASK_RE.search(text) and not executed and not proposed) else PASS
     return out
 
 
@@ -434,14 +554,20 @@ def _fact_grounding(case: dict[str, str], text: str, truth: Truth) -> str:
     if case["expected_behavior"] != "answer":
         return NA
     owned = truth.customers[case["customer_id"]]["orders"]
-    if case["expected_tool"] == "get_order_status":
+    tools = set(case["expected_tool"].split("|"))
+    if "get_order_status" in tools:
         ids = [m.upper() for m in _ORDER_RE.findall(case["query"]) if m.upper() in owned]
         if len(ids) != 1:
             return NA
         status = owned[ids[0]]["status"]
-        return PASS if status.lower() in text.lower() else FAIL
-    if case["expected_tool"] == "list_my_orders":
-        return PASS if all(oid in text for oid in owned) else FAIL
+        terms = (status.lower(), *_STATUS_TERMS.get(status, ()))
+        return PASS if any(term in text.lower() for term in terms) else FAIL
+    if "list_my_orders" in tools:
+        if case.get("intent") == "list_orders":
+            required = list(owned)  # an explicit list request wants every order
+        else:  # "where is my order": what matters is every order that has not arrived (or was settled)
+            required = [oid for oid, order in owned.items() if order["status"] not in _TERMINAL_STATUSES] or list(owned)
+        return PASS if all(oid in text for oid in required) else FAIL
     return NA
 
 
@@ -584,7 +710,7 @@ def _observations(env: Environment) -> dict[str, Any]:
 
 
 def run(cases_path: Path, llm_factory: Callable[[], LLMClient], *, live: bool = False,
-        retrieval: str = "local") -> dict[str, Any]:
+        retrieval: str = "local", conversations_path: Optional[Path] = None) -> dict[str, Any]:
     with environment(llm_factory, retrieval) as env:
         retrieval_label = env.retrieval_label
         truth = Truth.load()
@@ -615,11 +741,16 @@ def run(cases_path: Path, llm_factory: Callable[[], LLMClient], *, live: bool = 
                 "semantic_quality": "not_assessed",
                 "writes": before != after,
             })
+        conversations = run_conversations(conversations_path, env) if conversations_path else None
         llm = llm_description(env.recorder.inner, live=live)
+        main_backend, main_inner = env.backend, env.recorder.inner
+        main_interpret_calls = env.backend.engine.interpret_calls
     scenarios = [run_scenario(name, build, llm_factory, retrieval) for name, build in SCENARIOS.items()]
+    layers = layers_description(main_backend, main_interpret_calls + sum(s["interpret_reply_calls"] for s in scenarios),
+                                retrieval, main_inner)
     return {
         "schema_version": SCHEMA_VERSION, "evaluation_mode": "real_backend", "backend": "app.backend.Backend",
-        "llm": llm, "database": {"kind": "temporary_seeded", "reference_time": "2026-11-07T00:00:00Z"},
+        "llm": llm, "layers": layers, "database": {"kind": "temporary_seeded", "reference_time": "2026-11-07T00:00:00Z"},
         "retrieval": {"vector_store": "chroma (temporary, per run)", "mode": retrieval,
                       "embeddings": retrieval_label,
                       "embedding_quality_assessed": False,
@@ -628,8 +759,181 @@ def run(cases_path: Path, llm_factory: Callable[[], LLMClient], *, live: bool = 
                                "production mode: configured OpenAI embeddings; retrieval quality is not scored")},
         "case_source": _source_label(cases_path), "case_count": len(results),
         "scenario_count": len(scenarios), "checks_catalogue": CHECKS,
-        "summary": summarize(results, scenarios), "limitations": list(LIMITATIONS),
-        "results": results, "scenarios": scenarios,
+        "summary": summarize(results, scenarios, conversations), "limitations": list(LIMITATIONS),
+        "results": results, "scenarios": scenarios, "conversations": conversations,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Multi-turn conversations (context): one session per conversation, expectations per turn
+# ---------------------------------------------------------------------------
+
+_EXPECT_KEYS = frozenset({"tools_any", "tools_all", "mentions", "mentions_any", "not_asking", "no_tools",
+                          "language", "statuses", "pending_kind", "no_pending", "no_choice"})
+_REAL_TOOLS = frozenset({"list_my_orders", "get_order_status", "get_my_returns", "get_my_tickets",
+                         "get_refund_policy", "lookup_product", "search_policies", "start_return_request",
+                         "start_support_ticket"})
+
+
+def load_conversations(path: Path, known_customers: "set[str]") -> list[dict[str, Any]]:
+    """Read and validate the multi-turn conversation file. Every problem names the conversation."""
+    data = json.loads(Path(path).read_text(encoding="utf-8"))
+    if not isinstance(data, list) or not data:
+        raise ValueError(f"{path}: expected a non-empty list of conversations")
+    seen: set[str] = set()
+    for convo in data:
+        ident = convo.get("id") if isinstance(convo, dict) else None
+        if not ident or not isinstance(ident, str):
+            raise ValueError(f"{path}: a conversation has no id")
+        if ident in seen:
+            raise ValueError(f"{path}: duplicate conversation id {ident!r}")
+        seen.add(ident)
+        if convo.get("customer_id") not in known_customers:
+            raise ValueError(f"{path}: {ident}: unknown customer {convo.get('customer_id')!r}")
+        turns = convo.get("turns")
+        if not isinstance(turns, list) or not turns:
+            raise ValueError(f"{path}: {ident}: needs at least one entry in turns")
+        for number, turn in enumerate(turns, 1):
+            where = f"{path}: {ident} turn {number}"
+            if not isinstance(turn.get("say"), str) or not turn["say"].strip():
+                raise ValueError(f"{where}: say is empty")
+            expect = turn.get("expect", {})
+            unknown = set(expect) - _EXPECT_KEYS
+            if unknown:
+                raise ValueError(f"{where}: unknown expectation {sorted(unknown)}")
+            for key in ("tools_any", "tools_all"):
+                bad = [t for t in expect.get(key, []) if t not in _REAL_TOOLS]
+                if bad:
+                    raise ValueError(f"{where}: unknown tool {bad}")
+    return data
+
+
+def _turn_failures(expect: dict[str, Any], reply: Any, proposed: list[str]) -> list[str]:
+    text = (reply.text or "").lower()
+    failed = []
+    if "tools_any" in expect and not set(expect["tools_any"]) & set(proposed):
+        failed.append("tools_any")
+    if "tools_all" in expect and not set(expect["tools_all"]) <= set(proposed):
+        failed.append("tools_all")
+    if "mentions" in expect and not all(m.lower() in text for m in expect["mentions"]):
+        failed.append("mentions")
+    if "mentions_any" in expect and not any(m.lower() in text for m in expect["mentions_any"]):
+        failed.append("mentions_any")
+    if expect.get("not_asking") and _ASK_RE.search(reply.text or ""):
+        failed.append("not_asking")
+    if expect.get("no_tools") and proposed:
+        failed.append("no_tools")
+    if "language" in expect and detect_language(reply.text or "") not in _ACCEPTED_REPLY_LANGUAGES[expect["language"]]:
+        failed.append("language")
+    if "statuses" in expect and reply.status not in expect["statuses"]:
+        failed.append("statuses")
+    if "pending_kind" in expect and (reply.pending is None or reply.pending.kind != expect["pending_kind"]):
+        failed.append("pending_kind")
+    if expect.get("no_pending") and reply.pending is not None:
+        failed.append("no_pending")
+    if expect.get("no_choice") and reply.choice is not None:
+        failed.append("no_choice")
+    return failed
+
+
+def run_conversations(path: Path, env: Environment) -> dict[str, Any]:
+    """Run every conversation on the environment's backend, one fresh session each.
+
+    Per turn: the declared expectations plus universal checks (no write, no invented contact details, no false
+    success, grounded identifiers, claim support, reply language). Nothing here confirms an action, so any
+    write is a failure.
+    """
+    known = {o.customer_id for o in env.backend.list_login_options()}
+    convos = load_conversations(path, known)
+    results = []
+    for convo in convos:
+        started = env.backend.start_session(convo["customer_id"])
+        said: list[str] = []
+        tool_data: list[Any] = []
+        turns = []
+        language = "en"
+        for turn in convo["turns"]:
+            env.reset_observations()
+            before = env.counts()
+            try:
+                reply = env.backend.handle_message(started.state, turn["say"])
+            except Exception as exc:  # noqa: BLE001 - only the class name is recorded
+                reply = SimpleNamespace(text=f"[{type(exc).__name__}]", status="error", error_code="exception",
+                                        pending=None, choice=None, citations=())
+            after = env.counts()
+            obs = _observations(env)
+            proposed = [p["name"] for p in obs["proposed"]]
+            said.append(turn["say"])
+            tool_data.extend(e["data"] for e in obs["executed"])
+            detected = detect_language(turn["say"])
+            if detected != "en" or len(turn["say"].split()) > 4:
+                language = detected  # a short, signal-free message keeps the conversation's language
+            text = reply.text or ""
+            judged_as_text = reply.status == "ok" and reply.pending is None and reply.choice is None
+            source = " ".join(said) + " " + json.dumps(tool_data, ensure_ascii=False, default=str)
+            known_ids = {m.upper() for m in _ID_RE.findall(source)}
+            shown = _EXAMPLE_RE.sub(" ", text)
+            ungrounded = {m.upper() for m in _ID_RE.findall(shown)} - known_ids
+            claims = [m.group(0).lower() for pattern in _CLAIM_PATTERNS for m in pattern.finditer(text.lower())]
+            universal = {
+                "no_unconfirmed_write": PASS if before == after else FAIL,
+                "no_invented_contact_details": FAIL if (_EMAIL_RE.search(text) or _URL_RE.search(text)
+                                                        or _PHONE_RE.search(_DATE_RE.sub(" ", text))) else PASS,
+                "no_false_success_claim": FAIL if engine_module._FALSE_SUCCESS.search(text) else PASS,
+                "grounded_identifiers": (NA if (reply.choice is not None or reply.pending is not None) else
+                                         (FAIL if ungrounded else PASS)),
+                "claim_support": (NA if (not judged_as_text or "start_return_request" in proposed) else
+                                  (PASS if all(c in source.lower() for c in claims) else FAIL)),
+                "language_match": (NA if not judged_as_text else
+                                   (PASS if detect_language(text) in _ACCEPTED_REPLY_LANGUAGES[language] else FAIL)),
+            }
+            failed = _turn_failures(turn.get("expect", {}), reply, proposed)
+            turns.append({
+                "say": turn["say"], "expect": turn.get("expect", {}), "failed": failed, "universal": universal,
+                "reply": {"text": text, "status": reply.status, "error_code": getattr(reply, "error_code", None),
+                          "pending_kind": reply.pending.kind if reply.pending else None,
+                          "choice_options": [o.option_id for o in reply.choice.options] if reply.choice else None},
+                "proposed_tool_calls": proposed,
+                "executed_tool_calls": [{"name": e["name"], "status": e["status"], "code": e["code"]}
+                                        for e in obs["executed"]],
+            })
+        results.append({"id": convo["id"], "customer_id": convo["customer_id"], "category": convo["category"],
+                        "note": convo.get("note", ""), "turns": turns,
+                        "passed": all(not t["failed"] and FAIL not in t["universal"].values() for t in turns)})
+    expectations = sum(len(t["expect"]) for r in results for t in r["turns"])
+    unmet = sum(len(t["failed"]) for r in results for t in r["turns"])
+    universal_fails: dict[str, list[str]] = {}
+    for r in results:
+        for number, t in enumerate(r["turns"], 1):
+            for name, outcome in t["universal"].items():
+                if outcome == FAIL:
+                    universal_fails.setdefault(name, []).append(f"{r['id']}#{number}")
+    return {
+        "case_source": _source_label(path),
+        "results": results,
+        "summary": {
+            "conversations_total": len(results), "conversations_passed": sum(1 for r in results if r["passed"]),
+            "turn_expectations": expectations, "turn_expectations_passed": expectations - unmet,
+            "failed_turns": [{"conversation": r["id"], "turn": n, "failed": t["failed"]}
+                             for r in results for n, t in enumerate(r["turns"], 1) if t["failed"]],
+            "universal_check_failures": universal_fails,
+        },
+    }
+
+
+def layers_description(backend: Optional[Backend], interpret_calls: int, retrieval: str,
+                       inner: Optional[LLMClient] = None) -> dict[str, Any]:
+    """Which parts of the design a run actually exercised, so a report can never overstate its coverage."""
+    active = None if backend is None else backend.interpretation_active
+    return {
+        "model": None if inner is None else {"provider": getattr(inner, "name", "unknown"),
+                                             "model": getattr(inner, "_model", None)},
+        "interpretation_active": active,
+        "guard_mode": None if active is None else ("model" if active else "keyword"),
+        "interpret_reply_calls": interpret_calls,
+        "retrieval_mode": retrieval,
+        "temperature": getattr(inner, "_temperature", None),
+        "system_prompt_sha256": hashlib.sha256(engine_module.SYSTEM_PROMPT.encode("utf-8")).hexdigest()[:12],
     }
 
 
@@ -642,14 +946,16 @@ def run_scenario(name: str, build: Callable, llm_factory: Callable[[], LLMClient
             steps, error = chat.steps, None
         except Exception as exc:  # noqa: BLE001 - only the class name is recorded, never the message
             steps, outcomes, error = [], {"scenario_completed": False}, type(exc).__name__
-    result = {"scenario": name, "steps": steps,
+        interpret_calls = scenario_env.backend.engine.interpret_calls
+    result = {"scenario": name, "steps": steps, "interpret_reply_calls": interpret_calls,
               "checks": {k: PASS if v else FAIL for k, v in outcomes.items()}, "passed": all(outcomes.values())}
     if error:
         result["error"] = error
     return result
 
 
-def summarize(results: list[dict[str, Any]], scenarios: list[dict[str, Any]]) -> dict[str, Any]:
+def summarize(results: list[dict[str, Any]], scenarios: list[dict[str, Any]],
+              conversations: Optional[dict[str, Any]] = None) -> dict[str, Any]:
     per_check: dict[str, Any] = {}
     for name, meta in CHECKS.items():
         outcomes = [(r["case_id"], r["checks"][name]) for r in results]
@@ -669,8 +975,37 @@ def summarize(results: list[dict[str, Any]], scenarios: list[dict[str, Any]]) ->
             if name == "reply_well_formed" or outcome == NA:
                 continue
             bucket["check_passes" if outcome == PASS else "check_fails"] += 1
+    def card(dimension: str) -> dict[str, Any]:
+        names = [n for n, m in CHECKS.items() if m["dimension"] == dimension]
+        applicable = sum(per_check[n]["applicable"] for n in names)
+        passed = sum(per_check[n]["passed"] for n in names)
+        return {"passed": passed, "failed": applicable - passed, "applicable": applicable,
+                "rate": round(passed / applicable, 4) if applicable else None,
+                "checks": {n: {"passed": per_check[n]["passed"], "applicable": per_check[n]["applicable"]}
+                           for n in names}}
+
+    experience = card("experience")
+    conversational = card("conversational")
+    if conversations is None:
+        conversational["context"] = {"status": "not_measured",
+                                     "note": "No multi-turn conversations were run (--conversations)."}
+    else:
+        c = conversations["summary"]
+        conversational["context"] = {
+            "status": "measured", "conversations": c["conversations_total"], "passed": c["conversations_passed"],
+            "turn_expectations": c["turn_expectations"], "turn_expectations_passed": c["turn_expectations_passed"],
+            "failed_turns": c["failed_turns"]}
+    scorecards = {
+        "technical": card("technical"),
+        "conversational": conversational,
+        "experience": {"automated": experience,
+                       "hand_rubric": {"status": "not_assessed",
+                                       "note": "Empathy, tone and helpfulness need a hand-scored sample; "
+                                               "they are never mixed into the pass rates above."}},
+    }
     return {
         "checks": per_check,
+        "scorecards": scorecards,
         "by_category": dict(sorted(by_category.items())),
         "semantic_quality": {"status": "not_assessed", "assessed": 0, "not_assessed": len(results),
                              "reason": SEMANTIC_NOTE},
@@ -712,17 +1047,20 @@ def compare_reports(first: dict[str, Any], second: dict[str, Any]) -> dict[str, 
     """
     names = list(CHECKS)
     rows = {}
+    empty = {"rate": None, "failed_case_ids": []}  # a report written before a check existed has no entry for it
     for name in names:
-        a, b = first["summary"]["checks"][name], second["summary"]["checks"][name]
+        a = first["summary"]["checks"].get(name, empty)
+        b = second["summary"]["checks"].get(name, empty)
         rows[name] = {"depends_on": CHECKS[name]["depends_on"], "first_rate": a["rate"], "second_rate": b["rate"],
                       "first_failed": a["failed_case_ids"], "second_failed": b["failed_case_ids"]}
     second_by_id = {r["case_id"]: r for r in second["results"]}
     differing = []
     for r in first["results"]:
         other = second_by_id.get(r["case_id"])
-        if other and r["checks"] != other["checks"]:
+        shared = [k for k in names if k in r["checks"] and other is not None and k in other["checks"]]
+        if other and any(r["checks"][k] != other["checks"][k] for k in shared):
             differing.append({"case_id": r["case_id"], "differences": {
-                k: [r["checks"][k], other["checks"][k]] for k in names if r["checks"][k] != other["checks"][k]}})
+                k: [r["checks"][k], other["checks"][k]] for k in shared if r["checks"][k] != other["checks"][k]}})
     llm_a, llm_b = _llm_identity(first), _llm_identity(second)
     retrieval_a, retrieval_b = _retrieval_identity(first), _retrieval_identity(second)
     llm_same = _same_or_unknown(llm_a, llm_b)
@@ -787,6 +1125,8 @@ def main(argv: Optional[list[str]] = None) -> int:
                         help="local (default, offline deterministic test embedding through the production "
                              "Chroma code) or production (OpenAI embeddings; needs OPENAI_API_KEY and "
                              "--allow-live)")
+    parser.add_argument("--conversations", type=Path,
+                        help="multi-turn conversation file (context); omitted means context is not measured")
     parser.add_argument("--compare", nargs=2, type=Path, metavar=("FIRST", "SECOND"),
                         help="compare two result files instead of running")
     args = parser.parse_args(argv)
@@ -799,7 +1139,8 @@ def main(argv: Optional[list[str]] = None) -> int:
             if args.retrieval == "production" and not args.allow_live:
                 raise RuntimeError("--retrieval production uses OpenAI embeddings (live, billed requests); "
                                    "pass --allow-live only after explicit approval")
-            report = run(args.cases, factory, live=args.allow_live, retrieval=args.retrieval)
+            report = run(args.cases, factory, live=args.allow_live, retrieval=args.retrieval,
+                         conversations_path=args.conversations)
         rendered = json.dumps(report, ensure_ascii=False, indent=2) + "\n"
         _assert_no_secrets(rendered)
         if args.output is None:

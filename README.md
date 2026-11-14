@@ -58,7 +58,7 @@ backend (C101 and C102 only, no database).
 | Testing | Pytest |
 | Version control | Git and GitHub |
 
-OpenAI Responses API and Anthropic adapters are available but have only mock-tested transports; neither has been verified against a live provider. The default is `rule_based`, which matches a limited set of phrasings. Policy retrieval uses OpenAI embeddings and requires `OPENAI_API_KEY` when searching or indexing, even when the LLM remains in `rule_based` mode.
+OpenAI Responses API and Anthropic adapters are available. The OpenAI adapter was evaluated live with `gpt-4o-mini` (see `docs/evaluation/README.md`); the Anthropic adapter has only a mock-tested transport and has not been run live. The default is `rule_based`, which matches a limited set of phrasings. Policy retrieval uses OpenAI embeddings and requires `OPENAI_API_KEY` when searching or indexing, even when the LLM remains in `rule_based` mode.
 
 Voice calls use a LiveKit room and agent. OpenAI handles speech transcription
 and voice-agent turn routing; the exact transcript is sent to the support
@@ -84,7 +84,7 @@ Support reply -> Fish Audio via LiveKit Inference -> LiveKit room -> browser
 
 `UI_BACKEND=real` is the local default. `UI_BACKEND=fake` selects the canned,
 database-free demo. Docker Compose uses the real backend and seeds a persistent
-database volume on first start. The evaluation runner still uses the fake
+database volume on first start. The demo runner `scripts/eval/run_eval.py` still uses the fake
 backend.
 
 ## 6. Security and Reliability Principles
@@ -114,7 +114,7 @@ ecommerce-support-assistant/
 │   ├── catalog/        # read-only product lookup
 │   └── ui/             # Streamlit UI and optional fake backend
 ├── docs/
-├── scripts/eval/       # demo-only fake-backend evaluation runner
+├── scripts/eval/       # run_eval.py (demo, fake backend); real_eval.py (real backend, live-capable)
 └── tests/
 ```
 
@@ -263,14 +263,14 @@ prints JSON replies and expected labels. The runner reports all quality and
 safety metrics as `not_assessed`: it has no real tool-call trace and is not an
 evaluation of the real assistant. Sample outputs in
 `app/db/data/eval/logs/sample_conversations.jsonl` are labeled
-`demo_only` / `not_assessed`. A real-backend evaluation mode is not included.
+`demo_only` / `not_assessed`. The real-backend evaluation is separate: see `docs/evaluation/README.md` and `scripts/eval/real_eval.py`.
 
 ## Security and scope limitations
 
 - The customer selector is simulated and is not production authentication.
 - Backend sessions and UI chat history are in-memory and single-process.
 - The default assistant is deterministic rule-based behavior, not a general
-  language model. Provider adapters are not live-tested.
+  language model. The OpenAI adapter was evaluated live on `gpt-4o-mini` (single runs, small sample); the Anthropic adapter and the voice channel have not been run live.
 - If an external LLM provider is explicitly configured, prompts may be sent to
   that provider; the offline rule-based default makes no LLM provider call.
 - Voice audio is streamed through LiveKit. OpenAI provides speech

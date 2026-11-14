@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import gc
 import hashlib
 import json
 import math
@@ -36,6 +37,21 @@ def _source_fingerprint(chunks: Sequence[Chunk]) -> str:
 def _chunk_id(chunk: Chunk) -> str:
     identity = f"{chunk.source}\0{chunk.section}"
     return hashlib.sha256(identity.encode("utf-8")).hexdigest()
+
+
+def _release_client(client: Any) -> None:
+    """Close a Chroma client and release the files it holds.
+
+    ``close()`` stops Chroma's system, but the Rust-backed objects that hold the SQLite connections are only
+    released when Python collects them, so on Windows a folder deleted straight after ``close()`` could fail
+    intermittently with WinError 32. Collecting here makes the release deterministic. No waiting or retrying.
+    """
+    close = getattr(client, "close", None)
+    try:
+        if callable(close):
+            close()
+    finally:
+        gc.collect()
 
 
 def _embedding_label(embedding_function: Any) -> str:
@@ -131,7 +147,7 @@ def _open_index(
     except (APIError, ChromaError, OSError) as exc:
         if client is not None:
             try:  # do not leak the client (and its file handles) when indexing fails
-                client.close()
+                _release_client(client)
             except Exception:  # noqa: BLE001
                 pass
         raise VectorIndexError("the FAQ and policy vector index is unavailable") from exc
@@ -162,9 +178,7 @@ class ChromaKnowledgeBase:
 
     def close(self) -> None:
         """Release the Chroma client's file handles (needed before deleting a temporary store on Windows)."""
-        close = getattr(self._client, "close", None)
-        if callable(close):
-            close()
+        _release_client(self._client)
 
     def search(self, query: str, k: int = 3) -> list[SearchHit]:
         if not isinstance(query, str) or not query.strip() or k <= 0:
