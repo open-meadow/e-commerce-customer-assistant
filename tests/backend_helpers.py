@@ -43,6 +43,20 @@ class ScriptedLLM:
         return self.base.complete(system, prompt, max_output_tokens=max_output_tokens)
 
 
+class LazyKnowledgeBase:
+    """The default knowledge base, looked up when used and never at import time.
+
+    Test modules need a module-level name for parametrized tests, but importing a test
+    module (and so test collection) must not build the vector index, need an API key or
+    touch the network. Each call resolves ``default_knowledge_base()`` at that moment.
+    """
+
+    def search(self, *args: Any, **kwargs: Any):
+        from app import rag
+
+        return rag.default_knowledge_base().search(*args, **kwargs)
+
+
 class Client:
     """A signed-in test user."""
 

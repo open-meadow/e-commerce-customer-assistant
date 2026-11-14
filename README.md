@@ -1,6 +1,6 @@
 # E-Commerce Customer Support Assistant
 
-This repository is an educational capstone prototype for a text-based
+This repository is an educational capstone prototype for a text-and-voice
 e-commerce customer-support assistant. It uses synthetic data only and is not
 connected to a real store, customer account, payment provider, or courier.
 
@@ -11,7 +11,7 @@ policy, product and ticket answers come from the SQLite database and the source
 documents, and writes happen only after an explicit Confirm. The default
 assistant is an offline rule-based stand-in for a language model, so it
 understands a fixed set of phrasings. The simulated login lists the six seeded
-customers (C101 to C106). The database must be created first (see Running the
+customers (C101 to C106). The database must be initialized first (see Running the
 Project). For offline UI work, `UI_BACKEND=fake` selects the old canned demo
 backend (C101 and C102 only, no database).
 
@@ -20,10 +20,12 @@ backend (C101 and C102 only, no database).
 | Streamlit UI | Conversational customer support interface |
 | Customer context | Simulated authenticated customer identity |
 | SQLite database | Customers, orders, order items, returns, and support tickets |
-| RAG pipeline | Retrieve information from FAQ and policy documents |
-| Product lookup | Retrieve product details from `Products.json` |
-| Backend tools | Controlled customer-data retrieval and support operations |
-| LLM orchestration | Understand queries and coordinate retrieval and tools |
+| Policy retrieval | Persistent Chroma vector search over FAQ and policy documents using OpenAI embeddings |
+| Voice input | LiveKit microphone streaming with OpenAI speech-to-text |
+| Spoken replies | Fish Audio text-to-speech through LiveKit Inference |
+| Product lookup | Read-only lookup from `Products.json`, separate from policy retrieval |
+| Backend tools | Customer-scoped order, return, and ticket operations |
+| LLM orchestration | Provider-agnostic orchestration; offline rule-based behavior is the default |
 | Ticket escalation | Create support ticket records |
 | Testing | Authorization, business logic, retrieval, and orchestration tests |
 
@@ -40,8 +42,6 @@ backend (C101 and C102 only, no database).
 - Real refund processing.
 - Production identity and authentication infrastructure.
 
-Voice-based support may be considered as a future enhancement after the MVP is completed and tested.
-
 ## 4. Technology Stack
 
 | Area | Technology |
@@ -51,47 +51,41 @@ Voice-based support may be considered as a future enhancement after the MVP is c
 | Database | SQLite |
 | Structured data | JSON |
 | Knowledge base | Markdown documents |
-| AI capabilities | LLM |
-| Knowledge retrieval | Retrieval-Augmented Generation (RAG) |
+| AI orchestration | Provider-agnostic LLM interface; deterministic rule-based default |
+| Knowledge retrieval | ChromaDB with OpenAI `text-embedding-3-small` embeddings over Markdown FAQ and policy documents |
+| Voice input | LiveKit Agents with OpenAI speech-to-text |
+| Voice output | Fish Audio TTS through LiveKit Inference |
 | Testing | Pytest |
 | Version control | Git and GitHub |
 
-Specific LLM providers, embedding models, and vector storage technologies were to be finalized during implementation. **Current state (2026-11-11):** policy retrieval is lexical BM25 (no embeddings, no vector store; those are deferred), and the LLM provider is chosen by environment variables with an offline rule-based default (see `docs/04_frontend_handover.md`).
+OpenAI Responses API and Anthropic adapters are available. The OpenAI adapter was evaluated live with `gpt-4o-mini` (see `docs/evaluation/README.md`); the Anthropic adapter has only a mock-tested transport and has not been run live. The default is `rule_based`, which matches a limited set of phrasings. Policy retrieval uses OpenAI embeddings and requires `OPENAI_API_KEY` when searching or indexing, even when the LLM remains in `rule_based` mode.
+
+Voice calls use a LiveKit room and agent. OpenAI handles speech transcription
+and voice-agent turn routing; the exact transcript is sent to the support
+backend. Backend reply text is sent to Fish Audio through LiveKit Inference for
+speech synthesis. The voice transcript appears in the voice panel and is not
+merged into the Streamlit text-chat history. `FISH_API_KEY` is not used for
+this LiveKit Inference path.
 
 ## 5. High-Level Architecture
 
 ```text
-                 CUSTOMER
-                    |
-                    v
-             STREAMLIT CHAT UI
-                    |
-                    v
-          CUSTOMER CONTEXT / SESSION
-                    |
-                    v
-             AI ORCHESTRATOR
-                    |
-          +---------+----------+
-          |         |          |
-          v         v          v
-       RAG       PRODUCT     BACKEND
-      ENGINE     LOOKUP       TOOLS
-          |         |          |
-          v         v          v
-      FAQ /      Products    SQLite
-      Policies   JSON        Database
-          |         |          |
-          +---------+----------+
-                    |
-                    v
-              LLM RESPONSE
-                    |
-                    v
-               CUSTOMER
+Customer -> Streamlit UI -> UI client -> app.backend (real, default)
+                                      -> fake backend (when UI_BACKEND=fake)
+
+app.backend -> orchestrator -> customer-scoped tools -> SQLite
+                            -> Chroma vector search -> FAQ.md / Policies.md
+                            -> product lookup -> Products.json
+                            -> LLM interface -> RuleBasedLLM (default)
+Browser microphone -> LiveKit room -> voice agent
+                                  -> OpenAI STT -> transcript -> support backend
+Support reply -> Fish Audio via LiveKit Inference -> LiveKit room -> browser
 ```
 
-The architecture will evolve as individual components are implemented and tested.
+`UI_BACKEND=real` is the local default. `UI_BACKEND=fake` selects the canned,
+database-free demo. Docker Compose uses the real backend and seeds a persistent
+database volume on first start. The demo runner `scripts/eval/run_eval.py` still uses the fake
+backend.
 
 ## 6. Security and Reliability Principles
 
@@ -113,35 +107,25 @@ Security is a core requirement, not an optional enhancement.
 ecommerce-support-assistant/
 │
 ├── app/
-│   ├── db/
-│   ├── tools/
-│   ├── rag/
-│   ├── orchestrator/
-│   └── ui/
-│
-├── data/
-│   ├── source/
-│   └── generated/
-│
+│   ├── backend/        # public backend API and orchestration
+│   ├── db/             # SQLite schema, seed, repository, source data
+│   ├── llm/            # rule-based default and provider adapters
+│   ├── rag/            # Chroma vector search over policy/FAQ documents
+│   ├── catalog/        # read-only product lookup
+│   └── ui/             # Streamlit UI and optional fake backend
 ├── docs/
-│
-├── tests/
-│
-├── .gitignore
-├── PROJECT_STATUS.md
-├── README.md
-└── requirements.txt
+├── scripts/eval/       # run_eval.py (demo, fake backend); real_eval.py (real backend, live-capable)
+└── tests/
 ```
 
 ## 8. Dataset
 
-The project uses a provided synthetic dataset containing:
+The project uses synthetic source data and an evaluation corpus:
 
-- `FAQ.md` — common customer questions and answers.
-- `Policies.md` — shipping, returns, refunds, cancellation, and warranty policies.
-- `Products.json` — structured product information.
-- `customer_queries_sample.csv` — sample customer support queries.
-- `README_DATASET.md` — dataset documentation.
+- `app/db/data/source/FAQ.md` — common customer questions and answers.
+- `app/db/data/source/Policies.md` — sample policies and the policy source of truth.
+- `app/db/data/source/Products.json` — structured product information.
+- `app/db/data/eval/queries.csv` — 70 synthetic labeled evaluation/demo cases.
 
 Synthetic transactional records will be generated for customers, orders, order items, returns, and support tickets.
 
@@ -149,20 +133,12 @@ The supplied FAQ and policy documents are the source of truth for the MVP's supp
 
 ## 9. Development Methodology
 
-The project will be developed incrementally through approved checkpoints.
-
-1. Project discovery and requirements.
-2. Database design.
-3. Database implementation and authorization testing.
-4. Backend service and tool development.
-5. RAG pipeline implementation.
-6. LLM orchestration.
-7. Streamlit interface.
-8. Integration and end-to-end testing.
-9. Evaluation and documentation.
-10. Final demonstration and deployment preparation.
-
-Each checkpoint must be reviewed and tested before moving to the next.
+The project was developed through approved checkpoints covering requirements,
+the SQLite contract, customer-scoped backend tools, retrieval, LLM
+orchestration, and the Streamlit UI. The real backend is connected locally.
+Docker uses that backend with a seeded SQLite volume. The evaluation runner
+remains a fake-backend smoke run and does not measure real assistant quality or
+safety.
 
 ## 10. Running the Project
 
@@ -174,24 +150,57 @@ environment variables override it):
 cp .env.example .env
 ```
 
-The database is `app/db/data/app_d2.db` (`APP_DB_PATH` in `.env`). Create it
-once; the command refuses to overwrite an existing file, so to reseed delete the
-file first. Pass a reference time close to the demo day, because return windows
-are measured from it:
+The local UI uses `APP_DB_PATH` (default `app/db/data/app_d2.db`). If that
+database already exists and is initialized, point the app to it and do not seed
+it again. Normal startup never creates a database. To create a separate new
+demo database, first choose a new path whose parent directory exists:
 
 ```bash
-uv run python -m app.db.seed_data --reference-time 2026-11-12T00:00:00Z
+mkdir -p demo
+uv run python -m app.db.seed_data --db-path demo/demo.db --reference-time <current-UTC-time>
 ```
 
-Then start the UI:
+The seed command refuses an existing file and the protected legacy
+`app/db/data/app.db`; it is not a reset or migration command. Never delete or
+seed the legacy file. Set the UI database explicitly when using a non-default
+file:
+
+```bash
+APP_DB_PATH=demo/demo.db uv run python -m streamlit run app/ui/streamlit_app.py
+```
+
+FAQ and policy search uses OpenAI embeddings, so set `OPENAI_API_KEY` in `.env`
+even if `LLM_PROVIDER` is unset and the assistant uses the offline
+rule-based model. The persistent Chroma index is stored separately from the
+business database at `VECTOR_STORE_DIR` (default
+`app/db/data/generated/vector_store`). It is rebuilt from the source documents
+when their content changes.
+
+To use the existing default database, simply run:
 
 ```bash
 uv run python -m streamlit run app/ui/streamlit_app.py
 ```
 
-If the database is missing, or a language-model provider is requested but not
-configured, the page shows a message instead of the login. To run without a
-database, set `UI_BACKEND=fake` in `.env`.
+Voice calls additionally require the LiveKit URL, API key and secret,
+`OPENAI_API_KEY`, and the voice model/ID settings shown in `.env.example`.
+`FISH_API_KEY` is not required. For local voice development, set
+`SUPPORT_API_URL=http://127.0.0.1:8000` in `.env`, then run the support API and
+LiveKit worker in separate terminals in addition to Streamlit:
+
+```bash
+uv run uvicorn app.backend.http_api:app --host 127.0.0.1 --port 8000
+uv run python -m app.voice.agent start
+```
+
+The API uses the same initialized database as the local UI. The worker and
+Streamlit process read settings from the repository-root `.env`.
+
+The local UI uses the real backend by default. If the database is missing or
+incompatible, or a selected provider is misconfigured, the startup gate shows a
+safe message instead of the login. Set `LLM_PROVIDER=rule_based` for the
+offline deterministic assistant. Set `UI_BACKEND=fake` to use the canned
+database-free fallback.
 
 Open the local URL printed by Streamlit, then choose a customer in the
 sidebar. Use **New chat** to start another conversation or select a listed chat
@@ -199,32 +208,48 @@ to return to it. The chat list is temporary Streamlit session state: switching
 simulated customers clears it, and reloading the page loses it. It is not
 persistent account history.
 
-Replies come from the backend over synthetic data. Confirming a return or a
-ticket writes a real row to the chosen database; nothing leaves the machine.
-With `UI_BACKEND=fake` replies are canned and confirming writes nothing.
+Replies in real mode use the configured local database, source files, and
+backend tools. A return or ticket is written only after explicit confirmation
+and backend success. The fake mode returns canned replies and writes nothing.
 
 ## Run with Docker
 
 From the repository root:
 
 ```bash
+cp .env.example .env
+uv lock
+uv sync
+# Set OpenAI and LiveKit values in .env; see the configuration notes below.
 docker compose up --build
 ```
 
-Open <http://localhost:8501>. Compose defines persistent Docker volumes and
-forwards sample environment settings for a future database/vector-store/LLM
-integration. The current chat does not use those settings and does not require
-an API key.
+Open <http://localhost:8501>. On first start, the container seeds a new database
+in the `app-data` volume and uses it through `APP_DB_PATH`; the Chroma index is
+also persistent at `/app/data/vector_store`. Compose runs separate Streamlit,
+FastAPI, and LiveKit worker services; only Streamlit publishes a host port.
+Set `OPENAI_API_KEY` for retrieval and voice processing, plus `LIVEKIT_URL`,
+`LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`, `LIVEKIT_STT_MODEL`,
+`LIVEKIT_TTS_MODEL`, and `FISH_AUDIO_VOICE` in `.env`. The API and worker use
+the LiveKit credentials; the Streamlit container receives blank API-secret
+values. The browser connects to LiveKit with a short-lived participant token.
+The browser also loads the pinned LiveKit JavaScript SDK from JSDelivr, so it
+needs internet access.
+Microphone audio is streamed through LiveKit to the voice agent; OpenAI
+provides speech transcription and voice-agent turn routing, while Fish Audio
+generates speech from backend reply text through LiveKit Inference. The default
+support LLM remains offline and rule-based unless configured otherwise.
 
 Stop the service with `Ctrl+C`; use `docker compose down` to stop and remove the
-container while keeping named volumes.
+container and network. The `app-data` volume preserves the database and Chroma
+index.
 
 ## Tests and evaluation smoke run
 
 Run the test suite:
 
 ```bash
-uv run python -m pytest
+uv run python -m pytest tests -q
 ```
 
 Run the demo-only evaluation harness:
@@ -233,24 +258,37 @@ Run the demo-only evaluation harness:
 uv run python scripts/eval/run_eval.py
 ```
 
-It reads the synthetic case CSV, starts a fresh fake session per case, and
-prints JSON replies and expected labels. It does not score answer accuracy,
-safety, hallucinations, or tool-call correctness: the fake backend has no
-real tools or observable tool-call trace. Sample outputs are in
-`app/db/data/eval/logs/sample_conversations.jsonl` and are explicitly marked
-`demo_only` / `not_assessed`.
+It reads 70 synthetic cases, starts a fresh fake-backend session per case, and
+prints JSON replies and expected labels. The runner reports all quality and
+safety metrics as `not_assessed`: it has no real tool-call trace and is not an
+evaluation of the real assistant. Sample outputs in
+`app/db/data/eval/logs/sample_conversations.jsonl` are labeled
+`demo_only` / `not_assessed`. The real-backend evaluation is separate: see `docs/evaluation/README.md` and `scripts/eval/real_eval.py`.
 
 ## Security and scope limitations
 
 - The customer selector is simulated and is not production authentication.
-- The UI is not connected to the SQLite repository or real customer records.
-- No real payments, refunds, shipping, cancellations, address changes, returns,
-  or support tickets are performed.
-- The current backend does not implement an LLM, RAG, product lookup, scope
-  guard, or tool-call telemetry.
+- Backend sessions and UI chat history are in-memory and single-process.
+- The default assistant is deterministic rule-based behavior, not a general
+  language model. The OpenAI adapter was evaluated live on `gpt-4o-mini` (single runs, small sample); the Anthropic adapter and the voice channel have not been run live.
+- If an external LLM provider is explicitly configured, prompts may be sent to
+  that provider; the offline rule-based default makes no LLM provider call.
+- Voice audio is streamed through LiveKit. OpenAI provides speech
+  transcription and voice-agent turn routing; the transcript is sent to the
+  support backend, and backend reply text is sent to Fish Audio through LiveKit
+  Inference for speech synthesis. The browser receives a short-lived LiveKit
+  participant token, not the LiveKit API credentials. Voice transcripts are
+  shown in the voice panel and are not merged into Streamlit's text-chat
+  history.
+- FAQ and policy retrieval uses Chroma with OpenAI embeddings. It requires an
+  OpenAI API key and sends source text when indexing and each search query to
+  OpenAI. The local index is persistent; Docker Compose stores it on the
+  `app-data` volume. Product lookup remains a separate structured lookup.
+- There are no payment or shipment tables and no real payment, refund,
+  courier, cancellation, or address-change integrations.
 - Evaluation cases and sample logs are synthetic. The demo runner verifies
   only that the fake backend can be called for each case; it does not establish
-  assistant correctness or safety.
+  real assistant correctness or safety.
 
 Do not enter real personal, order, or payment information.
 

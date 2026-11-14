@@ -1,0 +1,98 @@
+[
+  {
+    "id": "M01", "customer_id": "C101", "category": "context_followup",
+    "note": "A pronoun refers to the order from the previous turn; the customer must not be asked for it again.",
+    "turns": [
+      {"say": "Where is ORD1002?", "expect": {"tools_any": ["get_order_status"], "mentions": ["ORD1002"]}},
+      {"say": "when will it arrive?", "expect": {"not_asking": true, "mentions_any": ["ORD1002", "Shipped", "shipped"]}}
+    ]
+  },
+  {
+    "id": "M02", "customer_id": "C102", "category": "context_followup",
+    "note": "A follow-up question depends on the topic of the first (return policy, then damaged items).",
+    "turns": [
+      {"say": "What is your return policy?", "expect": {"tools_any": ["search_policies"]}},
+      {"say": "and what if the item is damaged?", "expect": {"tools_any": ["search_policies"], "not_asking": true}}
+    ]
+  },
+  {
+    "id": "M03", "customer_id": "C104", "category": "context_hinglish",
+    "note": "Hinglish with no order ID, then the customer names one.",
+    "turns": [
+      {"say": "mera order kab aayega bhai", "expect": {"tools_any": ["list_my_orders"], "language": "hinglish", "not_asking": true}},
+      {"say": "ORD1007 wala", "expect": {"tools_any": ["get_order_status"], "mentions": ["ORD1007"], "language": "hinglish"}}
+    ]
+  },
+  {
+    "id": "M04", "customer_id": "C101", "category": "context_change_of_mind",
+    "note": "The customer starts a return, then drops it. Nothing may be saved and no menu may follow.",
+    "turns": [
+      {"say": "I want to return item IT101 from order ORD1001", "expect": {"statuses": ["ok", "needs_choice"]}},
+      {"say": "actually forget it, I don't want to return it anymore", "expect": {"no_pending": true, "no_choice": true}}
+    ]
+  },
+  {
+    "id": "M05", "customer_id": "C103", "category": "context_correction",
+    "note": "The customer corrects the order number.",
+    "turns": [
+      {"say": "Where is ORD1006?", "expect": {"tools_any": ["get_order_status"], "mentions": ["ORD1006"]}},
+      {"say": "sorry, I meant ORD1005", "expect": {"tools_any": ["get_order_status"], "mentions": ["ORD1005"]}}
+    ]
+  },
+  {
+    "id": "M06", "customer_id": "C101", "category": "context_multi_request",
+    "note": "Two requests in one message: an order lookup and a policy question.",
+    "turns": [
+      {"say": "Where is ORD1002 and what is your refund policy?",
+       "expect": {"tools_all": ["get_order_status"], "tools_any": ["search_policies", "get_refund_policy"], "mentions": ["ORD1002"]}}
+    ]
+  },
+  {
+    "id": "M07", "customer_id": "C101", "category": "context_repeat_frustration",
+    "note": "The customer is annoyed at being asked again; the assistant must use what it already has.",
+    "turns": [
+      {"say": "where is my order", "expect": {"tools_any": ["list_my_orders"]}},
+      {"say": "I already told you, ORD1002, this is the third time!", "expect": {"tools_any": ["get_order_status"], "mentions": ["ORD1002"], "not_asking": true}}
+    ]
+  },
+  {
+    "id": "M08", "customer_id": "C102", "category": "context_escalation",
+    "note": "After an unhelpful answer the customer asks for a person; a ticket may be proposed, never created.",
+    "turns": [
+      {"say": "ORD1015 still hasn't come", "expect": {"tools_any": ["get_order_status"], "mentions": ["ORD1015"]}},
+      {"say": "this is useless, get me a human", "expect": {"tools_any": ["start_support_ticket"]}}
+    ]
+  },
+  {
+    "id": "M09", "customer_id": "C101", "category": "context_ticket",
+    "note": "A ticket request after an order lookup must reach the Confirm card using the earlier context.",
+    "turns": [
+      {"say": "ORD1002 is delayed, it was supposed to arrive already", "expect": {"tools_any": ["get_order_status"]}},
+      {"say": "please raise a ticket for it", "expect": {"statuses": ["needs_confirmation"], "pending_kind": "support_ticket"}}
+    ]
+  },
+  {
+    "id": "M10", "customer_id": "C102", "category": "context_language_switch",
+    "note": "The customer asks the assistant to switch to Hinglish.",
+    "turns": [
+      {"say": "Where is ORD1015?", "expect": {"tools_any": ["get_order_status"], "language": "en"}},
+      {"say": "Hinglish mein batao please", "expect": {"language": "hinglish", "mentions_any": ["ORD1015", "shipped", "Shipped"]}}
+    ]
+  },
+  {
+    "id": "M11", "customer_id": "C105", "category": "context_off_topic_then_back",
+    "note": "An off-topic message, then a normal request: the assistant must recover.",
+    "turns": [
+      {"say": "what's the weather today?", "expect": {"no_tools": true, "no_pending": true}},
+      {"say": "ok, show my orders", "expect": {"tools_any": ["list_my_orders"], "mentions": ["ORD1010"]}}
+    ]
+  },
+  {
+    "id": "M12", "customer_id": "C106", "category": "context_hinglish_followup",
+    "note": "A Hinglish status question, then a follow-up about the amount that depends on the first answer.",
+    "turns": [
+      {"say": "ORD1013 kab deliver hua tha?", "expect": {"tools_any": ["get_order_status"], "mentions": ["ORD1013"], "language": "hinglish"}},
+      {"say": "aur uska total kitna tha?", "expect": {"mentions_any": ["2,499", "2499"], "not_asking": true}}
+    ]
+  }
+]

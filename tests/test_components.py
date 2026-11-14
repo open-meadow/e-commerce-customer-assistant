@@ -42,8 +42,16 @@ class TestRetriever:
         assert {c.source for c in chunks} == {"FAQ.md", "Policies.md"}
 
     def test_refund_query_hits_a_policy_passage(self):
-        hits = rag.default_knowledge_base().search("how long do refunds take", k=3)
-        assert hits and hits[0].score >= 1.0 and hits[0].chunk.text
+        knowledge_base = rag.default_knowledge_base()
+        hits = knowledge_base.search("how long do refunds take", k=3)
+        assert hits and hits[0].chunk.text
+        # Original requirement: a relevant (refund) policy passage is retrieved.
+        assert "refund" in hits[0].chunk.text.lower()
+        # Chroma scores are 1 - cosine distance and ChromaKnowledgeBase keeps only hits whose distance is
+        # <= its configured max_distance, so every returned score is at least 1 - max_distance (and at
+        # most 1). The old ">= 1.0" was a BM25 score.
+        threshold = 1.0 - knowledge_base._max_distance
+        assert all(threshold <= hit.score <= 1.0 for hit in hits)
 
     def test_gibberish_returns_nothing(self):
         assert rag.default_knowledge_base().search("qwertyuiop zxcvbnm", k=3) == []

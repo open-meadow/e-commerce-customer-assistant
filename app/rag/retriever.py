@@ -1,34 +1,40 @@
-"""FAQ and policy retrieval.
+"""FAQ and policy chunks plus the default Chroma-backed retriever.
 
 Design and honest limits
 ------------------------
 * Source documents: ``app/db/data/source/FAQ.md`` (one chunk per Q&A) and
   ``app/db/data/source/Policies.md`` (one chunk per numbered section). They are
   the source of truth for support rules and are never modified.
-* Retrieval is **lexical BM25 implemented in pure Python**. There are no
-  embeddings and no vector database in this MVP. The ``KnowledgeBase``
-  interface (``search(query, k)``) is what a vector store would replace.
-  This is a documented gap against the "embeddings + vector DB" idea in
-  the assignment brief, chosen to avoid heavy dependencies and a
-  provider decision.
-* The index is rebuilt in memory at start-up, so there is nothing to
-  persist and no stale index.
+* The default retriever uses a persistent Chroma index with OpenAI embeddings and
+  **requires ``OPENAI_API_KEY``**: without it the policy capability reports
+  "unavailable" (it never invents policy text). This is separate from the LLM
+  provider (``LLM_PROVIDER``): ``RuleBasedLLM`` needs no key, retrieval always does.
+  The lexical ``KnowledgeBase`` below remains an independent implementation;
+  it is not used as a fallback.
+* The embedding function is injectable (``configure_embeddings``) so tests and
+  offline evaluation can use a local deterministic embedding with the same Chroma
+  retrieval code. Nothing injects it in production and importing this module
+  never needs a key or touches the network.
 * Retrieved text is **untrusted data**. Callers must present it to a
   model as quoted reference material, never as instructions.
-* A query with no meaningful overlap returns no hits, and the caller must
-  say it cannot confirm rather than invent a policy.
+* A query with no sufficiently close vector match returns no hits, and the
+  caller must say it cannot confirm rather than invent a policy.
 """
 
 from __future__ import annotations
 
 import math
+import os
 import re
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
-from typing import Iterable, Optional
+from typing import TYPE_CHECKING, Any, Callable, Iterable, Optional, Sequence
 
 from app.db.connection import PROJECT_ROOT
+
+if TYPE_CHECKING:
+    from app.rag.vector_index import ChromaKnowledgeBase
 
 SOURCE_DIR = PROJECT_ROOT / "app" / "db" / "data" / "source"
 
@@ -204,6 +210,87 @@ class KnowledgeBase:
         return hits[:k]
 
 
+# Injected embedding configuration (tests and offline evaluation only). ``None`` means
+# production: OpenAI embeddings, which require OPENAI_API_KEY.
+_embedding_factory: Optional[Callable[[Sequence[Chunk]], Any]] = None
+_embedding_max_distance: Optional[float] = None
+_embedding_label: Optional[str] = None
+PRODUCTION_EMBEDDING_LABEL = "openai:text-embedding-3-small (production; requires OPENAI_API_KEY)"
+
+
+EmbeddingState = tuple[Optional[Callable[[Sequence[Chunk]], Any]], Optional[float], Optional[str]]
+
+
+def configure_embeddings(factory: Optional[Callable[[Sequence[Chunk]], Any]] = None, *,
+                         max_distance: Optional[float] = None, label: Optional[str] = None) -> EmbeddingState:
+    """Inject a Chroma embedding function for ``default_knowledge_base``; ``None`` restores production.
+
+    ``factory`` receives the source chunks and returns a Chroma embedding function
+    (``app.rag.local_embeddings.factory`` is the deterministic offline one).
+    ``max_distance`` replaces the cosine-distance cut-off, which is calibrated for the
+    production embedding. The cached knowledge base is discarded. Returns the previous
+    configuration so a caller can put it back with ``restore_embeddings``.
+    """
+    global _embedding_factory, _embedding_max_distance, _embedding_label
+    previous: EmbeddingState = (_embedding_factory, _embedding_max_distance, _embedding_label)
+    release_default_knowledge_base()
+    _embedding_factory = factory
+    _embedding_max_distance = max_distance if factory is not None else None
+    _embedding_label = label if factory is not None else None
+    return previous
+
+
+def restore_embeddings(state: EmbeddingState) -> None:
+    """Put back a configuration returned by ``configure_embeddings``."""
+    configure_embeddings(state[0], max_distance=state[1], label=state[2])
+
+
+_built: list[Any] = []  # knowledge bases created by default_knowledge_base, so they can be released
+
+
+def release_default_knowledge_base() -> None:
+    """Forget the cached knowledge base and close its Chroma client (idempotent, never raises)."""
+    while _built:
+        instance = _built.pop()
+        try:
+            instance.close()
+        except Exception:  # noqa: BLE001 - releasing resources must never mask a result
+            pass
+    default_knowledge_base.cache_clear()
+
+
+def embedding_configuration() -> str:
+    """Which embeddings retrieval will use, without creating anything or needing a key."""
+    if _embedding_factory is None:
+        return PRODUCTION_EMBEDDING_LABEL
+    return f"injected: {_embedding_label or 'custom embedding function'}"
+
+
 @lru_cache(maxsize=1)
-def default_knowledge_base() -> KnowledgeBase:
-    return KnowledgeBase(load_chunks())
+def default_knowledge_base() -> ChromaKnowledgeBase:
+    from app.rag.vector_index import ChromaKnowledgeBase
+
+    configured_directory = os.environ.get("VECTOR_STORE_DIR")
+    if configured_directory:
+        persist_directory = Path(configured_directory)
+        if not persist_directory.is_absolute():
+            persist_directory = PROJECT_ROOT / persist_directory
+    else:
+        persist_directory = (
+            PROJECT_ROOT / "app" / "db" / "data" / "generated" / "vector_store"
+        )
+
+    chunks = load_chunks()
+    if _embedding_factory is not None:
+        options: dict[str, Any] = {"embedding_function": _embedding_factory(chunks)}
+        if _embedding_max_distance is not None:
+            options["max_distance"] = _embedding_max_distance
+        knowledge_base = ChromaKnowledgeBase(chunks, persist_directory, **options)
+    else:
+        knowledge_base = ChromaKnowledgeBase(
+            chunks,
+            persist_directory,
+            api_key=os.environ.get("OPENAI_API_KEY"),
+        )
+    _built.append(knowledge_base)
+    return knowledge_base

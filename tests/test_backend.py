@@ -217,8 +217,8 @@ class TestReturns:
     def test_duplicate_active_return_blocked(self, backend, raw):
         c = Client(backend, "C101")
         c.confirm(c.pick(start_return(c), "standard"))
-        again = c.pick(start_return(c), "standard")
-        assert "already an active return" in again.text
+        again = start_return(c)  # refused as soon as the request is made (Phase 1 D-04), before any category
+        assert "already an active return" in again.text and again.choice is None
         assert len(rows(raw, "SELECT * FROM return_requests")) == 1
 
     def test_other_customers_order_not_found(self, backend):
@@ -234,8 +234,8 @@ class TestReturns:
 
     def test_return_window_closed_ticket_offer(self, backend):
         c = Client(backend, "C102")  # ORD1003 delivered 10 days ago
-        r = c.pick(start_return(c, "ORD1003", "IT103"), "standard")
-        assert "closed on" in r.text and "ticket" in r.text.lower()
+        r = start_return(c, "ORD1003", "IT103")  # refused as soon as the request is made (Phase 1 D-04)
+        assert "closed on" in r.text and "ticket" in r.text.lower() and r.choice is None
 
     def test_stale_prompt_and_bad_option(self, backend):
         c = Client(backend, "C101")
@@ -619,7 +619,9 @@ class TestDatabaseFailure:
     def test_check_backend(self, backend):
         health = backend.check_backend()
         assert health.status == "ready" and health.llm_mode == "scripted"
-        assert any("lexical" in n for n in health.notes)
+        # Readiness reports how policy retrieval is configured (Chroma + the embedding provider);
+        # it used to say "lexical" before the approved BM25 -> Chroma/OpenAI embeddings migration.
+        assert any("Chroma" in n and "Embeddings:" in n for n in health.notes)
 
     def test_check_backend_not_initialized(self, tmp_path, monkeypatch):
         monkeypatch.setenv("APP_DB_PATH", str(tmp_path / "missing.db"))

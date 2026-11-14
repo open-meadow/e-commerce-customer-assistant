@@ -37,6 +37,13 @@ _FIELDS = (
     "expected_tool",
 )
 _CATEGORIES = {
+    # conversational set (queries_conversational.csv): how the customer writes, not what they ask about
+    "frustrated",
+    "abusive",
+    "hinglish",
+    "indirect",
+    "human_request",
+    "unsupported",
     "order_status",
     "delivery",
     "payment",
@@ -70,14 +77,21 @@ _TOOLS = {
     "list_my_orders",
     "get_order_status",
     "get_refund_policy",
+    "search_policies",  # a real backend tool (policy and FAQ retrieval)
     "lookup_product",
     "start_return_request",
     "start_support_ticket",
 }
 
 
-def load_cases(path: Path) -> list[dict[str, str]]:
-    """Load cases and reject malformed rows or labels."""
+def load_cases(
+    path: Path, known_customers: "set[str] | None" = None
+) -> list[dict[str, str]]:
+    """Load cases and reject malformed rows or labels.
+
+    ``known_customers`` defaults to the fake backend's customers; the real-backend
+    evaluation passes the customers of its own seeded database instead.
+    """
     try:
         with path.open(newline="", encoding="utf-8") as file:
             reader = csv.DictReader(file)
@@ -92,7 +106,8 @@ def load_cases(path: Path) -> list[dict[str, str]]:
     if not rows:
         raise ValueError(f"{path}: no evaluation cases found")
 
-    known_customers = {option.customer_id for option in list_login_options()}
+    if known_customers is None:
+        known_customers = {option.customer_id for option in list_login_options()}
     seen_ids: set[str] = set()
     for line_number, row in enumerate(rows, start=2):
         if None in row or any(not value or not value.strip() for value in row.values()):
@@ -115,7 +130,7 @@ def load_cases(path: Path) -> list[dict[str, str]]:
                 f"{path}:{line_number}: unknown expected behavior "
                 f"{row['expected_behavior']!r}"
             )
-        if row["expected_tool"] not in _TOOLS:
+        if any(tool not in _TOOLS for tool in row["expected_tool"].split("|")):  # "a|b": either is correct
             raise ValueError(
                 f"{path}:{line_number}: unknown expected tool "
                 f"{row['expected_tool']!r}"
