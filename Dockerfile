@@ -24,6 +24,9 @@ RUN useradd --create-home --uid 10001 --user-group app \
 COPY --chown=app:app app/ ./app/
 COPY --chown=app:app .streamlit/ ./.streamlit/
 COPY --chown=app:app docker-entrypoint.sh ./docker-entrypoint.sh
+# A Windows checkout can turn this script into CRLF, which Linux sh cannot run: strip any CR (no-op for LF).
+RUN sed -i 's/\r$//' ./docker-entrypoint.sh \
+    && chown app:app ./docker-entrypoint.sh
 
 USER app
 
