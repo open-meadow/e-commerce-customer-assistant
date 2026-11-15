@@ -253,7 +253,9 @@ def _get_refund_policy(ctx: CustomerContext, args: dict[str, Any]) -> ToolResult
                          "refund_amount": _money(order["refund_amount"])}
     if policy_unavailable and "order" not in data:
         return ToolResult("unavailable", "knowledge_unavailable", note=_KNOWLEDGE_UNAVAILABLE_NOTE)
-    note = "Report refund status and amount exactly as given. Do not predict dates."
+    note = ("Report refund status and amount exactly as given. Do not predict dates. A refund_status of 'Not "
+            "Applicable' only means no refund is in progress for this order; it says nothing about whether a "
+            "refund or a return is possible, so do not suggest either way.")
     if policy_unavailable:
         note += " The policy text is unavailable, so say that you cannot confirm the policy."
     return ToolResult("ok", "refund_policy", data, note=note)
@@ -284,16 +286,14 @@ _TIMING_NOTE = ("This is a timing check only, not an approval and not a promise:
                 "you cannot check what is listed in not_checked.")
 _WINDOW_NOTE = (_TIMING_NOTE + " Quote every time exactly as given in closes_at_text, which is in UTC; never "
                 "convert it to another time zone, never say 'until the end of the day' and never do your own "
-                "date arithmetic. Describe the two periods as they are: ordinary_return_window is the ordinary "
-                "return period, and damaged_or_wrong_item_reporting_deadline is the shorter deadline to report a "
-                "damaged or wrong item and start a return. If the customer has not said why they want to return "
-                "the item, give both. If they have, give only the matching one (damaged or wrong item: the "
-                "reporting deadline; any other reason: the ordinary period) and never suggest which reason to "
-                "choose. Mention photos only if the customer says the item arrived damaged or wrong: then say "
-                "what photos_note says (the FAQ asks for clear photos, which you cannot collect here), do not say "
-                "how to send photos, and offer a support ticket. Never raise photos in an ordinary return "
-                "conversation. Use time_left_text only as an approximate guide as of checked_at_text. This is "
-                "not a request to return: start_return_request only when the customer asks to return the item.")
+                "date arithmetic. facts_to_state holds the sentences to give, in three lists: no_reason_given, "
+                "item_damaged_or_wrong and any_other_reason. Pick the one list that matches what the customer "
+                "said and state every sentence in it, in the customer's language, keeping the UTC times exactly "
+                "as written. Do not add facts from another list and never suggest which reason to choose: if the "
+                "customer says the item is damaged or wrong and that deadline has closed, say so and offer a "
+                "support ticket, and do not mention the ordinary period. Never raise photos unless the customer "
+                "says the item arrived damaged or wrong, and never say how to send photos. This is not a request "
+                "to return: start_return_request only when the customer asks to return the item.")
 
 
 def _utc_text(timestamp: str) -> str:
@@ -330,6 +330,28 @@ def _window_view(key: str, verdict: dict[str, Any]) -> dict[str, Any]:
     return view
 
 
+_LIMITS_SENTENCE = ("I can only check the delivery timing: I cannot check whether this product can be returned at "
+                    "all, the item's condition, or its packaging and accessories.")
+_PHOTOS_SENTENCE = ("For a damaged or wrong item the FAQ asks for clear photos of the issue. I cannot collect photos "
+                    "here, but I can raise a support ticket.")
+
+
+def _period_sentence(label: str, view: dict[str, Any]) -> str:
+    if view["status"] == "open":
+        return f"{label} is open until {view['closes_at_text']} ({view['time_left_text']} left)."
+    return f"{label} closed on {view['closes_at_text']}."
+
+
+def _facts_to_state(ordinary: dict[str, Any], deadline: dict[str, Any]) -> dict[str, list[str]]:
+    """The sentences for each kind of customer message, built by code so no time is rewritten by the model."""
+    ordinary_sentence = _period_sentence("The ordinary return period (7 days from delivery)", ordinary)
+    deadline_sentence = _period_sentence(
+        "The deadline to report a damaged or wrong item and start a return (48 hours from delivery)", deadline)
+    return {"no_reason_given": [ordinary_sentence, deadline_sentence, _LIMITS_SENTENCE],
+            "item_damaged_or_wrong": [deadline_sentence, _PHOTOS_SENTENCE],
+            "any_other_reason": [ordinary_sentence, _LIMITS_SENTENCE]}
+
+
 def _blocked_explanation(verdict: dict[str, Any]) -> str:
     """A plain sentence the model may rely on, so no exact wording has to be guessed or checked."""
     outcome = verdict["outcome"]
@@ -361,11 +383,12 @@ def _check_return_eligibility(ctx: CustomerContext, args: dict[str, Any]) -> Too
                           note=_TIMING_NOTE + " Explain plainly, in the customer's language and your own words, "
                                "why a return cannot be started now (the explanation field is accurate); a support "
                                "ticket may be offered. This is not a request to return.")
+    ordinary_view, deadline_view = _window_view("standard", standard), _window_view("damaged", damaged)
     data = {"result": "timing_check", "delivered_at_utc": standard["delivered_at"],
             "delivered_at_text": _utc_text(standard["delivered_at"]),
             "checked_at_utc": standard["evaluated_at"], "checked_at_text": _utc_text(standard["evaluated_at"]),
-            "windows": {_WINDOW_KEYS["standard"]: _window_view("standard", standard),
-                        _WINDOW_KEYS["damaged"]: _window_view("damaged", damaged)},
+            "windows": {_WINDOW_KEYS["standard"]: ordinary_view, _WINDOW_KEYS["damaged"]: deadline_view},
+            "facts_to_state": _facts_to_state(ordinary_view, deadline_view),
             "not_checked": list(_NOT_CHECKED)}
     return ToolResult("ok", "return_check", data, note=_WINDOW_NOTE)
 
@@ -404,8 +427,10 @@ TOOL_SPECS: dict[str, ToolSpec] = {s.name: s for s in [
              "Refund policy facts, and the refund status of one order if order_id is given.",
              {"order_id": _ORDER_ID}, (), _get_refund_policy),
     ToolSpec("check_return_eligibility",
-             "Read-only timing check: can the customer still ask for a return of this item? Use it for a "
-             "question about eligibility or a deadline. It does not start a return.",
+             "Read-only timing check for a QUESTION about whether, or until when, an item can still be returned "
+             "(for example 'can I still return it?' or 'is it too late?'). Never use it when the customer says they "
+             "want to return or send back an item or gives a reason for returning it: that is a return request, "
+             "so call start_return_request, which checks eligibility itself. This tool does not start a return.",
              {"order_id": _ORDER_ID, "item_id": {"type": "string"}}, ("order_id", "item_id"),
              _check_return_eligibility),
     ToolSpec("lookup_product", "Look up a product by product_id or keyword query.",

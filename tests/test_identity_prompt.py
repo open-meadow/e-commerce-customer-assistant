@@ -91,3 +91,8 @@ class TestGreetings:
         llm = ScriptedLLM()
         reply = Client(Backend(llm=llm), "C101").say(text)
         assert "automated support assistant" in reply.text and llm.chat_calls == 0
+
+
+class TestAnotherCustomersInformation:
+    def test_the_prompt_says_what_to_answer_when_asked_for_another_customers_data(self):
+        assert "if asked for another customer's information, say you can only help with the signed-in customer's own orders" in PROMPT

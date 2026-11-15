@@ -177,7 +177,7 @@ class TestAnswers:
         assert "never convert it to another time zone" in note
         assert "never suggest which reason to choose" in note
         assert "start_return_request only when the customer asks" in note
-        assert "photos" in note and "cannot collect" in note.replace("which you cannot collect here", "cannot collect")
+        assert "photos" in note
 
     def test_a_shipped_order_cannot_start_a_return(self, temp_db):
         d = data(run("C101", "ORD1002", "IT102"))
@@ -218,10 +218,10 @@ class TestTwoDifferentPeriods:
 
     def test_the_note_names_the_reporting_deadline_and_the_photo_limit(self, temp_db):
         note = run("C101", "ORD1001", "IT101").note
-        assert "deadline to report a damaged or wrong item and start a return" in note
-        assert "do not say how to send photos" in note and "offer a support ticket" in note
-        assert "mention photos only if the customer says the item arrived damaged or wrong" in note.lower()
-        assert "never raise photos in an ordinary return conversation" in note.lower()
+        assert "facts_to_state" in note and "never suggest which reason to choose" in note
+        assert "never raise photos unless the customer says the item arrived damaged or wrong" in note.lower()
+        assert "never say how to send photos" in note.lower()
+        assert "do not mention the ordinary period" in note
 
     def test_the_photo_note_is_only_on_the_damaged_or_wrong_item_deadline(self, temp_db):
         windows = data(run("C101", "ORD1001", "IT101"))["windows"]
@@ -343,17 +343,19 @@ class TestPromptAndHarness:
     def test_the_prompt_separates_the_question_from_the_request(self):
         lowered = SYSTEM_PROMPT.lower()
         assert "check_return_eligibility" in SYSTEM_PROMPT
-        assert "a question, not a return request" in lowered
+        assert "two different intents" in lowered
+        assert "has made a return request: call start_return_request" in lowered
+        assert "never run an eligibility check first" in lowered
+        assert "has asked a question: call check_return_eligibility" in lowered
         assert "timing check, not an approval" in lowered
         assert "in utc, without converting them" in lowered
-        assert "only when the customer asks to return the item" in lowered
 
     def test_the_old_begin_a_return_to_find_out_rule_is_gone(self):
         assert "begin the return with start_return_request" not in SYSTEM_PROMPT
 
     def test_the_limits_of_the_check_are_in_the_prompt(self):
         lowered = SYSTEM_PROMPT.lower()
-        assert "packaging and accessories" in lowered and "returned at all" in lowered
+        assert "give the limits it lists" in lowered and "never suggest which reason to choose" in lowered
 
     def test_the_prompt_separates_the_seven_day_period_from_the_reporting_deadline(self):
         lowered = SYSTEM_PROMPT.lower()
@@ -368,3 +370,75 @@ class TestPromptAndHarness:
         sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts" / "eval"))
         import real_eval as ev
         assert NAME in ev._REAL_TOOLS
+
+
+class TestFactsToState:
+    """The sentences the model is asked to give are built by code, from the same verdicts as the windows."""
+
+    def facts(self, customer, order, item):
+        return data(run(customer, order, item))["facts_to_state"]
+
+    def test_there_is_one_list_per_kind_of_customer_message(self, temp_db):
+        facts = self.facts("C101", "ORD1001", "IT101")
+        assert set(facts) == {"no_reason_given", "item_damaged_or_wrong", "any_other_reason"}
+
+    def test_no_reason_given_has_both_periods_and_the_limits(self, temp_db):
+        first, second, limits = self.facts("C101", "ORD1001", "IT101")["no_reason_given"]
+        assert first == ("The ordinary return period (7 days from delivery) is open until 11 November 2026, 00:00 UTC "
+                         "(about 4 days left).")
+        assert second == ("The deadline to report a damaged or wrong item and start a return (48 hours from delivery) "
+                          "closed on 6 November 2026, 00:00 UTC.")
+        assert "cannot check whether this product can be returned at all" in limits
+        assert "condition" in limits and "packaging and accessories" in limits
+
+    def test_a_damaged_report_gets_the_deadline_and_the_photo_sentence_only(self, temp_db):
+        sentences = self.facts("C101", "ORD1001", "IT101")["item_damaged_or_wrong"]
+        joined = " ".join(sentences)
+        assert len(sentences) == 2 and "closed on 6 November 2026, 00:00 UTC" in joined
+        assert "clear photos" in joined and "cannot collect photos here" in joined and "support ticket" in joined
+        assert "ordinary" not in joined and "7 days" not in joined  # never steers to the other period
+
+    def test_any_other_reason_gets_the_ordinary_period_and_the_limits_without_photos(self, temp_db):
+        sentences = self.facts("C101", "ORD1001", "IT101")["any_other_reason"]
+        joined = " ".join(sentences)
+        assert "ordinary return period" in joined and "photo" not in joined and "48" not in joined
+
+    def test_no_other_list_mentions_photos_except_the_damaged_one(self, temp_db):
+        facts = self.facts("C103", "ORD1005", "IT105")
+        assert "photo" in " ".join(facts["item_damaged_or_wrong"])
+        assert "photo" not in " ".join(facts["no_reason_given"] + facts["any_other_reason"])
+
+    def test_both_open_and_both_closed_read_correctly(self, temp_db):
+        both_open = self.facts("C103", "ORD1005", "IT105")["no_reason_given"]
+        assert "is open until 12 November 2026, 12:00 UTC (about 5 days left)" in both_open[0]
+        assert "is open until 7 November 2026, 12:00 UTC (about 12 hours left)" in both_open[1]
+        both_closed = self.facts("C102", "ORD1003", "IT103")["no_reason_given"]
+        assert "closed on 4 November 2026, 00:00 UTC" in both_closed[0]
+        assert "closed on 30 October 2026, 00:00 UTC" in both_closed[1]
+
+    def test_the_last_hour_reads_as_less_than_one_hour_not_zero(self, temp_db, set_now):
+        set_now(datetime(2026, 11, 7, 11, 30, tzinfo=UTC))
+        sentence = self.facts("C103", "ORD1005", "IT105")["no_reason_given"][1]
+        assert "(less than 1 hour left)" in sentence and "0 hours" not in sentence
+
+    def test_every_time_in_the_facts_is_utc_text(self, temp_db):
+        for sentences in self.facts("C101", "ORD1001", "IT101").values():
+            for sentence in sentences:
+                if "closed on" in sentence or "open until" in sentence:
+                    assert " UTC" in sentence
+
+
+class TestIntentSeparationWording:
+    """Live run 1: the model called the eligibility tool for 'I want to return the earbuds ...'."""
+
+    def test_the_tool_description_forbids_use_for_a_return_request(self):
+        description = TOOL_SPECS[NAME].description
+        assert "QUESTION" in description and "Never use it when the customer says they want to return" in description
+        assert "start_return_request" in description and "checks eligibility itself" in description
+
+    def test_the_return_tool_description_still_says_the_customer_chooses_the_reason(self):
+        assert "reason category" in TOOL_SPECS["start_return_request"].description
+
+    def test_a_refund_status_of_not_applicable_says_nothing_about_returns(self, temp_db):
+        note = execute_tool(CustomerContext("C101", "ref"), "get_refund_policy", {"order_id": "ORD1001"}).note
+        assert "'Not Applicable'" in note and "says nothing about whether a refund or a return is possible" in note
