@@ -369,8 +369,9 @@ class TestPromptAndHarness:
         lowered = SYSTEM_PROMPT.lower()
         assert "ordinary return period is 7 days from delivery" in lowered
         assert "48-hour limit is a deadline to report it and start the return" in lowered
-        assert "mention photos only if the customer says an item arrived damaged or wrong" in lowered
-        assert "you cannot collect them" in lowered and "never raise photos otherwise" in lowered
+        flat = " ".join(lowered.split())
+        assert "if the customer says an item arrived damaged or wrong, always tell them that the faq asks for clear photos" in flat
+        assert "that you cannot collect photos" in flat and "never raise photos otherwise" in flat
 
     def test_the_evaluation_harness_knows_the_tool(self):
         import sys
