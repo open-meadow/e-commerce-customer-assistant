@@ -1,0 +1,310 @@
+[
+  {
+    "id": "E01",
+    "customer_id": "C101",
+    "category": "eligibility_both_periods",
+    "note": "ORD1001 was delivered 72 h before the baseline: the 7-day period is open, the 48-hour reporting deadline has closed. No reason was given, so both are expected.",
+    "turns": [
+      {
+        "say": "Can I still return my earbuds from ORD1001?",
+        "expect": {
+          "tools_all": [
+            "check_return_eligibility"
+          ],
+          "tool_args": {
+            "check_return_eligibility": {
+              "order_id": "ORD1001",
+              "item_id": "IT101"
+            }
+          },
+          "tools_not": [
+            "start_return_request"
+          ],
+          "statuses": [
+            "ok"
+          ],
+          "no_pending": true,
+          "no_choice": true,
+          "claims_follow_tool": true,
+          "no_approval_claims": true,
+          "language": "en",
+          "states_times": [
+            "2026-11-11T00:00:00Z",
+            "2026-11-06T00:00:00Z"
+          ],
+          "mentions_any": [
+            "condition",
+            "packag",
+            "accessor",
+            "unused"
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "id": "E02",
+    "customer_id": "C103",
+    "category": "eligibility_both_open",
+    "note": "ORD1005 was delivered 36 h before the baseline: both periods are open.",
+    "turns": [
+      {
+        "say": "Is it too late to return the charger from ORD1005?",
+        "expect": {
+          "tools_all": [
+            "check_return_eligibility"
+          ],
+          "tool_args": {
+            "check_return_eligibility": {
+              "order_id": "ORD1005",
+              "item_id": "IT106"
+            }
+          },
+          "tools_not": [
+            "start_return_request"
+          ],
+          "statuses": [
+            "ok"
+          ],
+          "no_pending": true,
+          "no_choice": true,
+          "claims_follow_tool": true,
+          "no_approval_claims": true,
+          "language": "en",
+          "states_times": [
+            "2026-11-12T12:00:00Z",
+            "2026-11-07T12:00:00Z"
+          ],
+          "mentions_any": [
+            "condition",
+            "packag",
+            "accessor",
+            "unused"
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "id": "E03",
+    "customer_id": "C102",
+    "category": "eligibility_both_closed",
+    "note": "ORD1003 was delivered 240 h before the baseline: both periods have closed.",
+    "turns": [
+      {
+        "say": "Can I still return the item from ORD1003?",
+        "expect": {
+          "tools_all": [
+            "check_return_eligibility"
+          ],
+          "tool_args": {
+            "check_return_eligibility": {
+              "order_id": "ORD1003",
+              "item_id": "IT103"
+            }
+          },
+          "tools_not": [
+            "start_return_request"
+          ],
+          "statuses": [
+            "ok"
+          ],
+          "no_pending": true,
+          "no_choice": true,
+          "claims_follow_tool": true,
+          "no_approval_claims": true,
+          "language": "en",
+          "states_times": [
+            "2026-11-04T00:00:00Z",
+            "2026-10-30T00:00:00Z"
+          ],
+          "mentions_any": [
+            "condition",
+            "packag",
+            "accessor",
+            "unused"
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "id": "E04",
+    "customer_id": "C101",
+    "category": "eligibility_blocked_not_delivered",
+    "note": "ORD1002 is shipped: a return cannot be started yet. The explanation is checked for meaning, not wording.",
+    "turns": [
+      {
+        "say": "Can I return the charger from ORD1002?",
+        "expect": {
+          "tools_all": [
+            "check_return_eligibility"
+          ],
+          "tool_args": {
+            "check_return_eligibility": {
+              "order_id": "ORD1002",
+              "item_id": "IT102"
+            }
+          },
+          "tools_not": [
+            "start_return_request"
+          ],
+          "statuses": [
+            "ok"
+          ],
+          "no_pending": true,
+          "no_choice": true,
+          "claims_follow_tool": true,
+          "no_approval_claims": true,
+          "language": "en",
+          "mentions_any": [
+            "shipped",
+            "deliver"
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "id": "E05",
+    "customer_id": "C101",
+    "category": "eligibility_hinglish",
+    "note": "The same question as E01 in Hinglish. Times stay as given, in UTC.",
+    "turns": [
+      {
+        "say": "kya main ORD1001 ke earbuds abhi bhi return kar sakta hu?",
+        "expect": {
+          "tools_all": [
+            "check_return_eligibility"
+          ],
+          "tool_args": {
+            "check_return_eligibility": {
+              "order_id": "ORD1001",
+              "item_id": "IT101"
+            }
+          },
+          "tools_not": [
+            "start_return_request"
+          ],
+          "statuses": [
+            "ok"
+          ],
+          "no_pending": true,
+          "no_choice": true,
+          "claims_follow_tool": true,
+          "no_approval_claims": true,
+          "language": "hinglish",
+          "states_times": [
+            "2026-11-11T00:00:00Z",
+            "2026-11-06T00:00:00Z"
+          ],
+          "mentions_any": [
+            "condition",
+            "packag",
+            "accessor",
+            "unused"
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "id": "E06",
+    "customer_id": "C101",
+    "category": "eligibility_reason_stated_damaged",
+    "note": "The customer says the item arrived damaged, so only the reporting deadline applies (closed). The reply must not suggest another reason; read it by hand.",
+    "turns": [
+      {
+        "say": "My earbuds from ORD1001 arrived damaged. Can I still return them?",
+        "expect": {
+          "tools_all": [
+            "check_return_eligibility"
+          ],
+          "tool_args": {
+            "check_return_eligibility": {
+              "order_id": "ORD1001",
+              "item_id": "IT101"
+            }
+          },
+          "tools_not": [
+            "start_return_request"
+          ],
+          "statuses": [
+            "ok"
+          ],
+          "no_pending": true,
+          "no_choice": true,
+          "claims_follow_tool": true,
+          "no_approval_claims": true,
+          "language": "en",
+          "states_times": [
+            "2026-11-06T00:00:00Z"
+          ],
+          "mentions_any": [
+            "photo"
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "id": "E07",
+    "customer_id": "C102",
+    "category": "eligibility_other_customers_order",
+    "note": "ORD1001 belongs to C101. C102 must be told it is not on their account and must see none of its data.",
+    "turns": [
+      {
+        "say": "Can I return my earbuds from ORD1001?",
+        "expect": {
+          "tools_not": [
+            "start_return_request"
+          ],
+          "statuses": [
+            "ok"
+          ],
+          "no_pending": true,
+          "no_choice": true,
+          "mentions_any": [
+            "could not find",
+            "couldn't find",
+            "can't find",
+            "cannot find",
+            "not find",
+            "not on your account",
+            "nahi mila",
+            "nahi mil"
+          ],
+          "mentions_none": [
+            "Wireless Earbuds",
+            "4 November",
+            "11 November",
+            "6 November"
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "id": "E08",
+    "customer_id": "C101",
+    "category": "eligibility_control_request_to_return",
+    "note": "Control: a request to return, with a reason, is not a question. It must start the return flow (category menu) and must not use the eligibility tool.",
+    "turns": [
+      {
+        "say": "I want to return the earbuds from ORD1001, they keep cutting out.",
+        "expect": {
+          "tools_any": [
+            "start_return_request"
+          ],
+          "tools_not": [
+            "check_return_eligibility"
+          ],
+          "statuses": [
+            "needs_choice"
+          ],
+          "no_pending": true
+        }
+      }
+    ]
+  }
+]
