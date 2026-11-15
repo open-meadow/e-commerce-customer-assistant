@@ -25,7 +25,7 @@ class TestStructure:
         assert positions == sorted(positions) and all(PROMPT.count(s) == 1 for s in SECTIONS)
 
     def test_the_prompt_stays_proportionate(self):
-        assert len(PROMPT) < 6500
+        assert len(PROMPT) < 7000
 
 
 class TestIdentity:

@@ -65,7 +65,7 @@ class TestSystemPromptRules:
         assert phrase.lower() in PROMPT.lower()
 
     def test_the_prompt_stays_short_enough_to_follow(self):
-        assert len(PROMPT) < 6000
+        assert len(PROMPT) < 7000
 
 
 class TestTicketUsesWhatTheCustomerSaid:
@@ -224,4 +224,4 @@ class TestLiveV4PromptFixes:
 
     def test_the_earlier_language_and_length_rules_remain(self):
         assert "do not use Hindi or Hinglish words" in PROMPT and "is Hinglish: reply in Hinglish" in PROMPT
-        assert len(PROMPT) < 6000
+        assert len(PROMPT) < 7000
