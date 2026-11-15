@@ -388,7 +388,7 @@ class TestVerdictScreens:
 
     @pytest.mark.parametrize("reply", [
         "You can still return it.", "The return window is still open.", "It is still within the return period.",
-        "You may still request a return until Friday."])
+        "You may still request a return until Friday.", "However, you still have about 4 days left."])
     def test_saying_a_period_is_open_is_found(self, reply):
         assert ev.open_verdict(reply)
 
@@ -416,6 +416,12 @@ class TestVerdictScreens:
                 "under the ordinary period. The FAQ asks for clear photos, which I cannot collect; I can raise a "
                 "ticket.")
         assert "no_open_verdict" in run_case(tmp_path, "E06", Sequence(ask(), text(said)))["failed"]
+
+    def test_mentioning_the_ordinary_period_to_a_damage_report_is_flagged(self, tmp_path):
+        said = ("The deadline to report damage closed on 6 November 2026, 00:00 UTC. The ordinary return period "
+                "(7 days from delivery) is open until 11 November 2026. The FAQ asks for clear photos; I cannot "
+                "collect them.")
+        assert "mentions_none" in run_case(tmp_path, "E06", Sequence(ask(), text(said)))["failed"]
 
     def test_raising_photos_in_an_ordinary_conversation_is_flagged(self, tmp_path):
         said = GOOD_E01 + " Please upload clear photos of the issue."
@@ -543,3 +549,48 @@ class TestDiagnostic:
 
     def test_the_diagnostic_is_not_part_of_the_original_scenarios(self):
         assert "post_confirmation_status" not in ev.SCENARIOS and len(ev.SCENARIOS) == 5
+
+
+class TestIntegrity:
+    """Live run 1 of the original set contained eight provider failures (network, timeout). Their replies fail every
+    check, so a run containing any is not scored; the report now says so."""
+
+    @staticmethod
+    def failing_model():
+        from app.llm.base import LLMError
+
+        def boom(system, messages, tools):
+            raise LLMError("provider failed", category="timeout")
+
+        llm = ScriptedLLM(chat=boom)
+        llm.interprets_language = True
+        return llm
+
+    def test_a_clean_new_sets_run_is_valid(self):
+        integrity = ev.run_new_sets(RuleBasedLLM)["integrity"]
+        assert integrity["run_valid_for_scoring"] is True and integrity["provider_error_replies"]["total"] == 0
+
+    def test_provider_failures_make_a_new_sets_run_invalid(self):
+        llm = self.failing_model()
+        integrity = ev.run_new_sets(lambda: llm)["integrity"]
+        assert integrity["run_valid_for_scoring"] is False
+        assert integrity["provider_error_replies"]["conversation_turns"] > 0
+        assert "not scored" in integrity["rule"]
+
+    def test_the_original_style_report_carries_the_block_and_counts_failures(self, tmp_path):
+        llm = self.failing_model()
+        cases = EVAL / "queries_conversational.csv"
+        report = ev.run(cases, lambda: llm, conversations_path=EVAL / "conversations.json")
+        integrity = report["integrity"]
+        assert integrity["run_valid_for_scoring"] is False
+        assert integrity["provider_error_replies"]["cases"] > 0 and integrity["provider_error_replies"]["total"] > 0
+
+    def test_a_clean_original_style_run_is_valid(self):
+        report = ev.run(EVAL / "queries_conversational.csv", RuleBasedLLM,
+                        conversations_path=EVAL / "conversations.json")
+        assert report["integrity"]["run_valid_for_scoring"] is True
+
+    def test_nothing_reads_the_block(self):
+        source = Path(ev.__file__).read_text(encoding="utf-8")
+        assert source.count('["integrity"]') == 0 and source.count("run_valid_for_scoring") <= 2
+

@@ -266,7 +266,13 @@
           "mentions_any": [
             "photo"
           ],
-          "no_open_verdict": true
+          "no_open_verdict": true,
+          "mentions_none": [
+            "ordinary",
+            "7 days",
+            "7-day",
+            "seven"
+          ]
         }
       }
     ]
