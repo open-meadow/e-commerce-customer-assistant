@@ -422,3 +422,38 @@ def looks_unrelated_to_a_reason(text: str, order_id: str, item_id: str) -> bool:
     if _hindi_off_topic(text):
         return True
     return text.strip().endswith("?") or _QUESTIONISH.match(text) is not None
+
+
+# ---------------------------------------------------------------------------
+# Phase 0 (context retention): do not make the customer repeat what they already said
+# ---------------------------------------------------------------------------
+
+_REPEAT_COMPLAINT = re.compile(
+    r"\balready\s+(?:told|gave|given|said|shared|provided|mentioned|sent|explained|wrote)\b"
+    r"|\b(?:told|gave|sent)\s+you\s+(?:my|the|this|that|already)\b"
+    r"|\bwhy\s+(?:do|should|must|would)\s+i\s+(?:have\s+to\s+|need\s+to\s+)?(?:repeat|say|tell|give|explain|send)\b"
+    r"|\brepeat(?:ing)?\s+(?:myself|everything|it|this|that)\b"
+    r"|\b(?:again\s+and\s+again|over\s+and\s+over)\b"
+    r"|\bpehle\s+(?:hi\s+)?(?:bata|bol|de)\b|\bmaine\s+(?:pehle|already)\b",
+    re.I)
+_ASKS_FOR_ORDER_ID = re.compile(
+    r"\b(?:provide|share|give|send|tell|confirm|enter|resend|repeat|type|check)\b[^.?!\n]{0,60}"
+    r"\border\s*(?:id|number|no\.?|#)"
+    r"|\border\s*(?:id|number)\b[^.?!\n]{0,40}\b(?:again|please)\b"
+    r"|\bwhat(?:'s|\s+is)\s+(?:your|the)\s+order\s*(?:id|number)\b", re.I)
+
+REPEAT_REMINDER = (
+    "Reminder from the system: the customer says they already gave this information, so do not ask them to "
+    "repeat it. Look for it earlier in this conversation. If an order ID appears there, call get_order_status "
+    "for it. Otherwise call list_my_orders now and work from the customer's own orders. Acknowledge the "
+    "repetition in one short sentence.")
+
+
+def is_repeat_complaint(text: str) -> bool:
+    """The customer's message complains that they are being asked to repeat themselves."""
+    return isinstance(text, str) and bool(_REPEAT_COMPLAINT.search(text))
+
+
+def asks_for_order_id(reply: str) -> bool:
+    """The model's reply asks the customer to supply an order ID or number."""
+    return isinstance(reply, str) and bool(_ASKS_FOR_ORDER_ID.search(reply))

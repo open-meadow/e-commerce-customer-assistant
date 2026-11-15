@@ -55,7 +55,9 @@ SYSTEM_PROMPT = (
     "offer to list their own orders; never describe their own "
     "orders as anyone else's. When they ask where an order is, describe every order that has not been "
     "delivered (ID and status), not just one. Ask at most one clarifying question at a time, and only when you "
-    "cannot proceed without it.\n\n"
+    "cannot proceed without it. If the customer says they already gave information (an order number, the "
+    "problem), never ask for it again: look earlier in this conversation, otherwise call list_my_orders, say "
+    "sorry in one short sentence and continue from their orders.\n\n"
     "FACTS. Use the provided tools to get facts; never guess order, delivery, refund, stock or policy details. "
     "For policy questions call search_policies or get_refund_policy and answer only from the returned text. If "
     "a tool fails or returns nothing, say honestly that you cannot confirm it. A refund status such as 'Not "
@@ -457,6 +459,7 @@ class Engine:
         calls_used = 0
         wrote_tool_results = False
         item_retry_used = False  # a wrong item in a return is fed back to the model once per turn
+        repeat_nudged = False  # a repeat-the-details question is challenged once per turn
         while True:
             try:
                 result = self.llm.chat(SYSTEM_PROMPT, messages, tools,
@@ -470,6 +473,15 @@ class Engine:
                             "error", "unavailable")
             calls = tuple(result.tool_calls or ())
             if not calls:
+                # A customer who says they already gave their details must not be asked for them again.
+                # A real model that does so without looking anything up is reminded once, with fixed text
+                # (no customer data); the orders still come from the tool. Never for the offline stand-in.
+                if (self.interpret and not repeat_nudged and calls_used == 0
+                        and guard.is_repeat_complaint(text) and guard.asks_for_order_id(result.text or "")):
+                    repeat_nudged = True
+                    messages.append({"role": "assistant", "content": result.text})
+                    messages.append({"role": "user", "content": guard.REPEAT_REMINDER})
+                    continue
                 return self._finish_text(s, result.text, ctx, wrote_tool_results)
             if calls_used + len(calls) > self.settings.max_tool_calls_per_turn:
                 return Turn(self._with_notices(ctx, "I wasn't able to finish that request. Could you rephrase "
