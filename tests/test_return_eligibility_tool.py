@@ -166,9 +166,9 @@ class TestAnswers:
     def test_what_is_not_checked_is_stated_every_time(self, temp_db):
         d = data(run("C101", "ORD1001", "IT101"))
         joined = " ".join(d["not_checked"]).lower()
-        assert len(d["not_checked"]) == 4
+        assert len(d["not_checked"]) == 3
         assert "returned at all" in joined and "condition" in joined and "packaging and accessories" in joined
-        assert "photos" in joined and "cannot collect photos" in joined
+        assert "photo" not in joined  # photos are raised only when the customer reports damage
 
     def test_the_note_separates_a_timing_check_from_an_approval(self, temp_db):
         note = run("C101", "ORD1001", "IT101").note.lower()
@@ -219,11 +219,19 @@ class TestTwoDifferentPeriods:
     def test_the_note_names_the_reporting_deadline_and_the_photo_limit(self, temp_db):
         note = run("C101", "ORD1001", "IT101").note
         assert "deadline to report a damaged or wrong item and start a return" in note
-        assert "do not say how to send photos" in note and "support ticket may be offered" in note
+        assert "do not say how to send photos" in note and "offer a support ticket" in note
+        assert "mention photos only if the customer says the item arrived damaged or wrong" in note.lower()
+        assert "never raise photos in an ordinary return conversation" in note.lower()
 
-    def test_the_photo_requirement_appears_only_with_the_timing_answer(self, temp_db):
-        blocked = data(run("C101", "ORD1002", "IT102"))
-        assert "not_checked" not in blocked
+    def test_the_photo_note_is_only_on_the_damaged_or_wrong_item_deadline(self, temp_db):
+        windows = data(run("C101", "ORD1001", "IT101"))["windows"]
+        assert "clear photos" in windows[DAMAGED]["photos_note"]
+        assert "cannot collect photos" in windows[DAMAGED]["photos_note"]
+        assert "photos_note" not in windows["ordinary_return_window"]
+
+    def test_a_blocked_answer_carries_no_photo_text(self, temp_db):
+        blocked = run("C101", "ORD1002", "IT102")
+        assert "photo" not in blocked.to_json().lower() and "not_checked" not in json.loads(blocked.to_json())["data"]
 
 
 class TestTimeLeft:
@@ -351,7 +359,8 @@ class TestPromptAndHarness:
         lowered = SYSTEM_PROMPT.lower()
         assert "ordinary return period is 7 days from delivery" in lowered
         assert "48-hour limit is a deadline to report it and start the return" in lowered
-        assert "the faq also asks for photos, which you cannot collect" in lowered
+        assert "mention photos only if the customer says an item arrived damaged or wrong" in lowered
+        assert "you cannot collect them" in lowered and "never raise photos otherwise" in lowered
 
     def test_the_evaluation_harness_knows_the_tool(self):
         import sys

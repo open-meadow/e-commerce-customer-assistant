@@ -264,9 +264,11 @@ _MONTHS = ("January", "February", "March", "April", "May", "June", "July", "Augu
 # What the timing check cannot see. Returned with every answer so the model never has to remember it.
 _NOT_CHECKED = ("whether this product can be returned at all (for example hygiene items, software licences or "
                 "items marked non-returnable)", "the condition of the item (it must be unused)",
-                "its original packaging and accessories",
-                "photos of the issue (the FAQ asks for clear photos for a damaged or wrong item; this assistant "
-                "cannot collect photos)")
+                "its original packaging and accessories")
+# Only meaningful when the customer reports a damaged or wrong item; kept out of not_checked so an ordinary
+# return conversation is never told about it.
+_PHOTOS_NOTE = ("The FAQ asks for clear photos of the issue when an item arrives damaged or wrong; this assistant "
+                "cannot collect photos.")
 # The two periods are different things in the store's documents: Policies.md gives most products 7 days from
 # delivery; FAQ Q3.4 says to initiate a return within 48 hours of delivery, with photos, for a damaged or wrong
 # product. The repository calls them the standard and the damaged categories.
@@ -287,9 +289,10 @@ _WINDOW_NOTE = (_TIMING_NOTE + " Quote every time exactly as given in closes_at_
                 "damaged or wrong item and start a return. If the customer has not said why they want to return "
                 "the item, give both. If they have, give only the matching one (damaged or wrong item: the "
                 "reporting deadline; any other reason: the ordinary period) and never suggest which reason to "
-                "choose. When you give the reporting deadline, add that the FAQ asks for clear photos of the "
-                "issue, which you cannot collect here; do not say how to send photos, and a support ticket may "
-                "be offered. Use time_left_text only as an approximate guide as of checked_at_text. This is "
+                "choose. Mention photos only if the customer says the item arrived damaged or wrong: then say "
+                "what photos_note says (the FAQ asks for clear photos, which you cannot collect here), do not say "
+                "how to send photos, and offer a support ticket. Never raise photos in an ordinary return "
+                "conversation. Use time_left_text only as an approximate guide as of checked_at_text. This is "
                 "not a request to return: start_return_request only when the customer asks to return the item.")
 
 
@@ -322,6 +325,8 @@ def _window_view(key: str, verdict: dict[str, Any]) -> dict[str, Any]:
                             "closes_at_text": _utc_text(closes)}
     if is_open:
         view["time_left_text"] = _time_left_text((clock.parse_timestamp(closes) - evaluated).total_seconds())
+    if key == "damaged":
+        view["photos_note"] = _PHOTOS_NOTE
     return view
 
 
