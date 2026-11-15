@@ -771,7 +771,8 @@ def run(cases_path: Path, llm_factory: Callable[[], LLMClient], *, live: bool = 
 _EXPECT_KEYS = frozenset({"tools_any", "tools_all", "mentions", "mentions_any", "not_asking", "no_tools",
                           "language", "statuses", "pending_kind", "no_pending", "no_choice"})
 _REAL_TOOLS = frozenset({"list_my_orders", "get_order_status", "get_my_returns", "get_my_tickets",
-                         "get_refund_policy", "lookup_product", "search_policies", "start_return_request",
+                         "get_refund_policy", "check_return_eligibility", "lookup_product", "search_policies",
+                         "start_return_request",
                          "start_support_ticket"})
 
 

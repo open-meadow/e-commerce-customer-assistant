@@ -31,7 +31,7 @@ from typing import Any, Callable, Optional
 from app import catalog as catalog_module
 from app import rag as rag_module
 from app.catalog import CatalogError
-from app.db import repository
+from app.db import clock, repository
 from app.db.errors import DatabaseDataIntegrityError, DatabaseError
 from app.rag import KnowledgeBaseError
 from app.tools.context import CustomerContext
@@ -259,6 +259,69 @@ def _get_refund_policy(ctx: CustomerContext, args: dict[str, Any]) -> ToolResult
     return ToolResult("ok", "refund_policy", data, note=note)
 
 
+_MONTHS = ("January", "February", "March", "April", "May", "June", "July", "August", "September", "October",
+           "November", "December")
+# What the timing check cannot see. Returned with every answer so the model never has to remember it.
+_NOT_CHECKED = ("whether this product can be returned at all (for example hygiene items, software licences or "
+                "items marked non-returnable)", "the condition of the item (it must be unused)",
+                "its original packaging and accessories")
+_WINDOW_NAMES = {"standard": "standard", "damaged": "damaged_or_wrong_product"}
+_CATEGORY_INDEPENDENT = ("order_not_found", "order_status_ineligible", "item_not_found",
+                         "active_return_exists", "delivery_timestamp_missing")
+_TIMING_NOTE = ("This is a timing check only, not an approval and not a promise: the system rechecks everything "
+                "when the customer confirms a return request, and a person may still review it. Never say the "
+                "customer 'is eligible' or that a return 'will be accepted'; say what the dates show. Say that "
+                "you cannot check what is listed in not_checked.")
+_WINDOW_NOTE = (_TIMING_NOTE + " Quote every time exactly as given in closes_at_text, which is in UTC; never "
+                "convert it to another time zone, never say 'until the end of the day' and never do your own "
+                "date arithmetic. If the customer has not said why they want to return the item, give both "
+                "windows. If they have, give only the matching one (damaged or wrong product: "
+                "damaged_or_wrong_product; any other reason: standard) and never suggest which reason to "
+                "choose. This is not a request to return: start_return_request only when the customer asks "
+                "to return the item.")
+
+
+def _utc_text(timestamp: str) -> str:
+    """'2026-11-08T10:00:00Z' -> '8 November 2026, 10:00 UTC' (no time zone conversion, ever)."""
+    moment = clock.parse_timestamp(timestamp)
+    return f"{moment.day} {_MONTHS[moment.month - 1]} {moment.year}, {moment:%H:%M} UTC"
+
+
+def _window_view(verdict: dict[str, Any]) -> dict[str, Any]:
+    closes = verdict["window_closes_at"]
+    evaluated = clock.parse_timestamp(verdict["evaluated_at"])
+    is_open = verdict["outcome"] == "eligible"
+    view: dict[str, Any] = {"status": "open" if is_open else "closed", "window_hours": verdict["window_hours"],
+                            "closes_at_utc": closes, "closes_at_text": _utc_text(closes)}
+    if is_open:
+        view["hours_left"] = int((clock.parse_timestamp(closes) - evaluated).total_seconds() // 3600)
+    return view
+
+
+@_guard
+def _check_return_eligibility(ctx: CustomerContext, args: dict[str, Any]) -> ToolResult:
+    verdicts = repository.check_return_windows(ctx.customer_id, args["order_id"], args["item_id"])
+    standard, damaged = verdicts["standard"], verdicts["damaged"]
+    if standard["outcome"] == "order_not_found":
+        return ToolResult("not_found", "order_not_found",
+                          note="That order is not on this customer's account. Say plainly that you could not find "
+                               "it on their account; do not say whose it is. You may offer to list their own orders.")
+    if standard["outcome"] in _CATEGORY_INDEPENDENT:
+        data: dict[str, Any] = {"result": "cannot_start_a_return", "reason": standard["outcome"],
+                                "order_status": standard["order_status"],
+                                "existing_return_status": standard["existing_return_status"]}
+        return ToolResult("ok", "return_check", data,
+                          note=_TIMING_NOTE + " Explain plainly why a return cannot be started now; a support "
+                               "ticket may be offered. This is not a request to return.")
+    data = {"result": "timing_check", "delivered_at_utc": standard["delivered_at"],
+            "delivered_at_text": _utc_text(standard["delivered_at"]),
+            "checked_at_utc": standard["evaluated_at"], "checked_at_text": _utc_text(standard["evaluated_at"]),
+            "windows": {_WINDOW_NAMES["standard"]: _window_view(standard),
+                        _WINDOW_NAMES["damaged"]: _window_view(damaged)},
+            "not_checked": list(_NOT_CHECKED)}
+    return ToolResult("ok", "return_check", data, note=_WINDOW_NOTE)
+
+
 def _lookup_product(ctx: CustomerContext, args: dict[str, Any]) -> ToolResult:
     try:
         catalog = catalog_module.default_catalog()
@@ -292,6 +355,11 @@ TOOL_SPECS: dict[str, ToolSpec] = {s.name: s for s in [
     ToolSpec("get_refund_policy",
              "Refund policy facts, and the refund status of one order if order_id is given.",
              {"order_id": _ORDER_ID}, (), _get_refund_policy),
+    ToolSpec("check_return_eligibility",
+             "Read-only timing check: can the customer still ask for a return of this item? Use it for a "
+             "question about eligibility or a deadline. It does not start a return.",
+             {"order_id": _ORDER_ID, "item_id": {"type": "string"}}, ("order_id", "item_id"),
+             _check_return_eligibility),
     ToolSpec("lookup_product", "Look up a product by product_id or keyword query.",
              {"product_id": {"type": "string"}, "query": {"type": "string"}}, (), _lookup_product),
     ToolSpec("search_policies", "Search the FAQ and store policies.",

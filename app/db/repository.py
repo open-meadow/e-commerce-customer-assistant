@@ -394,6 +394,39 @@ def check_return_eligibility(
         _close_quietly(connection)
 
 
+def check_return_windows(
+    authenticated_customer_id: str,
+    order_id: str,
+    item_id: str,
+) -> dict[str, dict[str, Any]]:
+    """Advisory, read-only: the standard and the damaged/wrong-product verdicts at ONE instant.
+
+    ``damaged`` and ``wrong_product`` share the same 48 hour window, so ``damaged`` stands for both. Both
+    verdicts come from the same read transaction and the same captured ``now``, so their ``evaluated_at``
+    values are identical and the two windows can never disagree about the moment they were judged.
+    Order ownership, status, item and active-return outcomes do not depend on the category, so they are
+    the same in both verdicts. Never writes. ``create_return_request`` stays authoritative: it rechecks
+    everything at confirmation time.
+    """
+    validate_identifier(authenticated_customer_id, "authenticated_customer_id")
+    validate_identifier(order_id, "order_id")
+    validate_identifier(item_id, "item_id")
+
+    connection = get_connection()
+    try:
+        connection.execute("BEGIN")
+        now = clock.utc_now()
+        return {
+            category: _evaluate_return(connection, authenticated_customer_id, order_id, item_id, category, now)
+            for category in ("standard", "damaged")
+        }
+    except sqlite3.Error as exc:
+        raise DatabaseOperationalError("eligibility check failed") from exc
+    finally:
+        _rollback_quietly(connection)
+        _close_quietly(connection)
+
+
 # ---------------------------------------------------------------------------
 # Writes
 # ---------------------------------------------------------------------------

@@ -203,7 +203,7 @@ class TestOpenAIRequest:
         # Every property required and no extras: strict. Optional properties: not strict.
         assert {n for n, s in strict.items() if s} == {
             "list_my_orders", "get_order_status", "get_my_returns", "get_my_tickets",
-            "search_policies", "start_return_request"}
+            "search_policies", "start_return_request", "check_return_eligibility"}
         assert {n for n, s in strict.items() if not s} == {
             "get_refund_policy", "lookup_product", "start_support_ticket"}
 
