@@ -352,6 +352,19 @@ def _facts_to_state(ordinary: dict[str, Any], deadline: dict[str, Any]) -> dict[
             "any_other_reason": [ordinary_sentence, _LIMITS_SENTENCE]}
 
 
+def _items_on_order(ctx: CustomerContext, order_id: str) -> list[dict[str, str]]:
+    """The signed-in customer's own items on an order they own (the caller has already found the order)."""
+    try:
+        catalog = catalog_module.default_catalog()
+    except CatalogError:
+        catalog = None
+    items = []
+    for item in repository.get_order_items(ctx.customer_id, order_id):
+        name = (catalog.name_for(item["product_id"]) if catalog is not None else None) or "an item"
+        items.append({"item_id": item["item_id"], "product_name": name})
+    return items
+
+
 def _blocked_explanation(verdict: dict[str, Any]) -> str:
     """A plain sentence the model may rely on, so no exact wording has to be guessed or checked."""
     outcome = verdict["outcome"]
@@ -374,6 +387,15 @@ def _check_return_eligibility(ctx: CustomerContext, args: dict[str, Any]) -> Too
         return ToolResult("not_found", "order_not_found",
                           note="That order is not on this customer's account. Say plainly that you could not find "
                                "it on their account; do not say whose it is. You may offer to list their own orders.")
+    if standard["outcome"] == "item_not_found":
+        items = _items_on_order(ctx, args["order_id"])
+        listed = ", ".join(f"{i['item_id']} ({i['product_name']})" for i in items) or "none"
+        return ToolResult("ok", "return_check", {
+            "result": "item_not_on_this_order", "reason": "item_not_found", "order_items": items,
+            "explanation": f"That item ID is not on this order. The items on this order are: {listed}."},
+            note="The item ID was wrong, not the order. Call this tool again, once, with the item_id of the item "
+                 "the customer means (use the names above); if it is not clear which one, ask the customer which "
+                 "item. Do not tell the customer the item cannot be found. This is not a request to return.")
     if standard["outcome"] in _CATEGORY_INDEPENDENT:
         data: dict[str, Any] = {"result": "cannot_start_a_return", "reason": standard["outcome"],
                                 "explanation": _blocked_explanation(standard),

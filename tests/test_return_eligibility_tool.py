@@ -193,7 +193,10 @@ class TestAnswers:
 
     def test_an_unknown_item_is_reported(self, temp_db):
         d = data(run("C101", "ORD1001", "IT999"))
-        assert d["reason"] == "item_not_found" and d["explanation"] == "That item is not on this order."
+        assert d["result"] == "item_not_on_this_order" and d["reason"] == "item_not_found"
+        assert d["order_items"] == [{"item_id": "IT101", "product_name": "Wireless Earbuds"}]
+        assert d["explanation"] == ("That item ID is not on this order. The items on this order are: "
+                                    "IT101 (Wireless Earbuds).")
 
     def test_another_customers_order_looks_like_a_missing_order(self, temp_db):
         result = run("C102", "ORD1001", "IT101")
@@ -343,10 +346,14 @@ class TestPromptAndHarness:
     def test_the_prompt_separates_the_question_from_the_request(self):
         lowered = SYSTEM_PROMPT.lower()
         assert "check_return_eligibility" in SYSTEM_PROMPT
-        assert "two different intents" in lowered
+        assert "three different intents about returns" in lowered
         assert "has made a return request: call start_return_request" in lowered
         assert "never run an eligibility check first" in lowered
-        assert "has asked a question: call check_return_eligibility" in lowered
+        assert "has asked a question, even if they mention a reason such as damage" in lowered
+        assert "call check_return_eligibility with the exact item_id from get_order_status" in lowered
+        assert "never guess it" in lowered
+        assert "has asked about its status: call get_my_returns" in lowered
+        assert "never use start_return_request for (2) or (3)" in lowered
         assert "timing check, not an approval" in lowered
         assert "in utc, without converting them" in lowered
 
@@ -442,3 +449,40 @@ class TestIntentSeparationWording:
     def test_a_refund_status_of_not_applicable_says_nothing_about_returns(self, temp_db):
         note = execute_tool(CustomerContext("C101", "ref"), "get_refund_policy", {"order_id": "ORD1001"}).note
         assert "'Not Applicable'" in note and "says nothing about whether a refund or a return is possible" in note
+
+
+class TestWrongItemRecovery:
+    """Live run 2: the model called the tool with a guessed item ID and then told the customer the item 'cannot be
+    found'. The tool now answers with the order's own items so the model can call it again with the right one."""
+
+    def test_a_wrong_item_lists_the_customers_own_items_with_names(self, temp_db):
+        d = data(run("C103", "ORD1005", "IT999"))
+        assert [i["item_id"] for i in d["order_items"]] == ["IT105", "IT106"]
+        assert {i["product_name"] for i in d["order_items"]} == {"24-inch Monitor (Full HD)", "65W GaN Charger"}
+        assert "IT105 (24-inch Monitor (Full HD)), IT106 (65W GaN Charger)" in d["explanation"]
+
+    def test_the_note_asks_for_one_retry_and_forbids_saying_the_item_cannot_be_found(self, temp_db):
+        note = run("C103", "ORD1005", "IT999").note
+        assert "Call this tool again, once" in note and "Do not tell the customer the item cannot be found" in note
+        assert "if it is not clear which one, ask the customer" in note
+
+    def test_another_customers_order_still_lists_nothing(self, temp_db):
+        result = run("C102", "ORD1005", "IT105")
+        assert result.status == "not_found" and "order_items" not in result.to_json()
+        assert "IT105" not in result.to_json() and "Monitor" not in result.to_json()
+
+    def test_a_wrong_item_on_a_returned_or_shipped_order_is_still_blocked_first(self, temp_db):
+        # ordering of the outcomes is the repository's: the order status is judged before the item
+        assert data(run("C101", "ORD1002", "IT999"))["reason"] == "order_status_ineligible"
+
+    def test_the_model_can_retry_with_the_right_item_and_then_answers_from_the_facts(self, temp_db):
+        llm = Sequence(ask("ORD1005", "IT999"), ask("ORD1005", "IT106"),
+                       LLMResult(text="The ordinary return period (7 days from delivery) is open until "
+                                      "12 November 2026, 12:00 UTC."))
+        backend = Backend(llm=llm, settings=Settings())
+        reply = Client(backend, "C103").say("Is it too late to return the charger from ORD1005?")
+        assert reply.status == "ok" and "12 November 2026, 12:00 UTC" in reply.text
+        assert reply.pending is None and reply.choice is None
+        seen = [json.loads(m["content"]) for m in llm.seen[2] if m["role"] == "tool"]
+        assert [s["data"]["result"] for s in seen] == ["item_not_on_this_order", "timing_check"]
+
