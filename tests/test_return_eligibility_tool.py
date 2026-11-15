@@ -352,6 +352,7 @@ class TestPromptAndHarness:
         assert "has asked a question, even if they mention a reason such as damage" in lowered
         assert "call check_return_eligibility with the exact item_id from get_order_status" in lowered
         assert "never guess it" in lowered
+        assert "give the facts_to_state paragraph that matches what they said, all of it" in lowered
         assert "has asked about its status: call get_my_returns" in lowered
         assert "never use start_return_request for (2) or (3)" in lowered
         assert "timing check, not an approval" in lowered
@@ -380,59 +381,62 @@ class TestPromptAndHarness:
 
 
 class TestFactsToState:
-    """The sentences the model is asked to give are built by code, from the same verdicts as the windows."""
+    """The paragraphs the model is asked to give are built by code, from the same verdicts as the windows."""
 
     def facts(self, customer, order, item):
         return data(run(customer, order, item))["facts_to_state"]
 
-    def test_there_is_one_list_per_kind_of_customer_message(self, temp_db):
+    def test_there_is_one_paragraph_per_kind_of_customer_message(self, temp_db):
         facts = self.facts("C101", "ORD1001", "IT101")
         assert set(facts) == {"no_reason_given", "item_damaged_or_wrong", "any_other_reason"}
+        assert all(isinstance(v, str) for v in facts.values())
 
     def test_no_reason_given_has_both_periods_and_the_limits(self, temp_db):
-        first, second, limits = self.facts("C101", "ORD1001", "IT101")["no_reason_given"]
-        assert first == ("The ordinary return period (7 days from delivery) is open until 11 November 2026, 00:00 UTC "
-                         "(about 4 days left).")
-        assert second == ("The deadline to report a damaged or wrong item and start a return (48 hours from delivery) "
-                          "closed on 6 November 2026, 00:00 UTC.")
-        assert "cannot check whether this product can be returned at all" in limits
-        assert "condition" in limits and "packaging and accessories" in limits
+        paragraph = self.facts("C101", "ORD1001", "IT101")["no_reason_given"]
+        assert ("The ordinary return period (7 days from delivery) is open until 11 November 2026, 00:00 UTC "
+                "(about 4 days left).") in paragraph
+        assert ("The deadline to report a damaged or wrong item and start a return (48 hours from delivery) "
+                "closed on 6 November 2026, 00:00 UTC.") in paragraph
+        assert paragraph.index("ordinary return period") < paragraph.index("deadline to report")
+        assert "cannot check whether this product can be returned at all" in paragraph
+        assert "condition" in paragraph and "packaging and accessories" in paragraph
 
     def test_a_damaged_report_gets_the_deadline_and_the_photo_sentence_only(self, temp_db):
-        sentences = self.facts("C101", "ORD1001", "IT101")["item_damaged_or_wrong"]
-        joined = " ".join(sentences)
-        assert len(sentences) == 2 and "closed on 6 November 2026, 00:00 UTC" in joined
-        assert "clear photos" in joined and "cannot collect photos here" in joined and "support ticket" in joined
-        assert "ordinary" not in joined and "7 days" not in joined  # never steers to the other period
+        paragraph = self.facts("C101", "ORD1001", "IT101")["item_damaged_or_wrong"]
+        assert "closed on 6 November 2026, 00:00 UTC" in paragraph
+        assert "clear photos" in paragraph and "cannot collect photos here" in paragraph
+        assert "support ticket" in paragraph
+        assert "ordinary" not in paragraph and "7 days" not in paragraph  # never steers to the other period
 
     def test_any_other_reason_gets_the_ordinary_period_and_the_limits_without_photos(self, temp_db):
-        sentences = self.facts("C101", "ORD1001", "IT101")["any_other_reason"]
-        joined = " ".join(sentences)
-        assert "ordinary return period" in joined and "photo" not in joined and "48" not in joined
+        paragraph = self.facts("C101", "ORD1001", "IT101")["any_other_reason"]
+        assert "ordinary return period" in paragraph and "photo" not in paragraph and "48" not in paragraph
 
-    def test_no_other_list_mentions_photos_except_the_damaged_one(self, temp_db):
+    def test_no_other_paragraph_mentions_photos_except_the_damaged_one(self, temp_db):
         facts = self.facts("C103", "ORD1005", "IT105")
-        assert "photo" in " ".join(facts["item_damaged_or_wrong"])
-        assert "photo" not in " ".join(facts["no_reason_given"] + facts["any_other_reason"])
+        assert "photo" in facts["item_damaged_or_wrong"]
+        assert "photo" not in facts["no_reason_given"] and "photo" not in facts["any_other_reason"]
 
     def test_both_open_and_both_closed_read_correctly(self, temp_db):
         both_open = self.facts("C103", "ORD1005", "IT105")["no_reason_given"]
-        assert "is open until 12 November 2026, 12:00 UTC (about 5 days left)" in both_open[0]
-        assert "is open until 7 November 2026, 12:00 UTC (about 12 hours left)" in both_open[1]
+        assert "is open until 12 November 2026, 12:00 UTC (about 5 days left)" in both_open
+        assert "is open until 7 November 2026, 12:00 UTC (about 12 hours left)" in both_open
         both_closed = self.facts("C102", "ORD1003", "IT103")["no_reason_given"]
-        assert "closed on 4 November 2026, 00:00 UTC" in both_closed[0]
-        assert "closed on 30 October 2026, 00:00 UTC" in both_closed[1]
+        assert "closed on 4 November 2026, 00:00 UTC" in both_closed
+        assert "closed on 30 October 2026, 00:00 UTC" in both_closed
 
     def test_the_last_hour_reads_as_less_than_one_hour_not_zero(self, temp_db, set_now):
         set_now(datetime(2026, 11, 7, 11, 30, tzinfo=UTC))
-        sentence = self.facts("C103", "ORD1005", "IT105")["no_reason_given"][1]
-        assert "(less than 1 hour left)" in sentence and "0 hours" not in sentence
+        paragraph = self.facts("C103", "ORD1005", "IT105")["no_reason_given"]
+        assert "(less than 1 hour left)" in paragraph and "0 hours" not in paragraph
 
     def test_every_time_in_the_facts_is_utc_text(self, temp_db):
-        for sentences in self.facts("C101", "ORD1001", "IT101").values():
-            for sentence in sentences:
-                if "closed on" in sentence or "open until" in sentence:
-                    assert " UTC" in sentence
+        for paragraph in self.facts("C101", "ORD1001", "IT101").values():
+            assert paragraph.count(" UTC") >= 1
+
+    def test_the_note_asks_for_the_whole_paragraph(self, temp_db):
+        note = run("C101", "ORD1001", "IT101").note
+        assert "three ready paragraphs" in note and "give all of it" in note and "do not leave a sentence out" in note
 
 
 class TestIntentSeparationWording:

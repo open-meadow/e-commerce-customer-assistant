@@ -286,10 +286,10 @@ _TIMING_NOTE = ("This is a timing check only, not an approval and not a promise:
                 "you cannot check what is listed in not_checked.")
 _WINDOW_NOTE = (_TIMING_NOTE + " Quote every time exactly as given in closes_at_text, which is in UTC; never "
                 "convert it to another time zone, never say 'until the end of the day' and never do your own "
-                "date arithmetic. facts_to_state holds the sentences to give, in three lists: no_reason_given, "
-                "item_damaged_or_wrong and any_other_reason. Pick the one list that matches what the customer "
-                "said and state every sentence in it, in the customer's language, keeping the UTC times exactly "
-                "as written. Do not add facts from another list and never suggest which reason to choose: if the "
+                "date arithmetic. facts_to_state holds three ready paragraphs: no_reason_given, "
+                "item_damaged_or_wrong and any_other_reason. Pick the one that matches what the customer "
+                "said and give all of it, in the customer's language, keeping the UTC times exactly "
+                "as written; do not leave a sentence out. Do not add facts from another paragraph and never suggest which reason to choose: if the "
                 "customer says the item is damaged or wrong and that deadline has closed, say so and offer a "
                 "support ticket, and do not mention the ordinary period. Never raise photos unless the customer "
                 "says the item arrived damaged or wrong, and never say how to send photos. This is not a request "
@@ -342,14 +342,18 @@ def _period_sentence(label: str, view: dict[str, Any]) -> str:
     return f"{label} closed on {view['closes_at_text']}."
 
 
-def _facts_to_state(ordinary: dict[str, Any], deadline: dict[str, Any]) -> dict[str, list[str]]:
-    """The sentences for each kind of customer message, built by code so no time is rewritten by the model."""
+def _facts_to_state(ordinary: dict[str, Any], deadline: dict[str, Any]) -> dict[str, str]:
+    """One short paragraph per kind of customer message, built by code so no time is rewritten by the model.
+
+    A paragraph, not a list: a small model tends to drop items of a list (the second period, the limits, the photo
+    sentence) but gives a ready paragraph whole.
+    """
     ordinary_sentence = _period_sentence("The ordinary return period (7 days from delivery)", ordinary)
     deadline_sentence = _period_sentence(
         "The deadline to report a damaged or wrong item and start a return (48 hours from delivery)", deadline)
-    return {"no_reason_given": [ordinary_sentence, deadline_sentence, _LIMITS_SENTENCE],
-            "item_damaged_or_wrong": [deadline_sentence, _PHOTOS_SENTENCE],
-            "any_other_reason": [ordinary_sentence, _LIMITS_SENTENCE]}
+    return {"no_reason_given": " ".join([ordinary_sentence, deadline_sentence, _LIMITS_SENTENCE]),
+            "item_damaged_or_wrong": " ".join([deadline_sentence, _PHOTOS_SENTENCE]),
+            "any_other_reason": " ".join([ordinary_sentence, _LIMITS_SENTENCE])}
 
 
 def _items_on_order(ctx: CustomerContext, order_id: str) -> list[dict[str, str]]:
