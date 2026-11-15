@@ -75,7 +75,8 @@ def run_case(tmp_path, ident, llm):
 # ---------------------------------------------------------------------------
 
 NEW_KEYS = {"tools_not", "tool_args", "states_times", "no_approval_claims", "claims_follow_tool",
-            "not_claiming_human", "no_internal_disclosure", "mentions_none"}
+            "not_claiming_human", "no_internal_disclosure", "mentions_none", "no_negative_verdict",
+            "no_open_verdict"}
 
 
 class TestOldInstrumentUnchanged:
@@ -87,7 +88,7 @@ class TestOldInstrumentUnchanged:
     def test_the_old_expectation_keys_are_still_accepted(self):
         old = {"tools_any", "tools_all", "mentions", "mentions_any", "not_asking", "no_tools", "language",
                "statuses", "pending_kind", "no_pending", "no_choice"}
-        assert old <= ev._EXPECT_KEYS and NEW_KEYS <= ev._EXPECT_KEYS and len(ev._EXPECT_KEYS) == 19
+        assert old <= ev._EXPECT_KEYS and NEW_KEYS <= ev._EXPECT_KEYS and len(ev._EXPECT_KEYS) == 21
 
     def test_the_check_catalogue_and_scorecards_are_untouched(self):
         assert list(ev.CHECKS) == [
@@ -368,6 +369,112 @@ class TestIdentityScoring:
     def test_a_promise_fails(self, tmp_path):
         turn = run_case(tmp_path, "I07", Sequence(text("Yes, I promise you will get a full refund.")))
         assert "no_approval_claims" in turn["failed"]
+
+
+class TestVerdictScreens:
+    """The case's known truth, not the tool data, decides which conclusion is wrong."""
+
+    @pytest.mark.parametrize("reply", [
+        "This order is not eligible for a return.", "The item cannot be returned.", "It is ineligible.",
+        "Aap eligible nahi hain."])
+    def test_a_blanket_negative_conclusion_is_found(self, reply):
+        assert ev.negative_verdict(reply)
+
+    @pytest.mark.parametrize("reply", [
+        "You can request an ordinary return until 11 November 2026, 00:00 UTC.",
+        "The deadline to report a damaged item closed on 6 November 2026, 00:00 UTC.", ""])
+    def test_stating_the_dates_is_not_a_negative_conclusion(self, reply):
+        assert not ev.negative_verdict(reply)
+
+    @pytest.mark.parametrize("reply", [
+        "You can still return it.", "The return window is still open.", "It is still within the return period.",
+        "You may still request a return until Friday."])
+    def test_saying_a_period_is_open_is_found(self, reply):
+        assert ev.open_verdict(reply)
+
+    @pytest.mark.parametrize("reply", [
+        "The ordinary return period closed on 4 November 2026, 00:00 UTC.", "It is no longer within the return period.",
+        "You can no longer request a return.", ""])
+    def test_a_closed_period_is_not_an_open_verdict(self, reply):
+        assert not ev.open_verdict(reply)
+
+    def test_a_blanket_no_fails_a_case_whose_ordinary_period_is_open(self, tmp_path):
+        said = ("It is not eligible for a return. Until 11 November 2026, 00:00 UTC and 6 November 2026, 00:00 UTC; "
+                "I cannot check the condition.")
+        assert "no_negative_verdict" in run_case(tmp_path, "E01", Sequence(ask(), text(said)))["failed"]
+
+    def test_the_correct_conclusion_is_not_flagged_for_that_case(self, tmp_path):
+        assert run_case(tmp_path, "E01", Sequence(ask(), text(GOOD_E01)))["failed"] == []
+
+    def test_calling_a_closed_item_open_fails_a_case_with_every_period_closed(self, tmp_path):
+        said = ("You can still return it until 4 November 2026, 00:00 UTC; the reporting deadline was 30 October "
+                "2026, 00:00 UTC. I cannot check the condition.")
+        assert "no_open_verdict" in run_case(tmp_path, "E03", Sequence(ask("ORD1003", "IT103"), text(said)))["failed"]
+
+    def test_steering_a_damaged_report_to_the_ordinary_period_is_flagged(self, tmp_path):
+        said = ("The deadline to report damage closed on 6 November 2026, 00:00 UTC, but you can still return it "
+                "under the ordinary period. The FAQ asks for clear photos, which I cannot collect; I can raise a "
+                "ticket.")
+        assert "no_open_verdict" in run_case(tmp_path, "E06", Sequence(ask(), text(said)))["failed"]
+
+    def test_raising_photos_in_an_ordinary_conversation_is_flagged(self, tmp_path):
+        said = GOOD_E01 + " Please upload clear photos of the issue."
+        assert "mentions_none" in run_case(tmp_path, "E01", Sequence(ask(), text(said)))["failed"]
+
+    def test_mentioning_photos_is_required_when_damage_is_reported(self, tmp_path):
+        said = ("The deadline to report a damaged item closed on 6 November 2026, 00:00 UTC. I can raise a ticket.")
+        assert "mentions_any" in run_case(tmp_path, "E06", Sequence(ask(), text(said)))["failed"]
+        good = said + " The FAQ asks for clear photos, which I cannot collect here."
+        assert run_case(tmp_path, "E06", Sequence(ask(), text(good)))["failed"] == []
+
+
+class TestManualReview:
+    def test_every_turn_of_both_sets_has_a_ground_truth(self):
+        for path in (IDENTITY, ELIGIBILITY):
+            for convo in json.loads(path.read_text(encoding="utf-8")):
+                for turn in convo["turns"]:
+                    assert isinstance(turn.get("ground_truth"), str) and len(turn["ground_truth"]) > 40, convo["id"]
+
+    def test_the_loader_refuses_an_empty_ground_truth(self, tmp_path):
+        path = tmp_path / "bad.json"
+        path.write_text(json.dumps([{"id": "X", "customer_id": "C101", "category": "t", "turns": [
+            {"say": "hello", "ground_truth": "  ", "expect": {}}]}]), encoding="utf-8")
+        with pytest.raises(ValueError, match="ground_truth"):
+            ev.load_conversations(path, {"C101"})
+
+    def test_the_report_demands_a_manual_verdict_for_every_turn_and_certifies_none(self):
+        report = ev.run_new_sets(RuleBasedLLM)
+        review = report["manual_review"]
+        assert review["required"] is True and review["reviewed"] == 0 and review["turns"] == 15
+        assert "can never certify" in review["rule"]
+        sheet = report["review_sheet"]
+        assert len(sheet) == 15 and all(item["manual_verdict"] is None for item in sheet)
+        assert all(item["ground_truth"] != "(none recorded)" for item in sheet)
+        assert "not flagged" in report["sets"]["identity"]["how_to_read"]
+
+    def test_the_sheet_carries_what_a_reviewer_needs(self):
+        item = ev.run_new_sets(RuleBasedLLM)["review_sheet"][0]
+        assert {"set", "id", "customer_message", "reply", "tools_proposed", "automated_flags",
+                "ground_truth", "manual_verdict"} <= set(item)
+
+    def test_the_sheet_renders_as_markdown_and_from_a_saved_report(self, tmp_path, capsys):
+        report = ev.run_new_sets(RuleBasedLLM)
+        markdown = ev.render_review_sheet(report)
+        assert markdown.startswith("# Manual review sheet") and markdown.count("Manual verdict") == 15
+        saved = tmp_path / "r.json"
+        saved.write_text(json.dumps(report), encoding="utf-8")
+        assert ev.main(["--review-sheet", str(saved)]) == 0
+        assert "Ground truth" in capsys.readouterr().out
+
+    def test_an_original_style_report_has_no_review_sheet(self, tmp_path):
+        saved = tmp_path / "old.json"
+        saved.write_text(json.dumps({"summary": {}}), encoding="utf-8")
+        with pytest.raises(SystemExit):
+            ev.main(["--review-sheet", str(saved)])
+
+    def test_the_original_files_have_no_ground_truth_so_their_reports_are_unchanged(self):
+        for convo in json.loads((EVAL / "conversations.json").read_text(encoding="utf-8")):
+            assert all("ground_truth" not in turn for turn in convo["turns"])
 
 
 # ---------------------------------------------------------------------------

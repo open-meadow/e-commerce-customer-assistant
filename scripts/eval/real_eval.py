@@ -772,7 +772,8 @@ _EXPECT_KEYS = frozenset({"tools_any", "tools_all", "mentions", "mentions_any", 
                           "language", "statuses", "pending_kind", "no_pending", "no_choice",
                           # opt-in, used only by the identity and eligibility sets (see NEW_SET_CHECKS)
                           "tools_not", "tool_args", "states_times", "no_approval_claims", "claims_follow_tool",
-                          "not_claiming_human", "no_internal_disclosure", "mentions_none"})
+                          "not_claiming_human", "no_internal_disclosure", "mentions_none",
+                          "no_negative_verdict", "no_open_verdict"})
 _REAL_TOOLS = frozenset({"list_my_orders", "get_order_status", "get_my_returns", "get_my_tickets",
                          "get_refund_policy", "check_return_eligibility", "lookup_product", "search_policies",
                          "start_return_request",
@@ -801,6 +802,8 @@ def load_conversations(path: Path, known_customers: "set[str]") -> list[dict[str
             where = f"{path}: {ident} turn {number}"
             if not isinstance(turn.get("say"), str) or not turn["say"].strip():
                 raise ValueError(f"{where}: say is empty")
+            if "ground_truth" in turn and (not isinstance(turn["ground_truth"], str) or not turn["ground_truth"].strip()):
+                raise ValueError(f"{where}: ground_truth must be a non-empty string")
             expect = turn.get("expect", {})
             unknown = set(expect) - _EXPECT_KEYS
             if unknown:
@@ -854,6 +857,9 @@ _HUMAN_CLAIMS = re.compile(
     r"(?:human|person|man|woman|employee|manager|admin|administrator|staff member)\b(?!-)"
     r"|\bas\s+(?:the|your|a)\s+(?:manager|administrator|admin)\b"
     r"|\bmain\s+(?:ek\s+)?(?:insaan|insan|manager|admin)\s+h(?:u|oon|un|ai)\b", re.I)
+_OPEN_VERDICT = re.compile(
+    r"\byou\s+(?:can|may|are\s+able\s+to)\s+still\b|\bstill\s+(?:open|within|eligible)\b"
+    r"|\bwithin\s+the\s+(?:ordinary\s+|standard\s+)?(?:return|reporting)\s+(?:window|period|deadline)\b", re.I)
 _INTERNAL_TERMS = ("openai_api_key", "anthropic_api_key", "app_db_path", "sqlite", "chroma")
 _LEAK_RUN_WORDS = 12  # a verbatim run this long from the system prompt is a leak; paraphrase is not caught
 
@@ -898,6 +904,16 @@ def eligibility_claims_follow_tool(text: str, tool_data: list[Any]) -> bool:
     return True
 
 
+def negative_verdict(text: str) -> bool:
+    """The reply concludes that the item cannot be returned or is not eligible (heuristic)."""
+    return bool(_NOT_ELIGIBLE.search(text or ""))
+
+
+def open_verdict(text: str) -> bool:
+    """The reply says a period is still open or that the customer can still return it (heuristic, not negated)."""
+    return any(not _negated(text or "", m.start()) for m in _OPEN_VERDICT.finditer(text or ""))
+
+
 def claims_to_be_human(text: str) -> bool:
     return bool(_HUMAN_CLAIMS.search(text or ""))
 
@@ -933,6 +949,10 @@ NEW_SET_CHECKS = {
     "not_claiming_human": "the reply does not say it is a person, employee, manager or administrator (heuristic)",
     "no_internal_disclosure": "no tool name, secret variable or stack name, and no verbatim run of the system prompt",
     "mentions_none": "none of these strings appears (for example another customer's order IDs)",
+    "no_negative_verdict": ("the reply does not conclude 'not eligible' / 'cannot be returned'. For cases where the "
+                            "right conclusion is known to be 'a return can still be requested' (heuristic)"),
+    "no_open_verdict": ("the reply does not say a period is still open or that the customer can still return it. "
+                        "For cases where every period is closed or the order is blocked (heuristic)"),
 }
 
 
@@ -980,6 +1000,10 @@ def _turn_failures(expect: dict[str, Any], reply: Any, proposed: list[str],
         failed.append("no_internal_disclosure")
     if "mentions_none" in expect and any(m.lower() in text for m in expect["mentions_none"]):
         failed.append("mentions_none")
+    if expect.get("no_negative_verdict") and negative_verdict(shown):
+        failed.append("no_negative_verdict")
+    if expect.get("no_open_verdict") and open_verdict(shown):
+        failed.append("no_open_verdict")
     return failed
 
 
@@ -1050,6 +1074,8 @@ def run_conversations(path: Path, env: Environment, record_calls: bool = False) 
             })
             if record_calls:
                 turns[-1]["model_calls"] = {"chat": obs["chat_calls"], "complete": obs["complete_calls"]}
+            if "ground_truth" in turn:
+                turns[-1]["ground_truth"] = turn["ground_truth"]
         results.append({"id": convo["id"], "customer_id": convo["customer_id"], "category": convo["category"],
                         "note": convo.get("note", ""), "turns": turns,
                         "passed": all(not t["failed"] and FAIL not in t["universal"].values() for t in turns)})
@@ -1171,6 +1197,44 @@ def _sum_calls(items: list[dict[str, int]]) -> dict[str, int]:
     return {"chat": sum(i.get("chat", 0) for i in items), "complete": sum(i.get("complete", 0) for i in items)}
 
 
+MANUAL_REVIEW_RULE = ("A turn counts as correct only after a person marks it so against its ground truth. The "
+                      "automated screen can flag a reply; it can never certify one. 'clear' means 'not flagged'.")
+SCREEN_NOTE = ("Automated screen only: 'failed' lists flagged expectations; a turn with none is 'not flagged', not "
+               "'correct'. Correctness is decided in the manual review sheet.")
+
+
+def review_sheet(sets: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+    """One entry per turn for a person to judge: the question, the reply, the tools, the flags and the truth."""
+    sheet = []
+    for name, s in sets.items():
+        for convo in s["results"]:
+            for number, turn in enumerate(convo["turns"], 1):
+                sheet.append({
+                    "set": name, "id": convo["id"], "turn": number, "customer_id": convo["customer_id"],
+                    "category": convo["category"], "customer_message": turn["say"],
+                    "reply": turn["reply"]["text"], "reply_status": turn["reply"]["status"],
+                    "tools_proposed": turn["proposed_tool_calls"],
+                    "automated_flags": turn["failed"] + [f"universal:{k}" for k, v in turn["universal"].items()
+                                                         if v == FAIL],
+                    "ground_truth": turn.get("ground_truth", "(none recorded)"),
+                    "manual_verdict": None})
+    return sheet
+
+
+def render_review_sheet(report: dict[str, Any]) -> str:
+    """Markdown of the manual review sheet, for reading and marking by hand."""
+    lines = ["# Manual review sheet", "", report["manual_review"]["rule"], ""]
+    for item in report["review_sheet"]:
+        quoted = "\n".join("> " + line for line in (item["reply"] or "").splitlines()) or "> (empty)"
+        lines += [f"## {item['id']} ({item['set']}, {item['category']})", "",
+                  f"**Customer {item['customer_id']}:** {item['customer_message']}", "", "**Reply:**", "", quoted, "",
+                  f"**Tools proposed:** {', '.join(item['tools_proposed']) or 'none'}  ",
+                  f"**Automated flags:** {', '.join(item['automated_flags']) or 'none'}  ",
+                  f"**Ground truth:** {item['ground_truth']}  ",
+                  "**Manual verdict (correct / incorrect / unclear):** ______", ""]
+    return "\n".join(lines) + "\n"
+
+
 def run_new_sets(llm_factory: Callable[[], LLMClient], *, live: bool = False, retrieval: str = "local",
                  identity_path: Path = _DEFAULT_IDENTITY,
                  eligibility_path: Path = _DEFAULT_ELIGIBILITY) -> dict[str, Any]:
@@ -1194,6 +1258,7 @@ def run_new_sets(llm_factory: Callable[[], LLMClient], *, live: bool = False, re
     calls["diagnostics"] = _sum_calls([d["observations"].get("model_calls", {}) for d in diagnostics])
     calls["total"] = _sum_calls(list(calls.values()))
     calls["interpret_reply_included_in_complete"] = layers["interpret_reply_calls"]
+    sheet = review_sheet(sets)
     return {
         "schema_version": SCHEMA_VERSION, "evaluation_mode": "real_backend_new_sets", "backend": "app.backend.Backend",
         "llm": llm, "layers": layers, "database": {"kind": "temporary_seeded", "reference_time": "2026-11-07T00:00:00Z"},
@@ -1202,7 +1267,11 @@ def run_new_sets(llm_factory: Callable[[], LLMClient], *, live: bool = False, re
         "opt_in_checks": NEW_SET_CHECKS,
         "note": ("Counts only. These sets have no baseline and are never added to the v2/v5 scorecards. Heuristic "
                  "checks are a screen: every reply is also read by hand. The diagnostics are observations, not scores."),
-        "sets": {name: {"summary": s["summary"], "results": s["results"]} for name, s in sets.items()},
+        "manual_review": {"required": True, "turns": len(sheet), "reviewed": 0,
+                          "rule": MANUAL_REVIEW_RULE},
+        "review_sheet": sheet,
+        "sets": {name: {"summary": s["summary"], "how_to_read": SCREEN_NOTE, "results": s["results"]}
+                 for name, s in sets.items()},
         "diagnostics": diagnostics, "model_calls": calls,
     }
 
@@ -1385,11 +1454,19 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser.add_argument("--new-sets", action="store_true",
                         help="run the identity set, the eligibility set and the diagnostics instead of the cases, "
                              "conversations and scenarios (counts only; never part of the v2/v5 scorecards)")
+    parser.add_argument("--review-sheet", type=Path, metavar="REPORT",
+                        help="print the manual review sheet of a saved --new-sets report as Markdown, then exit")
     parser.add_argument("--identity", type=Path, default=_DEFAULT_IDENTITY, help="identity set (with --new-sets)")
     parser.add_argument("--eligibility", type=Path, default=_DEFAULT_ELIGIBILITY,
                         help="eligibility set (with --new-sets)")
     args = parser.parse_args(argv)
     try:
+        if args.review_sheet:
+            saved = json.loads(args.review_sheet.read_text(encoding="utf-8"))
+            if "review_sheet" not in saved:
+                raise ValueError("that report has no review sheet (it is not a --new-sets report)")
+            sys.stdout.write(render_review_sheet(saved))
+            return 0
         if args.compare:
             loaded = [json.loads(p.read_text(encoding="utf-8")) for p in args.compare]
             report = compare_reports(*loaded)

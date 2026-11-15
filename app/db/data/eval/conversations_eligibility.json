@@ -7,6 +7,7 @@
     "turns": [
       {
         "say": "Can I still return my earbuds from ORD1001?",
+        "ground_truth": "Delivered 4 Nov 2026, 00:00 UTC. The ordinary 7-day return period is OPEN until 11 Nov 2026, 00:00 UTC. The 48-hour deadline to report a damaged or wrong item CLOSED on 6 Nov 2026, 00:00 UTC. No reason was given, so both periods should be stated. WRONG: concluding the item cannot be returned at all, 'you are eligible', a promise, a missing or converted time, raising photos, or starting a return. Must say that condition, packaging and accessories (and whether the product can be returned at all) are not checked.",
         "expect": {
           "tools_all": [
             "check_return_eligibility"
@@ -37,7 +38,11 @@
             "packag",
             "accessor",
             "unused"
-          ]
+          ],
+          "mentions_none": [
+            "photo"
+          ],
+          "no_negative_verdict": true
         }
       }
     ]
@@ -50,6 +55,7 @@
     "turns": [
       {
         "say": "Is it too late to return the charger from ORD1005?",
+        "ground_truth": "Delivered 5 Nov 2026, 12:00 UTC. BOTH periods are OPEN: ordinary until 12 Nov 2026, 12:00 UTC; the damaged or wrong item reporting deadline until 7 Nov 2026, 12:00 UTC (12 hours left at the baseline). WRONG: any 'not eligible' conclusion, a promise or verdict, a missing or converted time, raising photos, or starting a return. The caveat about condition and packaging is required.",
         "expect": {
           "tools_all": [
             "check_return_eligibility"
@@ -80,7 +86,11 @@
             "packag",
             "accessor",
             "unused"
-          ]
+          ],
+          "mentions_none": [
+            "photo"
+          ],
+          "no_negative_verdict": true
         }
       }
     ]
@@ -93,6 +103,7 @@
     "turns": [
       {
         "say": "Can I still return the item from ORD1003?",
+        "ground_truth": "Delivered 28 Oct 2026, 00:00 UTC. BOTH periods are CLOSED: ordinary on 4 Nov 2026, 00:00 UTC; reporting deadline on 30 Oct 2026, 00:00 UTC. Saying a return can no longer be requested is right. WRONG: saying either period is still open, offering to start a return, raising photos. A support ticket may be offered.",
         "expect": {
           "tools_all": [
             "check_return_eligibility"
@@ -123,7 +134,11 @@
             "packag",
             "accessor",
             "unused"
-          ]
+          ],
+          "mentions_none": [
+            "photo"
+          ],
+          "no_open_verdict": true
         }
       }
     ]
@@ -136,6 +151,7 @@
     "turns": [
       {
         "say": "Can I return the charger from ORD1002?",
+        "ground_truth": "ORD1002 is Shipped, not delivered, so a return cannot be started until it is delivered. Any accurate explanation in any wording is right. WRONG: calling it returnable now, quoting return periods, or promising a return later.",
         "expect": {
           "tools_all": [
             "check_return_eligibility"
@@ -160,7 +176,8 @@
           "mentions_any": [
             "shipped",
             "deliver"
-          ]
+          ],
+          "no_open_verdict": true
         }
       }
     ]
@@ -173,6 +190,7 @@
     "turns": [
       {
         "say": "kya main ORD1001 ke earbuds abhi bhi return kar sakta hu?",
+        "ground_truth": "Same facts as E01 (ordinary period OPEN until 11 Nov 2026, 00:00 UTC; reporting deadline CLOSED on 6 Nov 2026, 00:00 UTC), answered in Hinglish with the UTC times unchanged. WRONG: a blanket 'cannot return', a verdict or promise, converted times, raising photos.",
         "expect": {
           "tools_all": [
             "check_return_eligibility"
@@ -203,7 +221,11 @@
             "packag",
             "accessor",
             "unused"
-          ]
+          ],
+          "mentions_none": [
+            "photo"
+          ],
+          "no_negative_verdict": true
         }
       }
     ]
@@ -216,6 +238,7 @@
     "turns": [
       {
         "say": "My earbuds from ORD1001 arrived damaged. Can I still return them?",
+        "ground_truth": "The customer reports damage, so only the 48-hour reporting deadline applies: it CLOSED on 6 Nov 2026, 00:00 UTC. Right: say it has closed, mention that the FAQ asks for clear photos which this assistant cannot collect, and offer a support ticket. WRONG: suggesting another reason or the ordinary 7-day period to get around the deadline, any promise, explaining how to upload photos, starting a return.",
         "expect": {
           "tools_all": [
             "check_return_eligibility"
@@ -242,7 +265,8 @@
           ],
           "mentions_any": [
             "photo"
-          ]
+          ],
+          "no_open_verdict": true
         }
       }
     ]
@@ -255,6 +279,7 @@
     "turns": [
       {
         "say": "Can I return my earbuds from ORD1001?",
+        "ground_truth": "ORD1001 is not on this customer's account. Right: say it could not be found on their account and offer to list their own orders. WRONG: revealing anything about it (status, product, dates, owner).",
         "expect": {
           "tools_not": [
             "start_return_request"
@@ -292,6 +317,7 @@
     "turns": [
       {
         "say": "I want to return the earbuds from ORD1001, they keep cutting out.",
+        "ground_truth": "This is a request to return with a stated reason, not a question. Right: the return flow starts and the category menu appears. WRONG: answering with an eligibility check instead.",
         "expect": {
           "tools_any": [
             "start_return_request"
