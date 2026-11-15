@@ -264,8 +264,16 @@ _MONTHS = ("January", "February", "March", "April", "May", "June", "July", "Augu
 # What the timing check cannot see. Returned with every answer so the model never has to remember it.
 _NOT_CHECKED = ("whether this product can be returned at all (for example hygiene items, software licences or "
                 "items marked non-returnable)", "the condition of the item (it must be unused)",
-                "its original packaging and accessories")
-_WINDOW_NAMES = {"standard": "standard", "damaged": "damaged_or_wrong_product"}
+                "its original packaging and accessories",
+                "photos of the issue (the FAQ asks for clear photos for a damaged or wrong item; this assistant "
+                "cannot collect photos)")
+# The two periods are different things in the store's documents: Policies.md gives most products 7 days from
+# delivery; FAQ Q3.4 says to initiate a return within 48 hours of delivery, with photos, for a damaged or wrong
+# product. The repository calls them the standard and the damaged categories.
+_WINDOW_KEYS = {"standard": "ordinary_return_window", "damaged": "damaged_or_wrong_item_reporting_deadline"}
+_WINDOW_MEANING = {
+    "standard": "Ordinary return period: 7 days from delivery.",
+    "damaged": "Deadline to report a damaged or wrong item and start a return: 48 hours from delivery."}
 _CATEGORY_INDEPENDENT = ("order_not_found", "order_status_ineligible", "item_not_found",
                          "active_return_exists", "delivery_timestamp_missing")
 _TIMING_NOTE = ("This is a timing check only, not an approval and not a promise: the system rechecks everything "
@@ -274,11 +282,15 @@ _TIMING_NOTE = ("This is a timing check only, not an approval and not a promise:
                 "you cannot check what is listed in not_checked.")
 _WINDOW_NOTE = (_TIMING_NOTE + " Quote every time exactly as given in closes_at_text, which is in UTC; never "
                 "convert it to another time zone, never say 'until the end of the day' and never do your own "
-                "date arithmetic. If the customer has not said why they want to return the item, give both "
-                "windows. If they have, give only the matching one (damaged or wrong product: "
-                "damaged_or_wrong_product; any other reason: standard) and never suggest which reason to "
-                "choose. This is not a request to return: start_return_request only when the customer asks "
-                "to return the item.")
+                "date arithmetic. Describe the two periods as they are: ordinary_return_window is the ordinary "
+                "return period, and damaged_or_wrong_item_reporting_deadline is the shorter deadline to report a "
+                "damaged or wrong item and start a return. If the customer has not said why they want to return "
+                "the item, give both. If they have, give only the matching one (damaged or wrong item: the "
+                "reporting deadline; any other reason: the ordinary period) and never suggest which reason to "
+                "choose. When you give the reporting deadline, add that the FAQ asks for clear photos of the "
+                "issue, which you cannot collect here; do not say how to send photos, and a support ticket may "
+                "be offered. Use time_left_text only as an approximate guide as of checked_at_text. This is "
+                "not a request to return: start_return_request only when the customer asks to return the item.")
 
 
 def _utc_text(timestamp: str) -> str:
@@ -287,15 +299,44 @@ def _utc_text(timestamp: str) -> str:
     return f"{moment.day} {_MONTHS[moment.month - 1]} {moment.year}, {moment:%H:%M} UTC"
 
 
-def _window_view(verdict: dict[str, Any]) -> dict[str, Any]:
+def _time_left_text(seconds: float) -> str:
+    """A rounded-down description of the time left in an OPEN window, never a bare number.
+
+    A bare 0 for the last hour reads as 'expired'; the sentence form cannot. The exact closing time and the
+    status stay authoritative and the repository's inclusive boundary decides open or closed.
+    """
+    hours = int(seconds // 3600)
+    if hours < 1:
+        return "less than 1 hour"
+    if hours < 48:
+        return "about 1 hour" if hours == 1 else f"about {hours} hours"
+    return f"about {hours // 24} days"
+
+
+def _window_view(key: str, verdict: dict[str, Any]) -> dict[str, Any]:
     closes = verdict["window_closes_at"]
     evaluated = clock.parse_timestamp(verdict["evaluated_at"])
     is_open = verdict["outcome"] == "eligible"
-    view: dict[str, Any] = {"status": "open" if is_open else "closed", "window_hours": verdict["window_hours"],
-                            "closes_at_utc": closes, "closes_at_text": _utc_text(closes)}
+    view: dict[str, Any] = {"meaning": _WINDOW_MEANING[key], "status": "open" if is_open else "closed",
+                            "window_hours": verdict["window_hours"], "closes_at_utc": closes,
+                            "closes_at_text": _utc_text(closes)}
     if is_open:
-        view["hours_left"] = int((clock.parse_timestamp(closes) - evaluated).total_seconds() // 3600)
+        view["time_left_text"] = _time_left_text((clock.parse_timestamp(closes) - evaluated).total_seconds())
     return view
+
+
+def _blocked_explanation(verdict: dict[str, Any]) -> str:
+    """A plain sentence the model may rely on, so no exact wording has to be guessed or checked."""
+    outcome = verdict["outcome"]
+    if outcome == "order_status_ineligible":
+        return ("Returns can only be started for delivered orders, and this order's status is "
+                f"{verdict['order_status']}.")
+    if outcome == "item_not_found":
+        return "That item is not on this order."
+    if outcome == "active_return_exists":
+        return f"A return request for this item already exists (status: {verdict['existing_return_status']})."
+    return ("The delivery date is not recorded, so the return period cannot be checked; a support ticket can ask "
+            "a person to look into it.")
 
 
 @_guard
@@ -308,16 +349,18 @@ def _check_return_eligibility(ctx: CustomerContext, args: dict[str, Any]) -> Too
                                "it on their account; do not say whose it is. You may offer to list their own orders.")
     if standard["outcome"] in _CATEGORY_INDEPENDENT:
         data: dict[str, Any] = {"result": "cannot_start_a_return", "reason": standard["outcome"],
+                                "explanation": _blocked_explanation(standard),
                                 "order_status": standard["order_status"],
                                 "existing_return_status": standard["existing_return_status"]}
         return ToolResult("ok", "return_check", data,
-                          note=_TIMING_NOTE + " Explain plainly why a return cannot be started now; a support "
+                          note=_TIMING_NOTE + " Explain plainly, in the customer's language and your own words, "
+                               "why a return cannot be started now (the explanation field is accurate); a support "
                                "ticket may be offered. This is not a request to return.")
     data = {"result": "timing_check", "delivered_at_utc": standard["delivered_at"],
             "delivered_at_text": _utc_text(standard["delivered_at"]),
             "checked_at_utc": standard["evaluated_at"], "checked_at_text": _utc_text(standard["evaluated_at"]),
-            "windows": {_WINDOW_NAMES["standard"]: _window_view(standard),
-                        _WINDOW_NAMES["damaged"]: _window_view(damaged)},
+            "windows": {_WINDOW_KEYS["standard"]: _window_view("standard", standard),
+                        _WINDOW_KEYS["damaged"]: _window_view("damaged", damaged)},
             "not_checked": list(_NOT_CHECKED)}
     return ToolResult("ok", "return_check", data, note=_WINDOW_NOTE)
 

@@ -34,6 +34,7 @@ from conftest import T0, fingerprint
 
 UTC = timezone.utc
 NAME = "check_return_eligibility"
+DAMAGED = "damaged_or_wrong_item_reporting_deadline"
 
 
 def run(customer, order, item, **extra):
@@ -125,28 +126,30 @@ class TestAnswers:
     def test_standard_open_and_damaged_closed(self, temp_db):
         d = data(run("C101", "ORD1001", "IT101"))
         assert d["result"] == "timing_check"
-        std, dmg = d["windows"]["standard"], d["windows"]["damaged_or_wrong_product"]
-        assert (std["status"], std["window_hours"], std["hours_left"]) == ("open", 168, 96)
+        std, dmg = d["windows"]["ordinary_return_window"], d["windows"][DAMAGED]
+        assert (std["status"], std["window_hours"], std["time_left_text"]) == ("open", 168, "about 4 days")
         assert std["closes_at_utc"] == "2026-11-11T00:00:00Z"
         assert std["closes_at_text"] == "11 November 2026, 00:00 UTC"
-        assert (dmg["status"], dmg["window_hours"]) == ("closed", 48) and "hours_left" not in dmg
+        assert (dmg["status"], dmg["window_hours"]) == ("closed", 48) and "time_left_text" not in dmg
         assert dmg["closes_at_text"] == "6 November 2026, 00:00 UTC"
 
     def test_both_open(self, temp_db):
         d = data(run("C103", "ORD1005", "IT105"))
-        std, dmg = d["windows"]["standard"], d["windows"]["damaged_or_wrong_product"]
-        assert (std["status"], std["hours_left"]) == ("open", 132)  # delivered 5 Nov 12:00; closes 12 Nov 12:00
-        assert (dmg["status"], dmg["hours_left"]) == ("open", 12)
+        std, dmg = d["windows"]["ordinary_return_window"], d["windows"][DAMAGED]
+        assert (std["status"], std["time_left_text"]) == ("open", "about 5 days")  # closes 12 Nov 12:00
+        assert (dmg["status"], dmg["time_left_text"]) == ("open", "about 12 hours")
         assert dmg["closes_at_text"] == "7 November 2026, 12:00 UTC"
 
     def test_both_closed(self, temp_db):
         d = data(run("C102", "ORD1003", "IT103"))
         assert {w["status"] for w in d["windows"].values()} == {"closed"}
 
-    def test_hours_left_rounds_down(self, temp_db, set_now):
+    def test_time_left_rounds_down_and_is_text_not_a_bare_number(self, temp_db, set_now):
         set_now(T0 + timedelta(minutes=30))
         d = data(run("C103", "ORD1005", "IT105"))
-        assert d["windows"]["damaged_or_wrong_product"]["hours_left"] == 11  # 11.5 hours left
+        view = d["windows"][DAMAGED]
+        assert view["time_left_text"] == "about 11 hours"  # 11.5 hours left
+        assert "hours_left" not in view
 
     def test_every_time_is_utc_text_made_by_code(self, temp_db):
         d = data(run("C103", "ORD1005", "IT105"))
@@ -163,8 +166,9 @@ class TestAnswers:
     def test_what_is_not_checked_is_stated_every_time(self, temp_db):
         d = data(run("C101", "ORD1001", "IT101"))
         joined = " ".join(d["not_checked"]).lower()
-        assert len(d["not_checked"]) == 3
+        assert len(d["not_checked"]) == 4
         assert "returned at all" in joined and "condition" in joined and "packaging and accessories" in joined
+        assert "photos" in joined and "cannot collect photos" in joined
 
     def test_the_note_separates_a_timing_check_from_an_approval(self, temp_db):
         note = run("C101", "ORD1001", "IT101").note.lower()
@@ -173,19 +177,23 @@ class TestAnswers:
         assert "never convert it to another time zone" in note
         assert "never suggest which reason to choose" in note
         assert "start_return_request only when the customer asks" in note
+        assert "photos" in note and "cannot collect" in note.replace("which you cannot collect here", "cannot collect")
 
     def test_a_shipped_order_cannot_start_a_return(self, temp_db):
         d = data(run("C101", "ORD1002", "IT102"))
         assert d["result"] == "cannot_start_a_return" and d["reason"] == "order_status_ineligible"
         assert d["order_status"] == "Shipped" and "windows" not in d
+        assert d["explanation"] == "Returns can only be started for delivered orders, and this order's status is Shipped."
 
     def test_an_active_return_is_reported_with_its_status(self, temp_db):
         repository.create_return_request("C103", "ORD1005", "IT105", "it overheats", reason_category="standard")
         d = data(run("C103", "ORD1005", "IT105"))
         assert d["reason"] == "active_return_exists" and d["existing_return_status"] == "Requested"
+        assert d["explanation"] == "A return request for this item already exists (status: Requested)."
 
     def test_an_unknown_item_is_reported(self, temp_db):
-        assert data(run("C101", "ORD1001", "IT999"))["reason"] == "item_not_found"
+        d = data(run("C101", "ORD1001", "IT999"))
+        assert d["reason"] == "item_not_found" and d["explanation"] == "That item is not on this order."
 
     def test_another_customers_order_looks_like_a_missing_order(self, temp_db):
         result = run("C102", "ORD1001", "IT101")
@@ -196,6 +204,49 @@ class TestAnswers:
     def test_the_output_carries_no_contact_details(self, temp_db):
         body = run("C101", "ORD1001", "IT101").to_json().lower()
         assert "@" not in body and "alice" not in body and "phone" not in body
+
+
+class TestTwoDifferentPeriods:
+    """Policies.md: most products 7 days from delivery. FAQ Q3.4: report a damaged or wrong item within 48 hours."""
+
+    def test_the_two_periods_have_different_names_and_meanings(self, temp_db):
+        windows = data(run("C101", "ORD1001", "IT101"))["windows"]
+        ordinary, deadline = windows["ordinary_return_window"], windows[DAMAGED]
+        assert ordinary["window_hours"] == 168 and "7 days from delivery" in ordinary["meaning"]
+        assert deadline["window_hours"] == 48 and "report a damaged or wrong item" in deadline["meaning"]
+        assert "48 hours from delivery" in deadline["meaning"] and "reporting" not in ordinary["meaning"]
+
+    def test_the_note_names_the_reporting_deadline_and_the_photo_limit(self, temp_db):
+        note = run("C101", "ORD1001", "IT101").note
+        assert "deadline to report a damaged or wrong item and start a return" in note
+        assert "do not say how to send photos" in note and "support ticket may be offered" in note
+
+    def test_the_photo_requirement_appears_only_with_the_timing_answer(self, temp_db):
+        blocked = data(run("C101", "ORD1002", "IT102"))
+        assert "not_checked" not in blocked
+
+
+class TestTimeLeft:
+    @pytest.mark.parametrize("seconds, text", [
+        (0, "less than 1 hour"), (1, "less than 1 hour"), (3599, "less than 1 hour"), (3600, "about 1 hour"),
+        (7199, "about 1 hour"), (7200, "about 2 hours"), (47 * 3600 + 3599, "about 47 hours"),
+        (48 * 3600, "about 2 days"), (156 * 3600, "about 6 days")])
+    def test_the_wording_never_reads_as_expired(self, seconds, text):
+        from app.tools.registry import _time_left_text
+        assert _time_left_text(seconds) == text
+
+    def test_an_open_window_in_its_last_hour_stays_open_with_the_exact_time(self, temp_db, set_now):
+        set_now(datetime(2026, 11, 7, 11, 30, tzinfo=UTC))  # the ORD1005 reporting deadline closes at 12:00
+        view = data(run("C103", "ORD1005", "IT105"))["windows"][DAMAGED]
+        assert view["status"] == "open" and view["time_left_text"] == "less than 1 hour"
+        assert view["closes_at_text"] == "7 November 2026, 12:00 UTC"
+
+    def test_the_inclusive_boundary_is_preserved(self, temp_db, set_now):
+        set_now(datetime(2026, 11, 7, 12, 0, 0, tzinfo=UTC))  # exactly at the closing instant
+        view = data(run("C103", "ORD1005", "IT105"))["windows"][DAMAGED]
+        assert view["status"] == "open" and view["time_left_text"] == "less than 1 hour"
+        set_now(datetime(2026, 11, 7, 12, 0, 1, tzinfo=UTC))  # one second later
+        assert data(run("C103", "ORD1005", "IT105"))["windows"][DAMAGED]["status"] == "closed"
 
 
 class Sequence(ScriptedLLM):
@@ -244,7 +295,7 @@ class TestInTheEngine:
         backend = Backend(llm=llm, settings=Settings())
         Client(backend, "C101").say("is ORD1001 earbuds still returnable?")
         seen = [json.loads(m["content"]) for m in llm.seen[1] if m["role"] == "tool"][0]
-        assert set(seen["data"]["windows"]) == {"standard", "damaged_or_wrong_product"}
+        assert set(seen["data"]["windows"]) == {"ordinary_return_window", DAMAGED}
         assert "eligible" not in json.dumps(seen["data"]).lower()
 
     def test_an_earlier_open_answer_never_lets_a_closed_return_through(self, temp_db, raw, set_now):
@@ -295,6 +346,12 @@ class TestPromptAndHarness:
     def test_the_limits_of_the_check_are_in_the_prompt(self):
         lowered = SYSTEM_PROMPT.lower()
         assert "packaging and accessories" in lowered and "returned at all" in lowered
+
+    def test_the_prompt_separates_the_seven_day_period_from_the_reporting_deadline(self):
+        lowered = SYSTEM_PROMPT.lower()
+        assert "ordinary return period is 7 days from delivery" in lowered
+        assert "48-hour limit is a deadline to report it and start the return" in lowered
+        assert "the faq also asks for photos, which you cannot collect" in lowered
 
     def test_the_evaluation_harness_knows_the_tool(self):
         import sys
