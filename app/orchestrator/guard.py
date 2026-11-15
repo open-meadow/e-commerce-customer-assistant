@@ -63,8 +63,9 @@ _QUESTION_START = re.compile(
 
 SCOPE_REDIRECT = ("I can only help with your orders, returns, refunds, products and support tickets. "
                   "Is there something like that I can help with?")
-GREETING_REPLY = ("Hello! I can check order status, answer refund and policy questions, look up products, "
-                  "start return requests and raise support tickets. What can I help you with?")
+GREETING_REPLY = ("Hello! I'm the store's automated support assistant. I can check order status, answer refund "
+                  "and policy questions, look up products, start return requests and raise support tickets. "
+                  "What can I help you with?")
 THANKS_REPLY = "You're welcome! Let me know if there's anything else I can help with."
 
 

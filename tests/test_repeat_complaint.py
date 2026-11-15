@@ -148,4 +148,4 @@ class TestWhenItDoesNotApply:
 
 class TestPrompt:
     def test_the_system_prompt_forbids_asking_again(self):
-        assert "never ask for it again" in SYSTEM_PROMPT and "list_my_orders" in SYSTEM_PROMPT
+        assert "never ask for something the customer already gave" in SYSTEM_PROMPT.lower() and "list_my_orders" in SYSTEM_PROMPT
