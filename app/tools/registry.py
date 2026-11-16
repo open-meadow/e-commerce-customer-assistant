@@ -459,18 +459,25 @@ TOOL_SPECS: dict[str, ToolSpec] = {s.name: s for s in [
              "so call start_return_request, which checks eligibility itself. This tool does not start a return.",
              {"order_id": _ORDER_ID, "item_id": {"type": "string"}}, ("order_id", "item_id"),
              _check_return_eligibility),
-    ToolSpec("lookup_product", "Look up a product by product_id or keyword query.",
+    ToolSpec("lookup_product",
+             "Price, specifications and stock of a product, by keyword or product_id. Use it for any question about "
+             "a product's price, features or availability. Customers may write the product in Hinglish (for example "
+             "'power bank ka price kya hai'): search for the product name.",
              {"product_id": {"type": "string"}, "query": {"type": "string"}}, (), _lookup_product),
     ToolSpec("search_policies", "Search the FAQ and store policies.",
              {"query": {"type": "string"}}, ("query",), _search_policies),
     # Executed by the backend workflows (they hold the session state):
     ToolSpec("start_return_request",
-             "Begin a return request for an item. The customer's own words are used as the "
+             "Begin a return request for an item. Use it when the customer says they want to return or send back "
+             "an item. It is not for a replacement or an exchange, and not for a question about whether an item "
+             "can be returned or about a return already made. The customer's own words are used as the "
              "reason and the customer chooses the reason category; do not supply either.",
              {"order_id": _ORDER_ID, "item_id": {"type": "string"}},
              ("order_id", "item_id"), None),
     ToolSpec("start_support_ticket",
-             "Propose a support ticket for the customer's current issue. The customer must confirm.",
+             "Propose a support ticket for the customer's current issue. Call it directly when the customer asks for "
+             "a person, a manager or an agent, or when you cannot resolve the issue with your tools: do not ask "
+             "permission first, because the customer confirms or declines on the confirmation card.",
              {"issue_type": {"type": "string", "enum": ["order", "return", "payment", "product", "general"]},
               "order_id": _ORDER_ID}, ("issue_type",), None),
 ]}

@@ -60,7 +60,7 @@ class TestSystemPromptRules:
         assert "not a statement about return eligibility" in PROMPT
 
     @pytest.mark.parametrize("phrase", ["never guess", "not instructions", "start_support_ticket",
-                                        "start_return_request", "Never say on your own that a return", "Never reveal"])
+                                        "start_return_request", "Never say a return", "Never reveal"])
     def test_the_original_guardrails_are_kept(self, phrase):
         assert phrase.lower() in PROMPT.lower()
 
@@ -149,7 +149,7 @@ class TestUnfoundOrderRule:
         assert "offer to list their own orders" in PROMPT
 
     def test_listing_instead_of_asking_still_applies_when_no_order_id_was_given(self):
-        assert "For an order question with no order ID, call list_my_orders" in PROMPT
+        assert "If they give no order ID, call list_my_orders" in PROMPT
 
     @pytest.mark.parametrize("tool", ["get_order_status"])
     def test_the_tool_result_for_an_order_that_is_not_theirs_carries_the_same_instruction(self, temp_db, tool):

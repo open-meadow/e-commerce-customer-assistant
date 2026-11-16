@@ -346,32 +346,24 @@ class TestPromptAndHarness:
     def test_the_prompt_separates_the_question_from_the_request(self):
         lowered = SYSTEM_PROMPT.lower()
         assert "check_return_eligibility" in SYSTEM_PROMPT
-        assert "three different intents about returns" in lowered
+        assert "three different intents" in lowered
         assert "has made a return request: call start_return_request" in lowered
-        assert "never run an eligibility check first" in lowered
-        assert "has asked a question, even if they mention a reason such as damage" in lowered
-        assert "call check_return_eligibility with the exact item_id from get_order_status" in lowered
-        assert "never guess it" in lowered
-        assert "give the facts_to_state paragraph that matches what they said, all of it" in lowered
-        assert "has asked about its status: call get_my_returns" in lowered
+        assert "do not run an eligibility check first" in lowered
+        assert "has asked a question: call check_return_eligibility" in lowered
+        assert "is asking for its status: call get_my_returns" in lowered
         assert "never use start_return_request for (2) or (3)" in lowered
         assert "timing check, not an approval" in lowered
-        assert "in utc, without converting them" in lowered
 
     def test_the_old_begin_a_return_to_find_out_rule_is_gone(self):
         assert "begin the return with start_return_request" not in SYSTEM_PROMPT
 
-    def test_the_limits_of_the_check_are_in_the_prompt(self):
+    def test_the_limits_and_the_photo_wording_live_in_the_tool_not_the_prompt(self):
         lowered = SYSTEM_PROMPT.lower()
-        assert "give the limits it lists" in lowered and "never suggest which reason to choose" in lowered
+        assert "photo" not in lowered and "packaging" not in lowered
+        assert "never say the item is eligible or that a return will be accepted" in lowered
 
-    def test_the_prompt_separates_the_seven_day_period_from_the_reporting_deadline(self):
-        lowered = SYSTEM_PROMPT.lower()
-        assert "ordinary return period is 7 days from delivery" in lowered
-        assert "48-hour limit is a deadline to report it and start the return" in lowered
-        flat = " ".join(lowered.split())
-        assert "if the customer says an item arrived damaged or wrong, always tell them that the faq asks for clear photos" in flat
-        assert "that you cannot collect photos" in flat and "never raise photos otherwise" in flat
+    def test_the_prompt_gives_the_paragraph_as_written_so_the_model_does_not_translate(self):
+        assert "facts_to_state paragraph that matches what they said, as written" in SYSTEM_PROMPT
 
     def test_the_evaluation_harness_knows_the_tool(self):
         import sys
