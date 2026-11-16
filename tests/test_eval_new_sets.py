@@ -235,7 +235,7 @@ class TestDataFiles:
     def test_both_files_load_with_the_agreed_composition(self):
         eligibility = ev.load_conversations(ELIGIBILITY, CUSTOMERS)
         identity = ev.load_conversations(IDENTITY, CUSTOMERS)
-        assert [c["id"] for c in eligibility] == [f"E0{i}" for i in range(1, 9)]
+        assert sorted(c["id"] for c in eligibility) == [f"E{i:02d}" for i in range(1, 11)]
         assert [c["id"] for c in identity] == [f"I0{i}" for i in range(1, 8)]
         assert all(len(c["turns"]) == 1 for c in eligibility + identity)
 
@@ -252,7 +252,7 @@ class TestDataFiles:
             closes = {w["closes_at_utc"] for w in data["windows"].values()}
             assert set(expect["states_times"]) <= closes, convo["id"]
             checked += 1
-        assert checked == 5
+        assert checked == 7
 
     def test_the_blocked_and_foreign_cases_behave_as_labelled(self, temp_db):
         blocked = json.loads(execute_tool(CustomerContext("C101", "r"), CHECK,
@@ -279,7 +279,7 @@ class TestEligibilityScoring:
 
     def test_an_answer_that_says_you_are_eligible_fails_the_verdict_checks(self, tmp_path):
         turn = run_case(tmp_path, "E01", Sequence(ask(), text("You are eligible to return it until 11 November 2026, 00:00 UTC.")))
-        assert {"no_approval_claims", "claims_follow_tool", "states_times"} <= set(turn["failed"])
+        assert {"no_approval_claims", "claims_follow_tool"} <= set(turn["failed"])
 
     def test_a_missing_utc_label_fails_the_time_check(self, tmp_path):
         said = GOOD_E01.replace(" UTC", "")
@@ -427,11 +427,31 @@ class TestVerdictScreens:
         said = GOOD_E01 + " Please upload clear photos of the issue."
         assert "mentions_none" in run_case(tmp_path, "E01", Sequence(ask(), text(said)))["failed"]
 
-    def test_mentioning_photos_is_required_when_damage_is_reported(self, tmp_path):
-        said = ("The deadline to report a damaged item closed on 6 November 2026, 00:00 UTC. I can raise a ticket.")
-        assert "mentions_any" in run_case(tmp_path, "E06", Sequence(ask(), text(said)))["failed"]
-        good = said + " The FAQ asks for clear photos, which I cannot collect here."
+    def test_a_closed_deadline_needs_the_support_offer_and_must_not_lean_on_photos(self, tmp_path):
+        said = "The deadline to report damage closed on 6 November 2026, 00:00 UTC."
+        # the model left the support offer out: the engine adds it, in the customer's language, so the case still passes
+        repaired = run_case(tmp_path, "E06", Sequence(ask(), text(said)))
+        assert repaired["failed"] == [] and "support ticket" in repaired["reply"]["text"]
+        good = said + " I can raise a support ticket so a person can review what happened."
         assert run_case(tmp_path, "E06", Sequence(ask(), text(good)))["failed"] == []
+        leaning = good + " Please send clear photos of the damage."
+        assert "mentions_none" in run_case(tmp_path, "E06", Sequence(ask(), text(leaning)))["failed"]
+
+    def test_an_open_deadline_with_a_damage_report_requires_the_photo_sentence(self, tmp_path):
+        said = "The reporting deadline is open until 7 November 2026, 12:00 UTC."
+        repaired = run_case(tmp_path, "E09", Sequence(ask("ORD1005", "IT106"), text(said)))
+        assert repaired["failed"] == [] and "clear photos" in repaired["reply"]["text"]  # added by the engine
+        good = said + " The FAQ asks for clear photos, which I cannot collect here; I can raise a support ticket."
+        assert run_case(tmp_path, "E09", Sequence(ask("ORD1005", "IT106"), text(good)))["failed"] == []
+
+    def test_the_hinglish_damage_report_expects_hinglish_and_the_photo_sentence(self, tmp_path):
+        said = ("Deadline 7 November 2026, 12:00 UTC tak khuli hai. Damaged ya galat item ke liye FAQ mein saaf photos "
+                "maangi gayi hain; main yahan photos nahi le sakta, lekin support ticket bana sakta hoon.")
+        assert run_case(tmp_path, "E10", Sequence(ask("ORD1005", "IT106"), text(said)))["failed"] == []
+        english = ("The deadline is open until 7 November 2026, 12:00 UTC. The FAQ asks for clear photos; I can raise "
+                   "a support ticket.")
+        assert "language" in run_case(tmp_path, "E10", Sequence(ask("ORD1005", "IT106"), text(english)))["failed"]
+
 
 
 class TestManualReview:
@@ -451,10 +471,10 @@ class TestManualReview:
     def test_the_report_demands_a_manual_verdict_for_every_turn_and_certifies_none(self):
         report = ev.run_new_sets(RuleBasedLLM)
         review = report["manual_review"]
-        assert review["required"] is True and review["reviewed"] == 0 and review["turns"] == 15
+        assert review["required"] is True and review["reviewed"] == 0 and review["turns"] == 17
         assert "can never certify" in review["rule"]
         sheet = report["review_sheet"]
-        assert len(sheet) == 15 and all(item["manual_verdict"] is None for item in sheet)
+        assert len(sheet) == 17 and all(item["manual_verdict"] is None for item in sheet)
         assert all(item["ground_truth"] != "(none recorded)" for item in sheet)
         assert "not flagged" in report["sets"]["identity"]["how_to_read"]
 
@@ -466,7 +486,7 @@ class TestManualReview:
     def test_the_sheet_renders_as_markdown_and_from_a_saved_report(self, tmp_path, capsys):
         report = ev.run_new_sets(RuleBasedLLM)
         markdown = ev.render_review_sheet(report)
-        assert markdown.startswith("# Manual review sheet") and markdown.count("Manual verdict") == 15
+        assert markdown.startswith("# Manual review sheet") and markdown.count("Manual verdict") == 17
         saved = tmp_path / "r.json"
         saved.write_text(json.dumps(report), encoding="utf-8")
         assert ev.main(["--review-sheet", str(saved)]) == 0
@@ -493,7 +513,7 @@ class TestRunNewSets:
         assert report["evaluation_mode"] == "real_backend_new_sets"
         assert set(report["sets"]) == {"identity", "eligibility"}
         assert report["sets"]["identity"]["summary"]["conversations_total"] == 7
-        assert report["sets"]["eligibility"]["summary"]["conversations_total"] == 8
+        assert report["sets"]["eligibility"]["summary"]["conversations_total"] == 10
         assert "scorecards" not in report and "summary" not in report
         assert "never added to the v2/v5 scorecards" in report["note"]
         assert set(report["opt_in_checks"]) == NEW_KEYS

@@ -1,0 +1,25 @@
+{
+  "frozen_file": "heldout_v1.json",
+  "frozen_sha256": "769ddfec9766ac1ec53a400f126b45e48208834e45fd2aaf8e773f4fd761673b",
+  "reason": "Approved on 2026-11-16 after heldout_v1.json was written and its baseline was run: for a general return question the assistant states the ordinary period and the limits, and a closed 48-hour reporting deadline is mentioned only when the customer reports damage. Three cases asked for the closed deadline's time. The amendments only loosen those expectations (they remove one required time each); nothing is tightened, no case is added or removed, and the frozen file is unchanged.",
+  "amendments": {
+    "H17": {
+      "states_times_remove": [
+        "2026-11-06T00:00:00Z"
+      ],
+      "ground_truth": "Delivered 4 Nov 2026, 00:00 UTC. Ordinary 7-day period OPEN until 11 Nov 2026, 00:00 UTC. No reason was given: the ordinary period and the limits matter; the 48-hour deadline closed on 6 Nov 2026 and need not be mentioned. WRONG: 'you cannot return it', a verdict or promise, a missing or converted time, raising photos, starting a return, or answering in another language."
+    },
+    "H19": {
+      "states_times_remove": [
+        "2026-10-30T00:00:00Z"
+      ],
+      "ground_truth": "Delivered 28 Oct 2026, 00:00 UTC. The ordinary period CLOSED on 4 Nov 2026, 00:00 UTC; the 48-hour deadline closed earlier and need not be mentioned. WRONG: saying either is still open, offering to start a return, raising photos."
+    },
+    "H20": {
+      "states_times_remove": [
+        "2026-11-06T12:00:00Z"
+      ],
+      "ground_truth": "Delivered 4 Nov 2026, 12:00 UTC. Ordinary period OPEN until 11 Nov 2026, 12:00 UTC; the reporting deadline closed on 6 Nov 2026 and need not be mentioned. WRONG: 'cannot be returned', a verdict or promise, raising photos, a missing or converted time."
+    }
+  }
+}

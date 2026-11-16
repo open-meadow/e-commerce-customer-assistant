@@ -1202,12 +1202,41 @@ HELDOUT_NOTE = ("Held-out set: paraphrased, unseen cases written before the corr
                 "checks are a screen; correctness is decided by manual review against each ground truth.")
 
 
+def apply_heldout_amendments(conversations: list[dict[str, Any]], amendments: dict[str, Any]) -> list[dict[str, Any]]:
+    """Loosen named held-out expectations as the amendments file says, on a copy. Never tightens, never adds."""
+    import copy
+    out = copy.deepcopy(conversations)
+    by_id = {c["id"]: c for c in out}
+    for ident, change in amendments.get("amendments", {}).items():
+        turn = by_id[ident]["turns"][0]
+        remove = set(change.get("states_times_remove", []))
+        times = turn["expect"].get("states_times", [])
+        if not remove <= set(times):
+            raise ValueError(f"{ident}: an amendment removes a time the case does not require")
+        turn["expect"]["states_times"] = [x for x in times if x not in remove]
+        if "ground_truth" in change:
+            turn["ground_truth"] = change["ground_truth"]
+    return out
+
+
 def run_heldout(llm_factory: Callable[[], LLMClient], *, live: bool = False, retrieval: str = "local",
-                path: Path = _DEFAULT_HELDOUT) -> dict[str, Any]:
-    """Run the held-out conversation file on its own. No scorecard, no baseline blending, manual review required."""
+                path: Path = _DEFAULT_HELDOUT, amendments: Optional[Path] = None) -> dict[str, Any]:
+    """Run the held-out conversation file on its own. No scorecard, no baseline blending, manual review required.
+
+    ``amendments`` names a file of loosening-only amendments (see ``apply_heldout_amendments``); the frozen file is read,
+    never written, and the report says which cases were amended.
+    """
+    run_path, amended = path, None
+    if amendments is not None:
+        spec = json.loads(Path(amendments).read_text(encoding="utf-8"))
+        loaded = json.loads(Path(path).read_text(encoding="utf-8"))
+        amended = sorted(spec.get("amendments", {}))
+        scratch = Path(tempfile.mkdtemp(prefix="heldout_amended_")) / "heldout_amended.json"
+        scratch.write_text(json.dumps(apply_heldout_amendments(loaded, spec), ensure_ascii=False), encoding="utf-8")
+        run_path = scratch
     with environment(llm_factory, retrieval) as env:
         retrieval_label = env.retrieval_label
-        held = run_conversations(path, env, record_calls=True)
+        held = run_conversations(run_path, env, record_calls=True)
         llm = llm_description(env.recorder.inner, live=live)
         main_backend, main_inner = env.backend, env.recorder.inner
         interpret_calls = env.backend.engine.interpret_calls
@@ -1219,6 +1248,8 @@ def run_heldout(llm_factory: Callable[[], LLMClient], *, live: bool = False, ret
         "llm": llm, "layers": layers, "database": {"kind": "temporary_seeded", "reference_time": "2026-11-07T00:00:00Z"},
         "retrieval": {"vector_store": "chroma (temporary, per run)", "mode": retrieval, "embeddings": retrieval_label},
         "case_source": _source_label(path), "opt_in_checks": NEW_SET_CHECKS,
+        "amendments": None if amended is None else {"file": _source_label(Path(amendments)), "ids": amended,
+                                                    "kind": "loosening only (states_times_remove)"},
         "integrity": integrity([], [held], []), "note": HELDOUT_NOTE,
         "manual_review": {"required": True, "turns": len(sheet), "reviewed": 0, "rule": MANUAL_REVIEW_RULE},
         "review_sheet": sheet,
@@ -1520,6 +1551,8 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser.add_argument("--heldout", type=Path, nargs="?", const=_DEFAULT_HELDOUT, default=None, metavar="FILE",
                         help="run only the held-out set (default file: app/db/data/eval/heldout/heldout_v1.json); "
                              "counts only, never part of any scorecard")
+    parser.add_argument("--heldout-amendments", type=Path, default=None, metavar="FILE",
+                        help="apply a loosening-only amendments file to the held-out set (with --heldout)")
     parser.add_argument("--identity", type=Path, default=_DEFAULT_IDENTITY, help="identity set (with --new-sets)")
     parser.add_argument("--eligibility", type=Path, default=_DEFAULT_ELIGIBILITY,
                         help="eligibility set (with --new-sets)")
@@ -1540,7 +1573,8 @@ def main(argv: Optional[list[str]] = None) -> int:
                 raise RuntimeError("--retrieval production uses OpenAI embeddings (live, billed requests); "
                                    "pass --allow-live only after explicit approval")
             if args.heldout is not None:
-                report = run_heldout(factory, live=args.allow_live, retrieval=args.retrieval, path=args.heldout)
+                report = run_heldout(factory, live=args.allow_live, retrieval=args.retrieval, path=args.heldout,
+                                     amendments=args.heldout_amendments)
             elif args.new_sets:
                 report = run_new_sets(factory, live=args.allow_live, retrieval=args.retrieval,
                                       identity_path=args.identity, eligibility_path=args.eligibility)

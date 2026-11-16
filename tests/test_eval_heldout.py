@@ -180,3 +180,67 @@ class TestRunner:
         llm = ScriptedLLM(chat=boom)
         llm.interprets_language = True
         assert ev.run_heldout(lambda: llm)["integrity"]["run_valid_for_scoring"] is False
+
+
+FROZEN_SHA256 = "769ddfec9766ac1ec53a400f126b45e48208834e45fd2aaf8e773f4fd761673b"
+AMENDMENTS = EVAL / "heldout" / "heldout_v1_amendments.json"
+
+
+class TestFrozen:
+    """The held-out file must not change after its baseline was taken; later spec changes are separate amendments."""
+
+    @staticmethod
+    def digest():
+        import hashlib
+        data = HELDOUT.read_bytes().replace(b"\r\n", b"\n")  # a Windows checkout may add carriage returns
+        return hashlib.sha256(data).hexdigest()
+
+    def test_the_held_out_file_is_byte_for_byte_the_one_the_baseline_ran_on(self):
+        assert self.digest() == FROZEN_SHA256
+
+    def test_the_amendments_name_the_frozen_file_and_its_hash(self):
+        spec = json.loads(AMENDMENTS.read_text(encoding="utf-8"))
+        assert spec["frozen_file"] == "heldout_v1.json" and spec["frozen_sha256"] == FROZEN_SHA256
+
+    def test_the_amendments_only_loosen_and_name_existing_cases(self):
+        spec = json.loads(AMENDMENTS.read_text(encoding="utf-8"))
+        original = {c["id"]: c for c in cases()}
+        assert set(spec["amendments"]) == {"H17", "H19", "H20"}
+        for ident, change in spec["amendments"].items():
+            required = set(original[ident]["turns"][0]["expect"]["states_times"])
+            assert set(change["states_times_remove"]) <= required and len(required) - len(change["states_times_remove"]) >= 1
+            assert set(change) == {"states_times_remove", "ground_truth"}
+
+    def test_applying_them_removes_one_time_each_and_changes_nothing_else(self):
+        spec = json.loads(AMENDMENTS.read_text(encoding="utf-8"))
+        before = cases()
+        after = ev.apply_heldout_amendments(before, spec)
+        assert before == cases()  # the input is untouched
+        for old, new in zip(before, after):
+            o, n = old["turns"][0], new["turns"][0]
+            if old["id"] in spec["amendments"]:
+                assert len(n["expect"]["states_times"]) == len(o["expect"]["states_times"]) - 1
+                assert {k: v for k, v in n["expect"].items() if k != "states_times"} == \
+                    {k: v for k, v in o["expect"].items() if k != "states_times"}
+            else:
+                assert new == old
+
+    def test_an_amendment_that_would_tighten_is_refused(self):
+        bad = {"amendments": {"H17": {"states_times_remove": ["2030-01-01T00:00:00Z"]}}}
+        with pytest.raises(ValueError, match="does not require"):
+            ev.apply_heldout_amendments(cases(), bad)
+
+    def test_a_run_with_amendments_says_which_cases_were_amended(self):
+        report = ev.run_heldout(RuleBasedLLM, amendments=AMENDMENTS)
+        assert report["amendments"]["ids"] == ["H17", "H19", "H20"] and "loosening only" in report["amendments"]["kind"]
+        assert ev.run_heldout(RuleBasedLLM)["amendments"] is None  # the baseline way: no amendments
+
+    def test_running_with_amendments_never_writes_the_frozen_file(self):
+        before = HELDOUT.read_bytes()
+        ev.run_heldout(RuleBasedLLM, amendments=AMENDMENTS)
+        assert HELDOUT.read_bytes() == before
+
+    def test_the_command_line_accepts_the_amendments(self, tmp_path):
+        out = tmp_path / "h.json"
+        assert ev.main(["--heldout", "--heldout-amendments", str(AMENDMENTS), "--output", str(out)]) == 0
+        assert json.loads(out.read_text(encoding="utf-8"))["amendments"]["ids"] == ["H17", "H19", "H20"]

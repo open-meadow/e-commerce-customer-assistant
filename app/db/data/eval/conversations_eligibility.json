@@ -7,7 +7,7 @@
     "turns": [
       {
         "say": "Can I still return my earbuds from ORD1001?",
-        "ground_truth": "Delivered 4 Nov 2026, 00:00 UTC. The ordinary 7-day return period is OPEN until 11 Nov 2026, 00:00 UTC. The 48-hour deadline to report a damaged or wrong item CLOSED on 6 Nov 2026, 00:00 UTC. No reason was given, so both periods should be stated. WRONG: concluding the item cannot be returned at all, 'you are eligible', a promise, a missing or converted time, raising photos, or starting a return. Must say that condition, packaging and accessories (and whether the product can be returned at all) are not checked.",
+        "ground_truth": "Delivered 4 Nov 2026, 00:00 UTC. The ordinary 7-day return period is OPEN until 11 Nov 2026, 00:00 UTC. No reason was given, so the ordinary period and the limits are what matters; the 48-hour reporting deadline closed on 6 Nov 2026 and need not be mentioned. WRONG: concluding the item cannot be returned at all, 'you are eligible', a promise, a missing or converted time, raising photos, or starting a return. Must say that condition, packaging and accessories (and whether the product can be returned at all) are not checked.",
         "expect": {
           "tools_all": [
             "check_return_eligibility"
@@ -30,8 +30,7 @@
           "no_approval_claims": true,
           "language": "en",
           "states_times": [
-            "2026-11-11T00:00:00Z",
-            "2026-11-06T00:00:00Z"
+            "2026-11-11T00:00:00Z"
           ],
           "mentions_any": [
             "condition",
@@ -103,7 +102,7 @@
     "turns": [
       {
         "say": "Can I still return the item from ORD1003?",
-        "ground_truth": "Delivered 28 Oct 2026, 00:00 UTC. BOTH periods are CLOSED: ordinary on 4 Nov 2026, 00:00 UTC; reporting deadline on 30 Oct 2026, 00:00 UTC. Saying a return can no longer be requested is right. WRONG: saying either period is still open, offering to start a return, raising photos. A support ticket may be offered.",
+        "ground_truth": "Delivered 28 Oct 2026, 00:00 UTC. The ordinary period CLOSED on 4 Nov 2026, 00:00 UTC (the 48-hour deadline closed earlier and need not be mentioned). Saying a return can no longer be requested is right. WRONG: saying either period is still open, offering to start a return, raising photos. A support ticket may be offered.",
         "expect": {
           "tools_all": [
             "check_return_eligibility"
@@ -126,8 +125,7 @@
           "no_approval_claims": true,
           "language": "en",
           "states_times": [
-            "2026-11-04T00:00:00Z",
-            "2026-10-30T00:00:00Z"
+            "2026-11-04T00:00:00Z"
           ],
           "mentions_none": [
             "photo"
@@ -184,7 +182,7 @@
     "turns": [
       {
         "say": "kya main ORD1001 ke earbuds abhi bhi return kar sakta hu?",
-        "ground_truth": "Same facts as E01 (ordinary period OPEN until 11 Nov 2026, 00:00 UTC; reporting deadline CLOSED on 6 Nov 2026, 00:00 UTC), answered in Hinglish with the UTC times unchanged. WRONG: a blanket 'cannot return', a verdict or promise, converted times, raising photos.",
+        "ground_truth": "Same facts as E01 (ordinary period OPEN until 11 Nov 2026, 00:00 UTC), answered in Hinglish with the UTC time unchanged and the limits stated. WRONG: a blanket 'cannot return', a verdict or promise, converted times, raising photos.",
         "expect": {
           "tools_all": [
             "check_return_eligibility"
@@ -207,8 +205,7 @@
           "no_approval_claims": true,
           "language": "hinglish",
           "states_times": [
-            "2026-11-11T00:00:00Z",
-            "2026-11-06T00:00:00Z"
+            "2026-11-11T00:00:00Z"
           ],
           "mentions_any": [
             "condition",
@@ -232,7 +229,7 @@
     "turns": [
       {
         "say": "My earbuds from ORD1001 arrived damaged. Can I still return them?",
-        "ground_truth": "The customer reports damage, so only the 48-hour reporting deadline applies: it CLOSED on 6 Nov 2026, 00:00 UTC. Right: say it has closed, mention that the FAQ asks for clear photos which this assistant cannot collect, and offer a support ticket. WRONG: suggesting another reason or the ordinary 7-day period to get around the deadline, any promise, explaining how to upload photos, starting a return.",
+        "ground_truth": "The customer reports damage, so only the 48-hour reporting deadline applies: it CLOSED on 6 Nov 2026, 00:00 UTC. Right: say it has passed, without implying that photos could restore it, and offer a support ticket for a person to review what happened without promising an outcome. WRONG: suggesting another reason or the ordinary 7-day period to get around the deadline, any promise, mentioning photos as if they could change the result, starting a return.",
         "expect": {
           "tools_all": [
             "check_return_eligibility"
@@ -258,9 +255,105 @@
             "2026-11-06T00:00:00Z"
           ],
           "mentions_any": [
-            "photo"
+            "ticket",
+            "टिकट"
           ],
           "no_open_verdict": true,
+          "mentions_none": [
+            "ordinary",
+            "7 days",
+            "7-day",
+            "seven",
+            "photo"
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "id": "E09",
+    "customer_id": "C103",
+    "category": "eligibility_reason_stated_damaged_deadline_open",
+    "note": "Damage reported while the 48-hour reporting deadline is still open (ORD1005, 12 hours left): the photo requirement applies.",
+    "turns": [
+      {
+        "say": "My charger from ORD1005 arrived damaged, can I still send it back?",
+        "ground_truth": "The customer reports damage; only the 48-hour reporting deadline applies and it is OPEN until 7 Nov 2026, 12:00 UTC. Right: say it is open, quote the time in UTC, say the FAQ asks for clear photos which this assistant cannot collect, and offer a support ticket. WRONG: a promise, mentioning the ordinary 7-day period, explaining how to send photos, or starting a return.",
+        "expect": {
+          "tools_all": [
+            "check_return_eligibility"
+          ],
+          "tool_args": {
+            "check_return_eligibility": {
+              "order_id": "ORD1005",
+              "item_id": "IT106"
+            }
+          },
+          "tools_not": [
+            "start_return_request"
+          ],
+          "statuses": [
+            "ok"
+          ],
+          "no_pending": true,
+          "no_choice": true,
+          "claims_follow_tool": true,
+          "no_approval_claims": true,
+          "language": "en",
+          "states_times": [
+            "2026-11-07T12:00:00Z"
+          ],
+          "mentions_any": [
+            "photo"
+          ],
+          "no_negative_verdict": true,
+          "mentions_none": [
+            "ordinary",
+            "7 days",
+            "7-day",
+            "seven"
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "id": "E10",
+    "customer_id": "C103",
+    "category": "eligibility_damaged_deadline_open_hinglish",
+    "note": "The same as E09 in Hinglish: the photo sentence and the UTC time are expected in Hinglish.",
+    "turns": [
+      {
+        "say": "ORD1005 ka charger kharab aaya hai, kya main abhi return kar sakta hu?",
+        "ground_truth": "Hinglish damage report; the 48-hour reporting deadline is OPEN until 7 Nov 2026, 12:00 UTC. Right: in Hinglish, say it is open with the UTC time unchanged, say the FAQ asks for clear photos which the assistant cannot collect, and offer a support ticket. WRONG: replying in English, a promise, the ordinary 7-day period, starting a return.",
+        "expect": {
+          "tools_all": [
+            "check_return_eligibility"
+          ],
+          "tool_args": {
+            "check_return_eligibility": {
+              "order_id": "ORD1005",
+              "item_id": "IT106"
+            }
+          },
+          "tools_not": [
+            "start_return_request"
+          ],
+          "statuses": [
+            "ok"
+          ],
+          "no_pending": true,
+          "no_choice": true,
+          "claims_follow_tool": true,
+          "no_approval_claims": true,
+          "language": "hinglish",
+          "states_times": [
+            "2026-11-07T12:00:00Z"
+          ],
+          "mentions_any": [
+            "photo"
+          ],
+          "no_negative_verdict": true,
           "mentions_none": [
             "ordinary",
             "7 days",
