@@ -30,6 +30,7 @@ from app.llm.tasks import classify_relation, interpret_reply
 from app.orchestrator import guard
 from app.orchestrator.issues import Issue, build_description
 from app.orchestrator.summarizer import make_summary
+from app.tools import return_texts
 from app.tools.context import CustomerContext
 from app.tools.registry import (TOOL_SPECS, ArgumentError, execute_tool, llm_tool_definitions,
                                 validate_arguments)
@@ -127,6 +128,8 @@ class _Ctx:
     notices: list[str] = field(default_factory=list)
     issue_turn: bool = False
     citations: tuple[Citation, ...] = ()
+    message: str = ""  # the customer's message this turn (cue words for the eligibility disclosures)
+    eligibility: list = field(default_factory=list)  # check_return_eligibility timing results this turn
 
 
 # Offered (as text only) when a damaged or wrong-product report is past its 48-hour window. It does not
@@ -157,6 +160,8 @@ class Engine:
     # ------------------------------------------------------------------
 
     def handle_text(self, s: Session, text: str) -> Turn:
+        # The customer's own latest message decides their language; only a genuinely ambiguous one keeps the last.
+        s.language = guard.customer_language(text, s.language)
         expired = self._expire_stale(s)
         if guard.is_cancel(text) and self._outstanding(s):
             return self._typed_cancel(s)
@@ -174,7 +179,7 @@ class Engine:
 
         known = self._names_something(text)
         kind = guard.classify_scope(text, specific=known)
-        ctx = _Ctx()
+        ctx = _Ctx(message=text)
         if expired:
             ctx.notices.append("Your earlier question timed out, so I've dropped it.")
 
@@ -468,7 +473,7 @@ class Engine:
     # ------------------------------------------------------------------
 
     def _answer(self, s: Session, text: str, ctx: _Ctx) -> Turn:
-        ctoken = CustomerContext(s.customer_id, s.session_ref)
+        ctoken = CustomerContext(s.customer_id, s.session_ref, s.language)
         messages: list[dict[str, Any]] = [*s.history, {"role": "user", "content": text}]
         tools = llm_tool_definitions()
         calls_used = 0
@@ -529,6 +534,11 @@ class Engine:
                 if name == "start_support_ticket":
                     return self._propose_ticket(s, call.arguments, text, ctx)
                 tool_result = execute_tool(ctoken, name, call.arguments)
+                if name == "check_return_eligibility":
+                    tool_result = self._eligibility_for_the_named_item(ctoken, call.arguments, tool_result, text)
+                if (name == "check_return_eligibility" and tool_result.code == "return_check"
+                        and tool_result.data.get("result") == "timing_check"):
+                    ctx.eligibility.append(tool_result.data)
                 self._collect_citations(ctx, name, tool_result)
                 wrote_tool_results = True
                 messages.append({"role": "tool", "name": name, "call_id": call.call_id,
@@ -579,11 +589,73 @@ class Engine:
             body = "I'm sorry, I couldn't put together an answer. Could you rephrase your question?"
         if _FALSE_SUCCESS.search(body):
             body = GROUNDING_REPLACEMENT
+        else:
+            body = self._with_eligibility_disclosures(s, ctx, body)
         if len(body) > 4000:
             body = body[:3999] + "…"
         if ctx.issue_turn and s.issues.active is not None and "ticket" not in body.lower():
             body += "\n\nIf you'd like, I can raise a support ticket for this issue."
         return Turn(self._with_notices(ctx, body), citations=ctx.citations)
+
+    @staticmethod
+    def _eligibility_for_the_named_item(ctoken: CustomerContext, arguments: Any, result: ToolResult,
+                                        text: str) -> ToolResult:
+        """Make an eligibility check about the item the customer's own words name, never about one they did not.
+
+        The model has to supply an opaque item ID and sometimes guesses one (live run: it called the check with a
+        guessed ID, was told the item was not on the order, and asked the customer a pointless question), or picks
+        a valid but different item from the one the customer described. Code settles it, as the return flow does:
+        when the customer's words name exactly one item of that order (``guard.resolve_item_by_name``), that item is
+        used and the read-only check is run again. Two matches, none, or a different product named is never guessed:
+        the model's own choice then stands (or it is shown the order's items and retries or asks). Ownership is the
+        session's, the order is re-read through the same customer-scoped tool, and nothing is written.
+        """
+        if not isinstance(arguments, dict) or not isinstance(arguments.get("order_id"), str):
+            return result
+        order_id = arguments["order_id"]
+        data = result.data if isinstance(result.data, dict) else {}
+        if data.get("result") == "item_not_on_this_order":
+            items = data.get("order_items")
+        elif result.status == "ok":
+            lookup = execute_tool(ctoken, "get_order_status", {"order_id": order_id})
+            items = lookup.data.get("items") if lookup.status == "ok" and isinstance(lookup.data, dict) else None
+        else:
+            return result  # not found (not the customer's order) or invalid: nothing to recover and nothing listed
+        if not items:
+            return result
+        chosen = guard.resolve_item_by_name(text, items)
+        if chosen is None or chosen == str(arguments.get("item_id", "")).strip().upper():
+            return result
+        again = execute_tool(ctoken, "check_return_eligibility", {"order_id": order_id, "item_id": chosen})
+        if again.status != "ok":
+            return result
+        log.info("eligibility check moved to the item the customer named (session %s)", ctoken.session_ref)
+        return ToolResult(again.status, again.code, {**again.data, "item_resolved_from_customer_words": chosen},
+                          again.note)
+
+    @staticmethod
+    def _with_eligibility_disclosures(s: Session, ctx: _Ctx, body: str) -> str:
+        """Add, in the customer's language, what an eligibility answer must not leave out and the reply left out.
+
+        The model is given ready-made paragraphs and asked to give them as written, yet a small model drops
+        sentences. Code owns the disclosures that matter: what the check cannot see (while a return is still
+        possible), the photo requirement (damage reported and the 48-hour deadline open) and the support offer
+        (damage reported and the deadline closed). A reply that already says it is left alone.
+        """
+        if not ctx.eligibility:
+            return body
+        windows = ctx.eligibility[-1].get("windows", {})
+        ordinary_open = windows.get("ordinary_return_window", {}).get("status") == "open"
+        deadline_open = windows.get("damaged_or_wrong_item_reporting_deadline", {}).get("status") == "open"
+        damaged = guard.reports_damage(ctx.message)
+        extra: list[str] = []
+        if damaged and deadline_open and not return_texts.has_photos(body):
+            extra.append(return_texts.photos_sentence(s.language))
+        elif damaged and not deadline_open and not return_texts.has_ticket(body):
+            extra.append(return_texts.closed_support_sentence(s.language))
+        elif not damaged and ordinary_open and not return_texts.has_limits(body):
+            extra.append(return_texts.limits_sentence(s.language))
+        return body + "\n\n" + " ".join(extra) if extra else body
 
     @staticmethod
     def _collect_citations(ctx: _Ctx, name: str, result: ToolResult) -> None:

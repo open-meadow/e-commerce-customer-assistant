@@ -384,22 +384,31 @@ class TestFactsToState:
         assert set(facts) == {"no_reason_given", "item_damaged_or_wrong", "any_other_reason"}
         assert all(isinstance(v, str) for v in facts.values())
 
-    def test_no_reason_given_has_both_periods_and_the_limits(self, temp_db):
+    def test_no_reason_given_has_the_ordinary_period_and_the_limits_and_not_a_closed_deadline(self, temp_db):
         paragraph = self.facts("C101", "ORD1001", "IT101")["no_reason_given"]
         assert ("The ordinary return period (7 days from delivery) is open until 11 November 2026, 00:00 UTC "
                 "(about 4 days left).") in paragraph
-        assert ("The deadline to report a damaged or wrong item and start a return (48 hours from delivery) "
-                "closed on 6 November 2026, 00:00 UTC.") in paragraph
-        assert paragraph.index("ordinary return period") < paragraph.index("deadline to report")
+        assert "deadline to report" not in paragraph and "6 November" not in paragraph  # closed and not asked about
         assert "cannot check whether this product can be returned at all" in paragraph
         assert "condition" in paragraph and "packaging and accessories" in paragraph
 
-    def test_a_damaged_report_gets_the_deadline_and_the_photo_sentence_only(self, temp_db):
+    def test_no_reason_given_mentions_the_deadline_only_while_it_is_open(self, temp_db):
+        paragraph = self.facts("C103", "ORD1005", "IT105")["no_reason_given"]
+        assert paragraph.index("ordinary return period") < paragraph.index("deadline to report")
+        assert "is open until 7 November 2026, 12:00 UTC (about 12 hours left)" in paragraph
+
+    def test_a_damaged_report_with_the_deadline_closed_gets_the_deadline_and_support_but_no_photos(self, temp_db):
         paragraph = self.facts("C101", "ORD1001", "IT101")["item_damaged_or_wrong"]
         assert "closed on 6 November 2026, 00:00 UTC" in paragraph
-        assert "clear photos" in paragraph and "cannot collect photos here" in paragraph
-        assert "support ticket" in paragraph
+        assert "support ticket" in paragraph and "can't promise any particular outcome" in paragraph
+        assert "photo" not in paragraph  # photos cannot restore a closed deadline and are not implied to
         assert "ordinary" not in paragraph and "7 days" not in paragraph  # never steers to the other period
+
+    def test_a_damaged_report_with_the_deadline_open_gets_the_photo_sentence(self, temp_db):
+        paragraph = self.facts("C103", "ORD1005", "IT106")["item_damaged_or_wrong"]
+        assert "is open until 7 November 2026, 12:00 UTC" in paragraph
+        assert "clear photos" in paragraph and "cannot collect photos here" in paragraph and "support ticket" in paragraph
+        assert "ordinary" not in paragraph and "7 days" not in paragraph
 
     def test_any_other_reason_gets_the_ordinary_period_and_the_limits_without_photos(self, temp_db):
         paragraph = self.facts("C101", "ORD1001", "IT101")["any_other_reason"]
@@ -416,7 +425,9 @@ class TestFactsToState:
         assert "is open until 7 November 2026, 12:00 UTC (about 12 hours left)" in both_open
         both_closed = self.facts("C102", "ORD1003", "IT103")["no_reason_given"]
         assert "closed on 4 November 2026, 00:00 UTC" in both_closed
-        assert "closed on 30 October 2026, 00:00 UTC" in both_closed
+        assert "30 October" not in both_closed  # nothing was said about damage
+        assert "support ticket" in both_closed and "photo" not in both_closed
+        assert "cannot check whether" not in both_closed  # nothing can be returned, so the limits are moot
 
     def test_the_last_hour_reads_as_less_than_one_hour_not_zero(self, temp_db, set_now):
         set_now(datetime(2026, 11, 7, 11, 30, tzinfo=UTC))
@@ -477,7 +488,7 @@ class TestWrongItemRecovery:
                        LLMResult(text="The ordinary return period (7 days from delivery) is open until "
                                       "12 November 2026, 12:00 UTC."))
         backend = Backend(llm=llm, settings=Settings())
-        reply = Client(backend, "C103").say("Is it too late to return the charger from ORD1005?")
+        reply = Client(backend, "C103").say("Is it too late to return something from ORD1005?")  # no item named: code cannot resolve it
         assert reply.status == "ok" and "12 November 2026, 12:00 UTC" in reply.text
         assert reply.pending is None and reply.choice is None
         seen = [json.loads(m["content"]) for m in llm.seen[2] if m["role"] == "tool"]

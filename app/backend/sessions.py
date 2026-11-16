@@ -60,6 +60,7 @@ class Session:
     created: datetime
     last_active: datetime
     session_ref: str = ""
+    language: str = "en"  # the customer's language, kept from their latest clear message
     history: list[dict[str, str]] = field(default_factory=list)
     message_count: int = 0
     issues: IssueBook = field(default_factory=IssueBook)

@@ -458,3 +458,62 @@ def is_repeat_complaint(text: str) -> bool:
 def asks_for_order_id(reply: str) -> bool:
     """The model's reply asks the customer to supply an order ID or number."""
     return isinstance(reply, str) and bool(_ASKS_FOR_ORDER_ID.search(reply))
+
+
+# ---------------------------------------------------------------------------
+# The customer's language, decided by code (no model call)
+# ---------------------------------------------------------------------------
+
+LANGUAGES = ("en", "hinglish", "hi")
+_DEVANAGARI = re.compile(r"[\u0900-\u097F]")
+_LATIN_WORDS = re.compile(r"[a-z]+")
+_LATIN_WORDS_2 = re.compile(r"[a-z]{2,}")
+# The same detector the evaluation harness uses to judge reply language (tests keep the two in step).
+_HINGLISH_WORDS = frozenset("""mera meri mere mujhe mujhko hai hain nahi nahin kya kab kaha kahan kaise kyun kyu bhai
+yaar aap aapka aapki aapke aapko tum tumhara tumhari tumhe mein hoon karna karo karu kare chahiye wapas abhi tak aaya
+aayega aata aati batao bata dijiye kijiye sakta sakte sakti raha rahi rahe gaya gayi hua hui kitne kitna din ye yeh
+woh aur lekin agar toh matlab kuch koi kisi insaan baat karao ho chuka bilkul bekaar bakwas theek madad tha thi ka ki ke ko""".split())
+# Words that, two or more in one message and with at most one Hinglish word, make it clearly English.
+_ENGLISH_FUNCTION_WORDS = frozenset("""the is are was were can could would should do does did have has i you your my we
+it this that what where when how why which who please from with for about still not and any there will been be an
+want need get give send take make tell show check know like just also now""".split())
+
+
+def detect_language(text: str) -> str:
+    """``hi`` (three or more Devanagari letters), ``hinglish`` (two or more Hinglish words) or ``en``."""
+    if len(_DEVANAGARI.findall(text or "")) >= 3:
+        return "hi"
+    words = set(_LATIN_WORDS.findall((text or "").lower()))
+    return "hinglish" if len(words & _HINGLISH_WORDS) >= 2 else "en"
+
+
+def customer_language(text: str, previous: str = "en") -> str:
+    """The language to answer in: the latest message decides whenever it can.
+
+    Devanagari or two Hinglish words mean Hindi or Hinglish. A message that is clearly English (two or more common
+    English function words and at most one Hinglish word, or four or more words and none of them Hinglish) is English,
+    whatever the session used before. Only a genuinely ambiguous message ("ok", "ji haan", "mera order", an ID alone)
+    keeps the previous language.
+    """
+    found = detect_language(text)
+    if found != "en":
+        return found
+    lowered = (text or "").lower()
+    words = set(_LATIN_WORDS.findall(lowered))
+    hinglish_hits = len(words & _HINGLISH_WORDS)
+    if len(words & _ENGLISH_FUNCTION_WORDS) >= 2 and hinglish_hits <= 1:
+        return "en"
+    if hinglish_hits == 0 and len(_LATIN_WORDS_2.findall(lowered)) >= 4:  # four or more words, none of them Hinglish
+        return "en"
+    return previous if previous in LANGUAGES else "en"
+
+
+_DAMAGE = re.compile(
+    r"\b(?:damag\w*|broken|defect\w*|faulty|cracked|dead|not working|stopped working|doesn'?t work|isn'?t working"
+    r"|wrong (?:item|product|one)|kharab|kharaab|toota|tuta|tooti|galat (?:item|product|saman|samaan))\b"
+    r"|\u0916\u0930\u093e\u092c|\u091f\u0942\u091f|\u0917\u0932\u0924 (?:\u0938\u093e\u092e\u093e\u0928|\u092a\u094d\u0930\u094b\u0921\u0915\u094d\u091f)", re.I)
+
+
+def reports_damage(text: str) -> bool:
+    """The customer says the item arrived damaged, faulty or wrong (English, Hinglish or Hindi cue words)."""
+    return bool(_DAMAGE.search(text or ""))
