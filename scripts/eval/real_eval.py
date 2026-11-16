@@ -1075,6 +1075,8 @@ def run_conversations(path: Path, env: Environment, record_calls: bool = False) 
             })
             if record_calls:
                 turns[-1]["model_calls"] = {"chat": obs["chat_calls"], "complete": obs["complete_calls"]}
+                turns[-1]["proposed_tool_arguments"] = [{"name": p["name"], "arguments": p["arguments"]}
+                                                        for p in obs["proposed"]]
             if "ground_truth" in turn:
                 turns[-1]["ground_truth"] = turn["ground_truth"]
         results.append({"id": convo["id"], "customer_id": convo["customer_id"], "category": convo["category"],
@@ -1194,6 +1196,37 @@ def run_diagnostic(name: str, build: Callable, llm_factory: Callable[[], LLMClie
     return result
 
 
+_DEFAULT_HELDOUT = _EVAL_DIR / "heldout" / "heldout_v1.json"
+HELDOUT_NOTE = ("Held-out set: paraphrased, unseen cases written before the corrective changes and never used to tune "
+                "them. Counts only, reported apart from every development set and from the v2/v5 scorecards. Heuristic "
+                "checks are a screen; correctness is decided by manual review against each ground truth.")
+
+
+def run_heldout(llm_factory: Callable[[], LLMClient], *, live: bool = False, retrieval: str = "local",
+                path: Path = _DEFAULT_HELDOUT) -> dict[str, Any]:
+    """Run the held-out conversation file on its own. No scorecard, no baseline blending, manual review required."""
+    with environment(llm_factory, retrieval) as env:
+        retrieval_label = env.retrieval_label
+        held = run_conversations(path, env, record_calls=True)
+        llm = llm_description(env.recorder.inner, live=live)
+        main_backend, main_inner = env.backend, env.recorder.inner
+        interpret_calls = env.backend.engine.interpret_calls
+    layers = layers_description(main_backend, interpret_calls, retrieval, main_inner)
+    sets = {"heldout": held}
+    sheet = review_sheet(sets)
+    return {
+        "schema_version": SCHEMA_VERSION, "evaluation_mode": "real_backend_heldout", "backend": "app.backend.Backend",
+        "llm": llm, "layers": layers, "database": {"kind": "temporary_seeded", "reference_time": "2026-11-07T00:00:00Z"},
+        "retrieval": {"vector_store": "chroma (temporary, per run)", "mode": retrieval, "embeddings": retrieval_label},
+        "case_source": _source_label(path), "opt_in_checks": NEW_SET_CHECKS,
+        "integrity": integrity([], [held], []), "note": HELDOUT_NOTE,
+        "manual_review": {"required": True, "turns": len(sheet), "reviewed": 0, "rule": MANUAL_REVIEW_RULE},
+        "review_sheet": sheet,
+        "sets": {"heldout": {"summary": held["summary"], "how_to_read": SCREEN_NOTE, "results": held["results"]}},
+        "model_calls": {"heldout": _sum_calls([t["model_calls"] for r in held["results"] for t in r["turns"]])},
+    }
+
+
 def _sum_calls(items: list[dict[str, int]]) -> dict[str, int]:
     return {"chat": sum(i.get("chat", 0) for i in items), "complete": sum(i.get("complete", 0) for i in items)}
 
@@ -1240,6 +1273,7 @@ def review_sheet(sets: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
                     "category": convo["category"], "customer_message": turn["say"],
                     "reply": turn["reply"]["text"], "reply_status": turn["reply"]["status"],
                     "tools_proposed": turn["proposed_tool_calls"],
+                    "tool_calls": turn.get("proposed_tool_arguments", []),
                     "automated_flags": turn["failed"] + [f"universal:{k}" for k, v in turn["universal"].items()
                                                          if v == FAIL],
                     "ground_truth": turn.get("ground_truth", "(none recorded)"),
@@ -1483,6 +1517,9 @@ def main(argv: Optional[list[str]] = None) -> int:
                              "conversations and scenarios (counts only; never part of the v2/v5 scorecards)")
     parser.add_argument("--review-sheet", type=Path, metavar="REPORT",
                         help="print the manual review sheet of a saved --new-sets report as Markdown, then exit")
+    parser.add_argument("--heldout", type=Path, nargs="?", const=_DEFAULT_HELDOUT, default=None, metavar="FILE",
+                        help="run only the held-out set (default file: app/db/data/eval/heldout/heldout_v1.json); "
+                             "counts only, never part of any scorecard")
     parser.add_argument("--identity", type=Path, default=_DEFAULT_IDENTITY, help="identity set (with --new-sets)")
     parser.add_argument("--eligibility", type=Path, default=_DEFAULT_ELIGIBILITY,
                         help="eligibility set (with --new-sets)")
@@ -1502,7 +1539,9 @@ def main(argv: Optional[list[str]] = None) -> int:
             if args.retrieval == "production" and not args.allow_live:
                 raise RuntimeError("--retrieval production uses OpenAI embeddings (live, billed requests); "
                                    "pass --allow-live only after explicit approval")
-            if args.new_sets:
+            if args.heldout is not None:
+                report = run_heldout(factory, live=args.allow_live, retrieval=args.retrieval, path=args.heldout)
+            elif args.new_sets:
                 report = run_new_sets(factory, live=args.allow_live, retrieval=args.retrieval,
                                       identity_path=args.identity, eligibility_path=args.eligibility)
             else:
