@@ -121,8 +121,11 @@ class TestCallTotalsAndOutageStop:
     def test_the_command_line_writes_a_stub_with_the_calls_used_and_exits_3(self, tmp_path, monkeypatch):
         monkeypatch.setattr(ev, "_factory", lambda mode, allow: (lambda: failing_model()))
         out = tmp_path / "stub.json"
+        import usage_ledger
+        ledger_path = tmp_path / "usage.jsonl"  # a live run now requires the cumulative ledger (this model sends nothing)
+        usage_ledger.Ledger(ledger_path).init(1000, "test", prior_usage="none")
         code = ev.main(["--affected", "--llm", "env", "--allow-live", "--stop-after-provider-failures", "3",
-                        "--output", str(out)])
+                        "--usage-ledger", str(ledger_path), "--output", str(out)])
         stub = json.loads(out.read_text(encoding="utf-8"))
         assert code == 3 and stub["evaluation_mode"] == "aborted_provider_outage"
         assert stub["integrity"]["run_valid_for_scoring"] is False and stub["model_calls_total"]["chat"] == 3

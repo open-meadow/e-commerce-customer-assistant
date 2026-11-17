@@ -95,6 +95,9 @@ def run_until_valid(label: str, out_dir: Path, args: Sequence[str], *, runner: S
             entry["calls"] = _calls(report)
             spent += entry["calls"]
             history.append(entry)
+            if code == 4:  # the usage ledger's ceiling: never retry into a spent budget
+                status = "budget"
+                break
             if entry["valid"] and code == 0:
                 shutil.copyfile(path, out_dir / f"{label}_valid.json")
                 status = "valid"

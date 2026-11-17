@@ -612,5 +612,5 @@ class TestIntegrity:
 
     def test_nothing_reads_the_block(self):
         source = Path(ev.__file__).read_text(encoding="utf-8")
-        assert source.count('["integrity"]') == 0 and source.count("run_valid_for_scoring") <= 2
+        assert source.count('["integrity"]') == 0 and source.count("run_valid_for_scoring") <= 3  # writes only: integrity(), the outage stub, the ledger-ceiling stub
 

@@ -48,6 +48,8 @@ from unittest import mock
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
+if str(Path(__file__).resolve().parent) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from app import catalog as catalog_module  # noqa: E402
 from app import rag  # noqa: E402
@@ -63,6 +65,7 @@ from app.db.seed_data import seed_database  # noqa: E402
 from app.llm.base import LLMClient, LLMConfigError, LLMError, LLMResult  # noqa: E402
 from app.llm.providers import build_llm_client  # noqa: E402
 from app.llm.rule_based import RuleBasedLLM  # noqa: E402
+import usage_ledger  # noqa: E402
 from app.orchestrator import engine as engine_module  # noqa: E402
 from app.orchestrator import guard  # noqa: E402
 from app.tools.registry import _money  # noqa: E402
@@ -1656,6 +1659,11 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser.add_argument("--affected", type=Path, nargs="?", const=_DEFAULT_AFFECTED, default=None, metavar="FILE",
                         help="run only the affected-behaviours set of corrective v2 (default file: "
                              "app/db/data/eval/conversations_affected_v2.json); counts only")
+    parser.add_argument("--usage-ledger", type=Path, default=None, metavar="FILE",
+                        help="persistent cumulative request ledger (default: the EVAL_USAGE_LEDGER variable). Required "
+                             "for any live run: every provider request, embeddings included, is reserved against the "
+                             "ledger's ceiling before it is sent, and the run stops with exit code 4 at the ceiling")
+    parser.add_argument("--run-id", default=None, help="label for this run's entries in the ledger")
     parser.add_argument("--stop-after-provider-failures", type=int, default=0, metavar="N",
                         help="stop the run after N consecutive provider failures (a run that cannot be scored), write "
                              "a stub report with the calls used and exit with code 3; 0 (default) never stops early")
@@ -1668,6 +1676,15 @@ def main(argv: Optional[list[str]] = None) -> int:
     global PROVIDER_OUTAGE_LIMIT
     PROVIDER_OUTAGE_LIMIT = max(0, args.stop_after_provider_failures)
     reset_call_totals()
+    live_run = args.allow_live and (args.llm == "env" or args.retrieval == "production")
+    ledger = None
+    stack = contextlib.ExitStack()
+    if live_run and not args.compare and not args.review_sheet:
+        ledger_path = args.usage_ledger or os.environ.get(usage_ledger.ENV_PATH)
+        if not ledger_path:
+            parser.error("a live run needs a usage ledger (--usage-ledger FILE or EVAL_USAGE_LEDGER): without one the "
+                         "cumulative request ceiling cannot be enforced")
+        ledger = usage_ledger.Ledger(Path(ledger_path), run_id=args.run_id)
     try:
         if args.review_sheet:
             saved = json.loads(args.review_sheet.read_text(encoding="utf-8"))
@@ -1683,6 +1700,8 @@ def main(argv: Optional[list[str]] = None) -> int:
             if args.retrieval == "production" and not args.allow_live:
                 raise RuntimeError("--retrieval production uses OpenAI embeddings (live, billed requests); "
                                    "pass --allow-live only after explicit approval")
+            if ledger is not None:
+                stack.enter_context(usage_ledger.guards(ledger))  # verifies the ledger before anything can be sent
             if args.affected is not None:
                 report = run_heldout(factory, live=args.allow_live, retrieval=args.retrieval, path=args.affected,
                                      set_name="affected", mode="real_backend_affected_behaviours", note=AFFECTED_NOTE)
@@ -1695,6 +1714,9 @@ def main(argv: Optional[list[str]] = None) -> int:
             else:
                 report = run(args.cases, factory, live=args.allow_live, retrieval=args.retrieval,
                              conversations_path=args.conversations)
+        if ledger is not None:
+            report["usage_ledger"] = {"run_id": ledger.run_id, "this_run": ledger.summary(run_only=True),
+                                      "cumulative": ledger.summary()}
         rendered = json.dumps(report, ensure_ascii=False, indent=2) + "\n"
         _assert_no_secrets(rendered)
         if args.output is None:
@@ -1716,8 +1738,24 @@ def main(argv: Optional[list[str]] = None) -> int:
         sys.stderr.write(f"provider outage: stopped after {outage.failures} consecutive failures; "
                          f"calls attempted: {CALL_TOTALS}\n")
         return 3
+    except usage_ledger.BudgetExhausted as stop:
+        stub = {"schema_version": SCHEMA_VERSION, "evaluation_mode": "aborted_ledger_ceiling",
+                "aborted": {"reason": "usage_ledger_ceiling", "used": stop.used, "ceiling": stop.ceiling},
+                "model_calls_total": dict(CALL_TOTALS),
+                "usage_ledger": {"run_id": ledger.run_id, "this_run": ledger.summary(run_only=True),
+                                 "cumulative": ledger.summary()},
+                "integrity": {"run_valid_for_scoring": False,
+                              "rule": "A run stopped at the ledger ceiling is incomplete and is not scored."}}
+        rendered = json.dumps(stub, indent=2) + "\n"
+        if args.output is not None:
+            args.output.parent.mkdir(parents=True, exist_ok=True)
+            args.output.write_text(rendered, encoding="utf-8")
+        sys.stderr.write(f"usage ledger ceiling reached: {stop}\n")
+        return 4
     except (OSError, ValueError, RuntimeError, LLMConfigError, KeyError) as exc:
         parser.error(str(exc))
+    finally:
+        stack.close()
     return 0
 
 
