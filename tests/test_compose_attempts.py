@@ -52,13 +52,14 @@ class TestUncleanOwners:
 
     def test_error_replies_are_found_in_cases_conversations_and_scenarios(self, clean):
         found = ca.unclean_owners(damaged(clean, cases=("C011",), conversations=("M08",), scenarios=("ticket_declined",)))
-        assert found == {"cases": {"C011"}, "conversations": {"M08"}, "scenarios": {"ticket_declined"}}
+        assert found == {"cases": {"C011"}, "conversations": {"M08"}, "scenarios": {"ticket_declined"},
+                         "diagnostics": set()}
 
     def test_a_failure_that_made_no_error_reply_is_found_through_the_transport_record(self, clean):
         report = copy.deepcopy(clean)
         report["integrity"]["transport_affected_tests"] = ["conv:M10", "scenario:return_confirmed", "case:C003"]
         assert ca.unclean_owners(report) == {"cases": {"C003"}, "conversations": {"M10"},
-                                              "scenarios": {"return_confirmed"}}
+                                              "scenarios": {"return_confirmed"}, "diagnostics": set()}
 
 
 class TestCompose:
@@ -177,3 +178,53 @@ class TestOwnerAttribution:
         monkeypatch.setattr(ev.RecordingLLM, "chat", spy)
         ev.run(CASES, RuleBasedLLM, conversations_path=CONVERSATIONS)
         assert "case:C001" in seen and "conv:M01" in seen and any(o and o.startswith("scenario:") for o in seen)
+
+
+@pytest.fixture(scope="module")
+def clean_sets():
+    return ev.run_new_sets(RuleBasedLLM)
+
+
+def damage_set(report, convo_id):
+    out = copy.deepcopy(report)
+    for named in out["sets"].values():
+        for convo in named["results"]:
+            if convo["id"] == convo_id:
+                convo["turns"][0]["reply"]["status"] = "error"
+    return out
+
+
+class TestComposeNewSets:
+    def keep(self, report, skip=()):
+        return {"conversations": {c["id"]: "clean" for s in report["sets"].values() for c in s["results"]
+                                  if c["id"] not in skip},
+                "diagnostics": {d["diagnostic"]: "clean" for d in report["diagnostics"]}}
+
+    def test_error_replies_in_the_sets_and_diagnostics_are_found(self, clean_sets):
+        found = ca.unclean_owners(damage_set(clean_sets, "E04"))
+        assert found["conversations"] == {"E04"}
+        broken = copy.deepcopy(clean_sets)
+        broken["diagnostics"][0]["steps"] = [{"step": "say", "status": "error"}]
+        assert ca.unclean_owners(broken)["diagnostics"] == {broken["diagnostics"][0]["diagnostic"]}
+
+    def test_keeping_everything_reproduces_the_original_denominators(self, clean_sets):
+        composite = ca.compose_new_sets(clean_sets, "base.json", self.keep(clean_sets), [])
+        assert composite["composition"]["complete"]
+        for name in ("identity", "eligibility"):
+            assert composite["sets"][name]["summary"] == clean_sets["sets"][name]["summary"]
+        assert len(composite["review_sheet"]) == len(clean_sets["review_sheet"])
+
+    def test_a_damaged_conversation_comes_from_the_replay_and_the_rest_from_the_base(self, clean_sets):
+        base = damage_set(clean_sets, "E04")
+        composite = ca.compose_new_sets(base, "base.json", self.keep(clean_sets, ("E04",)), [("r1.json", clean_sets)])
+        per_test = composite["composition"]["per_test"]["conversations"]
+        assert per_test["E04"]["used"] == "r1.json" and per_test["E01"]["used"] == "base.json"
+        assert composite["integrity"]["run_valid_for_scoring"] is True
+        assert composite["sets"]["eligibility"]["summary"] == clean_sets["sets"]["eligibility"]["summary"]
+        assert "COMBINES results" in composite["composition"]["disclosure"]
+
+    def test_a_conversation_with_no_clean_result_is_missing_not_filled_in(self, clean_sets):
+        base = damage_set(clean_sets, "E04")
+        composite = ca.compose_new_sets(base, "base.json", self.keep(clean_sets, ("E04",)), [])
+        assert composite["composition"]["complete"] is False
+        assert composite["composition"]["missing"]["conversations"] == ["E04"]

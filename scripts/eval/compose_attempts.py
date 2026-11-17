@@ -27,19 +27,26 @@ ERROR = "error"
 
 def unclean_owners(report: dict[str, Any]) -> dict[str, set[str]]:
     """Tests a report cannot vouch for: an error reply, or an unrecovered transport failure attributed to them."""
-    out: dict[str, set[str]] = {"cases": set(), "conversations": set(), "scenarios": set()}
+    out: dict[str, set[str]] = {"cases": set(), "conversations": set(), "scenarios": set(), "diagnostics": set()}
     for case in report.get("results", []):
         if case["reply"]["status"] == ERROR:
             out["cases"].add(case["case_id"])
     for convo in (report.get("conversations") or {}).get("results", []):
         if any(t["reply"]["status"] == ERROR for t in convo["turns"]):
             out["conversations"].add(convo["id"])
+    for named_set in (report.get("sets") or {}).values():  # the identity and eligibility sets of a --new-sets report
+        for convo in named_set.get("results", []):
+            if any(t["reply"]["status"] == ERROR for t in convo["turns"]):
+                out["conversations"].add(convo["id"])
+    for diagnostic in report.get("diagnostics", []):
+        if diagnostic.get("error") or any(s.get("status") == ERROR for s in diagnostic.get("steps", [])):
+            out["diagnostics"].add(diagnostic["diagnostic"])
     for scenario in report.get("scenarios", []):
         if scenario.get("error") or any(s.get("status") == ERROR for s in scenario.get("steps", [])):
             out["scenarios"].add(scenario["scenario"])
     for label in (report.get("integrity") or {}).get("transport_affected_tests", []):
         kind, _, name = label.partition(":")
-        key = {"case": "cases", "conv": "conversations", "scenario": "scenarios"}.get(kind)
+        key = {"case": "cases", "conv": "conversations", "scenario": "scenarios", "diagnostic": "diagnostics"}.get(kind)
         if key:
             out[key].add(name)
     return out
@@ -138,6 +145,73 @@ def compose_original(base: dict[str, Any], base_name: str, keep: dict[str, Any],
         "integrity": ev.integrity(results, [conversations], scenarios),
         "summary": ev.summarize(results, scenarios, conversations), "limitations": list(ev.LIMITATIONS),
         "results": results, "scenarios": scenarios, "conversations": conversations,
+    }
+
+
+def compose_new_sets(base: dict[str, Any], base_name: str, keep: dict[str, Any],
+                     replays: Sequence[tuple[str, dict[str, Any]]]) -> dict[str, Any]:
+    """Compose a ``--new-sets`` report (identity set, eligibility set, diagnostics) the same way: first clean result per
+    conversation or diagnostic. ``keep`` is ``{"conversations": {id: why}, "diagnostics": {name: why}}``."""
+    set_names = list(base["sets"])
+    ids = {name: [r["id"] for r in base["sets"][name]["results"]] for name in set_names}
+    diag_names = [d["diagnostic"] for d in base["diagnostics"]]
+    sources = {name: report for name, report in [(base_name, base), *replays]}
+    unclean = {name: unclean_owners(report) for name, report in sources.items()}
+    chosen_convos: dict[str, tuple[str, Any]] = {}
+    chosen_diags: dict[str, tuple[str, Any]] = {}
+    log: dict[str, dict[str, Any]] = {"conversations": {}, "diagnostics": {}}
+    for kind, idents in (("conversations", [i for name in set_names for i in ids[name]]), ("diagnostics", diag_names)):
+        target = chosen_convos if kind == "conversations" else chosen_diags
+        for ident in idents:
+            attempts = []
+            for name, report in sources.items():
+                if kind == "conversations":
+                    found = next((c for s in (report.get("sets") or {}).values() for c in s["results"]
+                                  if c["id"] == ident), None)
+                else:
+                    found = next((d for d in report.get("diagnostics", []) if d["diagnostic"] == ident), None)
+                if found is None:
+                    continue
+                if name == base_name:
+                    accepted = ident in keep.get(kind, {})
+                    why = keep.get(kind, {}).get(ident) if accepted else "not accepted as clean (transport-affected)"
+                else:
+                    accepted = ident not in unclean[name][kind]
+                    why = "clean" if accepted else "transport failure in this attempt"
+                attempts.append({"attempt": name, "accepted": accepted, "note": why})
+                if accepted and ident not in target:
+                    target[ident] = (name, copy.deepcopy(found))
+            log[kind][ident] = {"used": target.get(ident, (None,))[0], "attempts": attempts}
+    missing = {k: [i for i, v in log[k].items() if v["used"] is None] for k in log}
+    sets: dict[str, dict[str, Any]] = {}
+    for name in set_names:
+        results = [chosen_convos[i][1] for i in ids[name] if i in chosen_convos]
+        sets[name] = {"summary": ev.summarize_conversations(results), "how_to_read": ev.SCREEN_NOTE, "results": results}
+    diagnostics = [chosen_diags[n][1] for n in diag_names if n in chosen_diags]
+    sheet = ev.review_sheet(sets)
+    totals = {"chat": 0, "complete": 0}
+    for report in sources.values():
+        for k in totals:
+            totals[k] += (report.get("model_calls_total") or {}).get(k, 0)
+    return {
+        "schema_version": base.get("schema_version"), "evaluation_mode": "real_backend_new_sets_composite_of_attempts",
+        "composition": {
+            "disclosure": ("This report COMBINES results from several attempts. Each conversation and diagnostic keeps its "
+                           "first clean result; those damaged by a transport failure were replayed from a fresh context. "
+                           "Criteria and expectations are unchanged. Counts only, never blended with Evaluation A or "
+                           "with the original set."),
+            "complete": not any(missing.values()), "missing": missing, "per_test": log,
+            "attempts": [{"name": name, "role": "base" if name == base_name else "replay",
+                          "model_calls_total": report.get("model_calls_total"),
+                          "unclean_tests": {k: sorted(v) for k, v in unclean[name].items()}}
+                         for name, report in sources.items()],
+            "model_calls_total_all_attempts": totals},
+        "backend": base.get("backend"), "llm": base.get("llm"), "layers": base.get("layers"),
+        "database": base.get("database"), "retrieval": base.get("retrieval"), "case_sources": base.get("case_sources"),
+        "integrity": ev.integrity([], [{"results": s["results"]} for s in sets.values()], diagnostics),
+        "opt_in_checks": base.get("opt_in_checks"), "note": base.get("note"),
+        "manual_review": {"required": True, "turns": len(sheet), "reviewed": 0, "rule": ev.MANUAL_REVIEW_RULE},
+        "review_sheet": sheet, "sets": sets, "diagnostics": diagnostics,
     }
 
 
