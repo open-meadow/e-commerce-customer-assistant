@@ -70,7 +70,8 @@ class TestCustomerLanguage:
                                       "How long does a refund take?", "Where is my order, bhai?",
                                       "I want a refund, yaar", "Is it too late to return the charger?",
                                       "Has ORD1014 shipped yet?", "Is ORD1002 on its way?",
-                                      "ORD1015 still hasn't come"])
+                                      "ORD1015 still hasn't come", "sorry, I meant ORD1005",
+                                      "Sorry, I meant the monitor. Can I still return that one?", "thanks, that is all"])
     def test_a_clearly_english_message_overrides_a_hinglish_or_hindi_session(self, text):
         for previous in ("hinglish", "hi", "en"):
             assert guard.customer_language(text, previous) == "en"
@@ -83,7 +84,7 @@ class TestCustomerLanguage:
             assert guard.customer_language(text, previous) == expected
 
     @pytest.mark.parametrize("text", ["ok", "yes", "thanks", "ORD1001", "mera order", "ji haan", "kya?", "",
-                                      "ORD1007 wala", "sorry, I meant ORD1005"])
+                                      "ORD1007 wala", "ORD1007"])
     def test_a_genuinely_ambiguous_message_keeps_the_previous_language(self, text):
         for previous in ("en", "hinglish", "hi"):
             assert guard.customer_language(text, previous) == previous
@@ -336,3 +337,35 @@ class TestTheEngineAddsWhatTheReplyLeftOut:
         reply, llm = reply_to("C101", "Can I still return my earbuds from ORD1001?", ask("ORD1001", "IT101"),
                               LLMResult(text="Until 11 November 2026, 00:00 UTC."))
         assert llm.chat_calls == 2 and not llm.complete_calls or all("interpret" not in c for c in llm.complete_calls)
+
+
+class TestSwitchingBackToEnglish:
+    """Corrective v2: 'sorry, I meant ORD1005' (conversation M05) is English and used to keep a Hinglish session;
+    'ORD1007 wala' (M03) is Hindi-English ('wala' = 'the one') and correctly keeps it."""
+
+    def test_the_english_message_that_used_to_stay_ambiguous_now_overrides(self):
+        assert guard.customer_language("sorry, I meant ORD1005", "hinglish") == "en"
+        assert guard.customer_language("sorry, I meant ORD1005", "hi") == "en"
+
+    def test_the_hindi_english_message_still_keeps_the_session_language(self):
+        assert guard.customer_language("ORD1007 wala", "hinglish") == "hinglish"
+        assert guard.customer_language("ORD1007 wala", "en") == "en"
+
+    @pytest.mark.parametrize("probe", ["mera order", "ji haan", "bhaiya order late", "ORD1007 wala", "paise wapas karo",
+                                        "order ka status", "kya hua", "wo wala", "aur ek order hai", "sahi hai"])
+    def test_no_hinglish_probe_is_taken_for_english_by_the_added_words(self, probe):
+        assert guard.customer_language(probe, "hinglish") == "hinglish"
+
+    def test_no_evaluation_message_other_than_the_one_hindi_english_fragment_stays_ambiguous(self):
+        english = [m for m in every_message() if guard.detect_language(m) == "en"]
+        ambiguous = [m for m in english if guard.customer_language(m, "hinglish") != "en"]
+        assert ambiguous == ["ORD1007 wala"]
+
+    def test_a_hinglish_session_follows_an_english_message_in_the_engine(self, temp_db):
+        backend = Backend(llm=ScriptedLLM(chat=lambda s, m, t: LLMResult(text="ok")), settings=Settings())
+        c = Client(backend, "C103")
+        session = backend.registry.get(c.state._handle)
+        for text, expected in (("kya main ORD1005 ka charger abhi bhi return kar sakta hu?", "hinglish"),
+                               ("Sorry, I meant the monitor. Can I still return that one?", "en"), ("ok", "en")):
+            c.say(text)
+            assert session.language == expected, text

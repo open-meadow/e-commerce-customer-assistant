@@ -476,7 +476,8 @@ woh aur lekin agar toh matlab kuch koi kisi insaan baat karao ho chuka bilkul be
 # Words that, two or more in one message and with at most one Hinglish word, make it clearly English.
 _ENGLISH_FUNCTION_WORDS = frozenset("""the is are was were can could would should do does did have has i you your my we
 it this that what where when how why which who please from with for about still not and any there will been be an
-want need get give send take make tell show check know like just also now""".split())
+want need get give send take make tell show check know like just also now
+sorry meant mean actually thanks thank""".split())
 
 
 def detect_language(text: str) -> str:
