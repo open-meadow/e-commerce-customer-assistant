@@ -65,6 +65,7 @@ from app.db.seed_data import seed_database  # noqa: E402
 from app.llm.base import LLMClient, LLMConfigError, LLMError, LLMResult  # noqa: E402
 from app.llm.providers import build_llm_client  # noqa: E402
 from app.llm.rule_based import RuleBasedLLM  # noqa: E402
+import transport_retry  # noqa: E402
 import usage_ledger  # noqa: E402
 from app.orchestrator import engine as engine_module  # noqa: E402
 from app.orchestrator import guard  # noqa: E402
@@ -1664,6 +1665,10 @@ def main(argv: Optional[list[str]] = None) -> int:
                              "for any live run: every provider request, embeddings included, is reserved against the "
                              "ledger's ceiling before it is sent, and the run stops with exit code 4 at the ceiling")
     parser.add_argument("--run-id", default=None, help="label for this run's entries in the ledger")
+    parser.add_argument("--transport-retries", type=int, choices=(0, 1, 2), default=0, metavar="N",
+                        help="evaluation harness only: re-send a chat request up to N times when it failed BEFORE "
+                             "transmission (DNS failure, connection refused, network unreachable). Never retries a "
+                             "timeout, reset or HTTP error. Each attempt is its own ledger entry; 0 (default) is off")
     parser.add_argument("--stop-after-provider-failures", type=int, default=0, metavar="N",
                         help="stop the run after N consecutive provider failures (a run that cannot be scored), write "
                              "a stub report with the calls used and exit with code 3; 0 (default) never stops early")
@@ -1678,6 +1683,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     reset_call_totals()
     live_run = args.allow_live and (args.llm == "env" or args.retrieval == "production")
     ledger = None
+    collector = None
     stack = contextlib.ExitStack()
     if live_run and not args.compare and not args.review_sheet:
         ledger_path = args.usage_ledger or os.environ.get(usage_ledger.ENV_PATH)
@@ -1702,6 +1708,8 @@ def main(argv: Optional[list[str]] = None) -> int:
                                    "pass --allow-live only after explicit approval")
             if ledger is not None:
                 stack.enter_context(usage_ledger.guards(ledger))  # verifies the ledger before anything can be sent
+            if args.transport_retries:  # installed after the ledger guards, so every attempt is a separate ledger entry
+                collector = stack.enter_context(transport_retry.retrying(args.transport_retries))
             if args.affected is not None:
                 report = run_heldout(factory, live=args.allow_live, retrieval=args.retrieval, path=args.affected,
                                      set_name="affected", mode="real_backend_affected_behaviours", note=AFFECTED_NOTE)
@@ -1714,6 +1722,8 @@ def main(argv: Optional[list[str]] = None) -> int:
             else:
                 report = run(args.cases, factory, live=args.allow_live, retrieval=args.retrieval,
                              conversations_path=args.conversations)
+        if collector is not None:
+            transport_retry.annotate(report, collector)
         if ledger is not None:
             report["usage_ledger"] = {"run_id": ledger.run_id, "this_run": ledger.summary(run_only=True),
                                       "cumulative": ledger.summary()}
@@ -1731,6 +1741,8 @@ def main(argv: Optional[list[str]] = None) -> int:
                 "integrity": {"run_valid_for_scoring": False,
                               "provider_error_replies": {"total": outage.failures},
                               "rule": "A run stopped by a provider outage is not scored; it is repeated."}}
+        if collector is not None:
+            transport_retry.annotate(stub, collector)
         rendered = json.dumps(stub, indent=2) + "\n"
         if args.output is not None:
             args.output.parent.mkdir(parents=True, exist_ok=True)
@@ -1746,6 +1758,8 @@ def main(argv: Optional[list[str]] = None) -> int:
                                  "cumulative": ledger.summary()},
                 "integrity": {"run_valid_for_scoring": False,
                               "rule": "A run stopped at the ledger ceiling is incomplete and is not scored."}}
+        if collector is not None:
+            transport_retry.annotate(stub, collector)
         rendered = json.dumps(stub, indent=2) + "\n"
         if args.output is not None:
             args.output.parent.mkdir(parents=True, exist_ok=True)

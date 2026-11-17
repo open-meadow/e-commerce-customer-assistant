@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import contextvars
 import hashlib
 import importlib
 import importlib.util
@@ -64,6 +65,11 @@ _REQUIRED = {
 BASES = ("client_recorded", "estimated", "unresolved")
 _HTTP_CLIENT_MODULES = ("httpx", "httpx2")  # the OpenAI SDK 3.x ships and uses its own copy, "httpx2"
 _UNHOOKED_CANDIDATES = ("requests", "aiohttp", "urllib3", "http.client")
+
+
+# Set by the harness's transport retry around each attempt so the ledger can link attempts of one logical request:
+# {"logical_id": ..., "attempt": 1, "retry_reason": None or "dns"}. Read only; it never changes what is sent.
+ATTEMPT: contextvars.ContextVar[Optional[dict[str, Any]]] = contextvars.ContextVar("ledger_attempt", default=None)
 
 
 class LedgerError(RuntimeError):
@@ -330,7 +336,8 @@ class Ledger:
 
     # -- request accounting ---------------------------------------------------------------------------------------
 
-    def reserve(self, kind: str, host: str, path: str, method: str, fingerprint: str) -> str:
+    def reserve(self, kind: str, host: str, path: str, method: str, fingerprint: str,
+                link: Optional[dict[str, Any]] = None) -> str:
         """Check the ceiling and claim one request, atomically. Raises BudgetExhausted or LedgerError before any send."""
         req_id = uuid.uuid4().hex[:16]
         with _locked(self.path, self.lock_timeout):
@@ -342,7 +349,8 @@ class Ledger:
             if state["used"] + 1 > state["ceiling"]:
                 raise BudgetExhausted(state["used"], state["ceiling"])
             self._append({"event": "reserve", "req_id": req_id, "run_id": self.run_id, "pid": os.getpid(), "kind": kind,
-                          "host": host, "path": path, "method": method, "fingerprint": fingerprint})
+                          "host": host, "path": path, "method": method, "fingerprint": fingerprint,
+                          **{k: v for k, v in (link or {}).items() if k in ("logical_id", "attempt", "retry_reason")}})
         return req_id
 
     def mark_sent(self, req_id: str) -> None:
@@ -453,6 +461,7 @@ def _summarise(state: dict[str, Any], run_id: Optional[str], torn_tail: bool) ->
         "requests": _outcome_counts(records),
         "by_kind": by_kind,
         "retries_counted_independently": _retries(records),
+        "harness_retry_attempts": sum(1 for r in records if (r.get("attempt") or 1) > 1),
         "torn_tail_ignored": torn_tail,
     }
     if run_id is None:
@@ -512,7 +521,7 @@ def _guarded(ledger: Ledger, host: str, path: str, method: str, body: Optional[b
              call: Callable[[], Any], status_of: Callable[[Any], Optional[int]]) -> Any:
     if host in _LOOPBACK:
         return call()
-    req_id = ledger.reserve(_classify(path), host, path, method, _fingerprint(method, path, body))
+    req_id = ledger.reserve(_classify(path), host, path, method, _fingerprint(method, path, body), ATTEMPT.get())
     ledger.mark_sent(req_id)  # after this line the transport may be reached; before it, nothing has left the process
     try:
         result = call()
