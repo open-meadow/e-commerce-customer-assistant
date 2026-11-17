@@ -54,7 +54,7 @@
     "turns": [
       {
         "say": "Is it too late to return the charger from ORD1005?",
-        "ground_truth": "Delivered 5 Nov 2026, 12:00 UTC. BOTH periods are OPEN: ordinary until 12 Nov 2026, 12:00 UTC; the damaged or wrong item reporting deadline until 7 Nov 2026, 12:00 UTC (12 hours left at the baseline). WRONG: any 'not eligible' conclusion, a promise or verdict, a missing or converted time, raising photos, or starting a return. The caveat about condition and packaging is required.",
+        "ground_truth": "Delivered 5 Nov 2026, 12:00 UTC. The ordinary period is OPEN until 12 Nov 2026, 12:00 UTC. The 48-hour reporting deadline is also open (until 7 Nov 2026, 12:00 UTC) but no damage was reported, so stating it is optional under the approved spec; the ordinary period and the limits are what matters. WRONG: any 'not eligible' conclusion, a promise or verdict, a missing or converted time, raising photos, or starting a return. The caveat about condition and packaging is required.",
         "expect": {
           "tools_all": [
             "check_return_eligibility"
@@ -77,8 +77,7 @@
           "no_approval_claims": true,
           "language": "en",
           "states_times": [
-            "2026-11-12T12:00:00Z",
-            "2026-11-07T12:00:00Z"
+            "2026-11-12T12:00:00Z"
           ],
           "mentions_any": [
             "condition",

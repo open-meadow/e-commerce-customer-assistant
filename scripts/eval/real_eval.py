@@ -30,6 +30,7 @@ What the scores mean (read before quoting a number)
 from __future__ import annotations
 
 import argparse
+import collections
 import hashlib
 import contextlib
 import json
@@ -59,7 +60,7 @@ from app.db import connection as db_connection  # noqa: E402
 from app.db import repository  # noqa: E402
 from app.db.schema import create_schema  # noqa: E402
 from app.db.seed_data import seed_database  # noqa: E402
-from app.llm.base import LLMClient, LLMConfigError, LLMResult  # noqa: E402
+from app.llm.base import LLMClient, LLMConfigError, LLMError, LLMResult  # noqa: E402
 from app.llm.providers import build_llm_client  # noqa: E402
 from app.llm.rule_based import RuleBasedLLM  # noqa: E402
 from app.orchestrator import engine as engine_module  # noqa: E402
@@ -217,6 +218,39 @@ LIMITATIONS = (
 # Recording LLM wrapper and environment
 # ---------------------------------------------------------------------------
 
+class ProviderOutage(BaseException):
+    """Raised after N consecutive provider failures (``--stop-after-provider-failures``).
+
+    A BaseException on purpose: the engine and the backend catch ``Exception`` and turn a failed call into a customer
+    message, so an ordinary exception would let a run that cannot be scored carry on spending calls. The runner
+    stops, writes a stub report with the calls used and exits with code 3.
+    """
+
+    def __init__(self, failures: int):
+        super().__init__(f"{failures} consecutive provider failures")
+        self.failures = failures
+
+
+# Every model call this process attempts, failed ones included (the budget counts attempts). Not reset per case.
+CALL_TOTALS: dict[str, int] = {"chat": 0, "complete": 0}
+PROVIDER_OUTAGE_LIMIT = 0  # 0 = never stop early
+_CONSECUTIVE_FAILURES = [0]
+
+
+def reset_call_totals() -> None:
+    CALL_TOTALS["chat"] = CALL_TOTALS["complete"] = 0
+    _CONSECUTIVE_FAILURES[0] = 0
+
+
+def _note_provider_result(failed: bool) -> None:
+    if not failed:
+        _CONSECUTIVE_FAILURES[0] = 0
+        return
+    _CONSECUTIVE_FAILURES[0] += 1
+    if PROVIDER_OUTAGE_LIMIT and _CONSECUTIVE_FAILURES[0] >= PROVIDER_OUTAGE_LIMIT:
+        raise ProviderOutage(_CONSECUTIVE_FAILURES[0])
+
+
 class RecordingLLM:
     """Delegates to any ``LLMClient`` and records what the model proposed. Adds no behavior."""
 
@@ -236,16 +270,29 @@ class RecordingLLM:
 
     def chat(self, system, messages, tools, *, max_output_tokens) -> LLMResult:
         self.chat_calls += 1
-        result = self.inner.chat(system, messages, tools, max_output_tokens=max_output_tokens)
+        CALL_TOTALS["chat"] += 1
+        try:
+            result = self.inner.chat(system, messages, tools, max_output_tokens=max_output_tokens)
+        except LLMError:
+            _note_provider_result(True)
+            raise
+        _note_provider_result(False)
         for call in result.tool_calls or ():
             self.proposed.append({"name": call.name, "arguments": call.arguments})
         return result
 
     def complete(self, system, prompt, *, max_output_tokens) -> str:
         self.complete_calls += 1
+        CALL_TOTALS["complete"] += 1
         task = system.split("\n", 1)[0]
         self.complete_by_task[task] = self.complete_by_task.get(task, 0) + 1
-        return self.inner.complete(system, prompt, max_output_tokens=max_output_tokens)
+        try:
+            text = self.inner.complete(system, prompt, max_output_tokens=max_output_tokens)
+        except LLMError:
+            _note_provider_result(True)
+            raise
+        _note_provider_result(False)
+        return text
 
 
 @dataclass
@@ -711,6 +758,7 @@ def _observations(env: Environment) -> dict[str, Any]:
 
 def run(cases_path: Path, llm_factory: Callable[[], LLMClient], *, live: bool = False,
         retrieval: str = "local", conversations_path: Optional[Path] = None) -> dict[str, Any]:
+    reset_call_totals()
     with environment(llm_factory, retrieval) as env:
         retrieval_label = env.retrieval_label
         truth = Truth.load()
@@ -759,6 +807,7 @@ def run(cases_path: Path, llm_factory: Callable[[], LLMClient], *, live: bool = 
                                "production mode: configured OpenAI embeddings; retrieval quality is not scored")},
         "case_source": _source_label(cases_path), "case_count": len(results),
         "scenario_count": len(scenarios), "integrity": integrity(results, [conversations], scenarios),
+        "model_calls_total": dict(CALL_TOTALS),
         "checks_catalogue": CHECKS,
         "summary": summarize(results, scenarios, conversations), "limitations": list(LIMITATIONS),
         "results": results, "scenarios": scenarios, "conversations": conversations,
@@ -880,13 +929,22 @@ def approval_claims(text: str) -> list[str]:
 
 
 def states_time(text: str, iso: str) -> bool:
-    """The reply gives this UTC moment as a day, a month name, HH:MM and UTC (any order, any wording around it)."""
+    """The reply gives this UTC moment: a day and month name next to each other, and HH:MM next to UTC, close together.
+
+    Day and month must be adjacent ("11 November", "November 11th"), and the time must sit within a few characters
+    of "UTC", with the date and the time within a short stretch of each other, in either order. A bare digit elsewhere
+    in the reply ("7 days") can no longer stand in for the day, and one moment's date cannot borrow another's time.
+    """
     moment = datetime.strptime(iso, "%Y-%m-%dT%H:%M:%SZ")
     low = (text or "").lower()
     month = _MONTH_NAMES[moment.month - 1]
-    return (re.search(rf"\b0?{moment.day}\b", low) is not None
-            and re.search(rf"\b{month}\b|\b{month[:3]}\b", low) is not None
-            and f"{moment:%H:%M}" in low and "utc" in low)
+    mon = rf"(?:{month}|{month[:3]})"
+    day = rf"0?{moment.day}(?:st|nd|rd|th)?"
+    clock = f"{moment:%H:%M}"
+    date = rf"(?:\b{day}\s+(?:of\s+)?{mon}\b|\b{mon}\.?\s+{day}\b)"
+    when = rf"(?:\b{clock}\b[\s(]{{0,3}}utc\b|\butc[\s:]{{0,2}}{clock}\b)"
+    gap = r"[^.\n;]{0,16}"
+    return bool(re.search(date + gap + when, low) or re.search(when + gap + date, low))
 
 
 def eligibility_claims_follow_tool(text: str, tool_data: list[Any]) -> bool:
@@ -1008,6 +1066,19 @@ def _turn_failures(expect: dict[str, Any], reply: Any, proposed: list[str],
     return failed
 
 
+_RECORDED_DATA_KEYS = ("result", "reason", "language", "item_resolved_from_customer_words")
+
+
+def _tool_summary(executed: dict[str, Any]) -> dict[str, Any]:
+    """What a tool run did, small enough to keep: name, status, code, and (for the eligibility check) whether the
+    item came from the model or from the customer's words. Never the customer-facing paragraphs."""
+    out: dict[str, Any] = {"name": executed["name"], "status": executed["status"], "code": executed["code"]}
+    data = executed.get("data")
+    if executed["name"] == "check_return_eligibility" and isinstance(data, dict):
+        out.update({k: data[k] for k in _RECORDED_DATA_KEYS if k in data})
+    return out
+
+
 def run_conversations(path: Path, env: Environment, record_calls: bool = False) -> dict[str, Any]:
     """Run every conversation on the environment's backend, one fresh session each.
 
@@ -1027,6 +1098,7 @@ def run_conversations(path: Path, env: Environment, record_calls: bool = False) 
         for turn in convo["turns"]:
             env.reset_observations()
             before = env.counts()
+            recoveries_before = len(env.backend.engine.item_recoveries)
             try:
                 reply = env.backend.handle_message(started.state, turn["say"])
             except Exception as exc:  # noqa: BLE001 - only the class name is recorded
@@ -1074,6 +1146,11 @@ def run_conversations(path: Path, env: Environment, record_calls: bool = False) 
                                         for e in obs["executed"]],
             })
             if record_calls:
+                turns[-1]["tool_results"] = [_tool_summary(e) for e in obs["executed"]]
+                added = collections.Counter(e["name"] for e in obs["executed"])
+                added.subtract(collections.Counter(p["name"] for p in obs["proposed"]))
+                turns[-1]["engine_added_reads"] = {name: n for name, n in added.items() if n > 0}
+                turns[-1]["item_recoveries"] = list(env.backend.engine.item_recoveries[recoveries_before:])
                 turns[-1]["model_calls"] = {"chat": obs["chat_calls"], "complete": obs["complete_calls"]}
                 turns[-1]["proposed_tool_arguments"] = [{"name": p["name"], "arguments": p["arguments"]}
                                                         for p in obs["proposed"]]
@@ -1096,6 +1173,17 @@ def run_conversations(path: Path, env: Environment, record_calls: bool = False) 
         "summary": {
             "conversations_total": len(results), "conversations_passed": sum(1 for r in results if r["passed"]),
             "turn_expectations": expectations, "turn_expectations_passed": expectations - unmet,
+            # What "turn_expectations" counts: expectation KEYS declared across turns, not turns, and not the universal
+            # checks below. Kept under its old name so v2 and v5 stay comparable.
+            "turns_total": sum(len(r["turns"]) for r in results), "expectation_keys_total": expectations,
+            "universal_checks_applicable": sum(1 for r in results for tt in r["turns"]
+                                               for v in tt["universal"].values() if v != NA),
+            "universal_checks_passed": sum(1 for r in results for tt in r["turns"]
+                                           for v in tt["universal"].values() if v == PASS),
+            "denominators_note": ("turn_expectations counts expectation keys across turns (not turns); the universal "
+                                  "checks per turn are counted separately; neither is part of the single-turn "
+                                  "technical or conversational scorecards."),
+            "item_recovery_events": sum(len(tt.get("item_recoveries", [])) for r in results for tt in r["turns"]),
             "failed_turns": [{"conversation": r["id"], "turn": n, "failed": t["failed"]}
                              for r in results for n, t in enumerate(r["turns"], 1) if t["failed"]],
             "universal_check_failures": universal_fails,
@@ -1219,13 +1307,22 @@ def apply_heldout_amendments(conversations: list[dict[str, Any]], amendments: di
     return out
 
 
+_DEFAULT_AFFECTED = _EVAL_DIR / "conversations_affected_v2.json"
+AFFECTED_NOTE = ("Affected-behaviours set of corrective v2: generic and named requests about other customers' orders, "
+                 "return and refund status, language switching. Development cases (not held-out): written alongside the "
+                 "fix. Counts only, apart from every other set and from the v2/v5 scorecards. Heuristic checks are a "
+                 "screen; correctness is decided by manual review against each ground truth.")
+
+
 def run_heldout(llm_factory: Callable[[], LLMClient], *, live: bool = False, retrieval: str = "local",
-                path: Path = _DEFAULT_HELDOUT, amendments: Optional[Path] = None) -> dict[str, Any]:
+                path: Path = _DEFAULT_HELDOUT, amendments: Optional[Path] = None, set_name: str = "heldout",
+                mode: str = "real_backend_heldout", note: Optional[str] = None) -> dict[str, Any]:
     """Run the held-out conversation file on its own. No scorecard, no baseline blending, manual review required.
 
     ``amendments`` names a file of loosening-only amendments (see ``apply_heldout_amendments``); the frozen file is read,
     never written, and the report says which cases were amended.
     """
+    reset_call_totals()
     run_path, amended = path, None
     if amendments is not None:
         spec = json.loads(Path(amendments).read_text(encoding="utf-8"))
@@ -1241,20 +1338,21 @@ def run_heldout(llm_factory: Callable[[], LLMClient], *, live: bool = False, ret
         main_backend, main_inner = env.backend, env.recorder.inner
         interpret_calls = env.backend.engine.interpret_calls
     layers = layers_description(main_backend, interpret_calls, retrieval, main_inner)
-    sets = {"heldout": held}
+    sets = {set_name: held}
     sheet = review_sheet(sets)
     return {
-        "schema_version": SCHEMA_VERSION, "evaluation_mode": "real_backend_heldout", "backend": "app.backend.Backend",
+        "schema_version": SCHEMA_VERSION, "evaluation_mode": mode, "backend": "app.backend.Backend",
         "llm": llm, "layers": layers, "database": {"kind": "temporary_seeded", "reference_time": "2026-11-07T00:00:00Z"},
         "retrieval": {"vector_store": "chroma (temporary, per run)", "mode": retrieval, "embeddings": retrieval_label},
         "case_source": _source_label(path), "opt_in_checks": NEW_SET_CHECKS,
         "amendments": None if amended is None else {"file": _source_label(Path(amendments)), "ids": amended,
                                                     "kind": "loosening only (states_times_remove)"},
-        "integrity": integrity([], [held], []), "note": HELDOUT_NOTE,
+        "integrity": integrity([], [held], []), "model_calls_total": dict(CALL_TOTALS),
+        "note": note or HELDOUT_NOTE,
         "manual_review": {"required": True, "turns": len(sheet), "reviewed": 0, "rule": MANUAL_REVIEW_RULE},
         "review_sheet": sheet,
-        "sets": {"heldout": {"summary": held["summary"], "how_to_read": SCREEN_NOTE, "results": held["results"]}},
-        "model_calls": {"heldout": _sum_calls([t["model_calls"] for r in held["results"] for t in r["turns"]])},
+        "sets": {set_name: {"summary": held["summary"], "how_to_read": SCREEN_NOTE, "results": held["results"]}},
+        "model_calls": {set_name: _sum_calls([t["model_calls"] for r in held["results"] for t in r["turns"]])},
     }
 
 
@@ -1305,6 +1403,9 @@ def review_sheet(sets: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
                     "reply": turn["reply"]["text"], "reply_status": turn["reply"]["status"],
                     "tools_proposed": turn["proposed_tool_calls"],
                     "tool_calls": turn.get("proposed_tool_arguments", []),
+                    "tool_results": turn.get("tool_results", []),
+                    "engine_added_reads": turn.get("engine_added_reads", {}),
+                    "item_recoveries": turn.get("item_recoveries", []),
                     "automated_flags": turn["failed"] + [f"universal:{k}" for k, v in turn["universal"].items()
                                                          if v == FAIL],
                     "ground_truth": turn.get("ground_truth", "(none recorded)"),
@@ -1329,6 +1430,7 @@ def render_review_sheet(report: dict[str, Any]) -> str:
 def run_new_sets(llm_factory: Callable[[], LLMClient], *, live: bool = False, retrieval: str = "local",
                  identity_path: Path = _DEFAULT_IDENTITY,
                  eligibility_path: Path = _DEFAULT_ELIGIBILITY) -> dict[str, Any]:
+    reset_call_totals()
     """Run the identity set, the eligibility set and the diagnostics. Counts only; never blended with v2/v5.
 
     The two sets are conversation files scored with the same universal checks as the v5 conversations plus the
@@ -1355,7 +1457,7 @@ def run_new_sets(llm_factory: Callable[[], LLMClient], *, live: bool = False, re
         "llm": llm, "layers": layers, "database": {"kind": "temporary_seeded", "reference_time": "2026-11-07T00:00:00Z"},
         "retrieval": {"vector_store": "chroma (temporary, per run)", "mode": retrieval, "embeddings": retrieval_label},
         "case_sources": {"identity": _source_label(identity_path), "eligibility": _source_label(eligibility_path)},
-        "integrity": integrity([], list(sets.values()), diagnostics),
+        "integrity": integrity([], list(sets.values()), diagnostics), "model_calls_total": dict(CALL_TOTALS),
         "opt_in_checks": NEW_SET_CHECKS,
         "note": ("Counts only. These sets have no baseline and are never added to the v2/v5 scorecards. Heuristic "
                  "checks are a screen: every reply is also read by hand. The diagnostics are observations, not scores."),
@@ -1551,12 +1653,21 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser.add_argument("--heldout", type=Path, nargs="?", const=_DEFAULT_HELDOUT, default=None, metavar="FILE",
                         help="run only the held-out set (default file: app/db/data/eval/heldout/heldout_v1.json); "
                              "counts only, never part of any scorecard")
+    parser.add_argument("--affected", type=Path, nargs="?", const=_DEFAULT_AFFECTED, default=None, metavar="FILE",
+                        help="run only the affected-behaviours set of corrective v2 (default file: "
+                             "app/db/data/eval/conversations_affected_v2.json); counts only")
+    parser.add_argument("--stop-after-provider-failures", type=int, default=0, metavar="N",
+                        help="stop the run after N consecutive provider failures (a run that cannot be scored), write "
+                             "a stub report with the calls used and exit with code 3; 0 (default) never stops early")
     parser.add_argument("--heldout-amendments", type=Path, default=None, metavar="FILE",
                         help="apply a loosening-only amendments file to the held-out set (with --heldout)")
     parser.add_argument("--identity", type=Path, default=_DEFAULT_IDENTITY, help="identity set (with --new-sets)")
     parser.add_argument("--eligibility", type=Path, default=_DEFAULT_ELIGIBILITY,
                         help="eligibility set (with --new-sets)")
     args = parser.parse_args(argv)
+    global PROVIDER_OUTAGE_LIMIT
+    PROVIDER_OUTAGE_LIMIT = max(0, args.stop_after_provider_failures)
+    reset_call_totals()
     try:
         if args.review_sheet:
             saved = json.loads(args.review_sheet.read_text(encoding="utf-8"))
@@ -1572,7 +1683,10 @@ def main(argv: Optional[list[str]] = None) -> int:
             if args.retrieval == "production" and not args.allow_live:
                 raise RuntimeError("--retrieval production uses OpenAI embeddings (live, billed requests); "
                                    "pass --allow-live only after explicit approval")
-            if args.heldout is not None:
+            if args.affected is not None:
+                report = run_heldout(factory, live=args.allow_live, retrieval=args.retrieval, path=args.affected,
+                                     set_name="affected", mode="real_backend_affected_behaviours", note=AFFECTED_NOTE)
+            elif args.heldout is not None:
                 report = run_heldout(factory, live=args.allow_live, retrieval=args.retrieval, path=args.heldout,
                                      amendments=args.heldout_amendments)
             elif args.new_sets:
@@ -1588,6 +1702,20 @@ def main(argv: Optional[list[str]] = None) -> int:
         else:
             args.output.parent.mkdir(parents=True, exist_ok=True)
             args.output.write_text(rendered, encoding="utf-8")
+    except ProviderOutage as outage:
+        stub = {"schema_version": SCHEMA_VERSION, "evaluation_mode": "aborted_provider_outage",
+                "aborted": {"reason": "provider_outage", "consecutive_failures": outage.failures},
+                "model_calls_total": dict(CALL_TOTALS),
+                "integrity": {"run_valid_for_scoring": False,
+                              "provider_error_replies": {"total": outage.failures},
+                              "rule": "A run stopped by a provider outage is not scored; it is repeated."}}
+        rendered = json.dumps(stub, indent=2) + "\n"
+        if args.output is not None:
+            args.output.parent.mkdir(parents=True, exist_ok=True)
+            args.output.write_text(rendered, encoding="utf-8")
+        sys.stderr.write(f"provider outage: stopped after {outage.failures} consecutive failures; "
+                         f"calls attempted: {CALL_TOTALS}\n")
+        return 3
     except (OSError, ValueError, RuntimeError, LLMConfigError, KeyError) as exc:
         parser.error(str(exc))
     return 0
