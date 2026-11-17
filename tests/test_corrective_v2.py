@@ -28,11 +28,12 @@ def run(customer, name, **args):
 
 
 class TestOtherCustomersOrdersInThePrompt:
-    def test_the_exception_sits_inside_the_no_order_id_rule(self):
+    def test_the_named_order_rule_comes_before_the_exception_which_applies_only_without_an_order_id(self):
         no_id = PROMPT.index("If they give no order ID, call list_my_orders")
-        exception = PROMPT.index("The exception is a request to see another customer's orders or account")
         named = PROMPT.index("If the customer names an order ID, always call get_order_status")
-        assert no_id < exception < named
+        exception = PROMPT.index("The one exception to listing their orders is a request for another customer's orders "
+                                 "or account with no order ID")
+        assert no_id < named < exception
 
     def test_the_exception_declines_briefly_and_does_not_redirect(self):
         assert "(by a customer ID, a name, or 'every customer')" in PROMPT
@@ -41,7 +42,8 @@ class TestOtherCustomersOrdersInThePrompt:
         assert "do not list orders or offer to list them unless they ask for their own" in PROMPT
 
     def test_a_named_order_is_always_looked_up_whoever_it_belongs_to(self):
-        assert "A named order ID is always looked up first, whoever it belongs to." in PROMPT
+        assert "even when they say it belongs to someone else (a friend, a colleague, a family member)" in PROMPT
+        assert "the tool decides" in PROMPT
         assert "If the customer names an order ID, always call get_order_status for it" in PROMPT
         assert "say plainly that you could not find it on their account" in PROMPT
 

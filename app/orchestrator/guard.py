@@ -488,13 +488,11 @@ def detect_language(text: str) -> str:
     return "hinglish" if len(words & _HINGLISH_WORDS) >= 2 else "en"
 
 
-def customer_language(text: str, previous: str = "en") -> str:
-    """The language to answer in: the latest message decides whenever it can.
+def decisive_language(text: str) -> Optional[str]:
+    """The language the message itself settles, or None when it is ambiguous ("ok", "ji haan", "mera order", an ID alone).
 
     Devanagari or two Hinglish words mean Hindi or Hinglish. A message that is clearly English (two or more common
-    English function words and at most one Hinglish word, or four or more words and none of them Hinglish) is English,
-    whatever the session used before. Only a genuinely ambiguous message ("ok", "ji haan", "mera order", an ID alone)
-    keeps the previous language.
+    English function words and at most one Hinglish word, or four or more words and none of them Hinglish) is English.
     """
     found = detect_language(text)
     if found != "en":
@@ -506,6 +504,15 @@ def customer_language(text: str, previous: str = "en") -> str:
         return "en"
     if hinglish_hits == 0 and len(_LATIN_WORDS_2.findall(lowered)) >= 4:  # four or more words, none of them Hinglish
         return "en"
+    return None
+
+
+def customer_language(text: str, previous: str = "en") -> str:
+    """The language to answer in: the latest message decides whenever it can, whatever the session used before. Only a
+    genuinely ambiguous message keeps the previous language."""
+    decided = decisive_language(text)
+    if decided is not None:
+        return decided
     return previous if previous in LANGUAGES else "en"
 
 
