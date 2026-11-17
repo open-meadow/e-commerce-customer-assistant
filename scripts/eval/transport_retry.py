@@ -20,6 +20,7 @@ which are part of the production behaviour being measured and are counted by the
 from __future__ import annotations
 
 import contextlib
+import contextvars
 import errno
 import hashlib
 import socket
@@ -52,6 +53,20 @@ def pre_transmission_reason(exc: BaseException) -> Optional[str]:
     return None  # timeouts, resets and anything unrecognised are ambiguous
 
 
+# The test case, conversation or scenario the harness is running. Set by the harness, read here only to say WHICH test a
+# transport incident belongs to, so a failure that did not become an error reply is still attributed.
+OWNER: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar("transport_owner", default=None)
+
+
+@contextlib.contextmanager
+def owner(label: str) -> Iterator[None]:
+    token = OWNER.set(label)
+    try:
+        yield
+    finally:
+        OWNER.reset(token)
+
+
 class Collector:
     """What the retry layer did, for the run report. Network trouble is reported here, apart from chatbot results."""
 
@@ -62,6 +77,7 @@ class Collector:
         self.exhausted: list[dict[str, Any]] = []
         self.not_retried: dict[str, int] = {}
         self.by_reason: dict[str, int] = {}
+        self.incidents: list[dict[str, Any]] = []  # every failure and recovery, with the test it belongs to
 
     def summary(self) -> dict[str, Any]:
         return {"scope": "evaluation harness only; product code unchanged",
@@ -70,7 +86,10 @@ class Collector:
                 "logical_requests": self.logical_requests, "attempts_total": self.attempts_total,
                 "retry_attempts": self.attempts_total - self.logical_requests,
                 "recovered": self.recovered, "exhausted": self.exhausted,
-                "not_retried_failures_by_type": dict(self.not_retried), "retry_reasons": dict(self.by_reason)}
+                "not_retried_failures_by_type": dict(self.not_retried), "retry_reasons": dict(self.by_reason),
+                "incidents": list(self.incidents),
+                "tests_with_unrecovered_transport_failure": sorted(
+                    {i["owner"] for i in self.incidents if i["outcome"] in ("not_retried", "exhausted") and i["owner"]})}
 
 
 def annotate(report: dict[str, Any], collector: Collector) -> None:
@@ -80,6 +99,9 @@ def annotate(report: dict[str, Any], collector: Collector) -> None:
     if summary["exhausted"] and isinstance(report.get("integrity"), dict):
         report["integrity"]["run_valid_for_scoring"] = False
         report["integrity"]["transport_retries_exhausted"] = len(summary["exhausted"])
+    if summary["tests_with_unrecovered_transport_failure"] and isinstance(report.get("integrity"), dict):
+        # An unrecovered failure may not have produced an error reply (a swallowed interpretation call, for instance).
+        report["integrity"]["transport_affected_tests"] = summary["tests_with_unrecovered_transport_failure"]
 
 
 def _logical_id(request: Any) -> str:
@@ -140,11 +162,15 @@ def retrying(max_retries: int = MAX_RETRIES, *, delays: Optional[tuple[float, ..
                     name = type(exc.reason).__name__ if isinstance(exc, urllib.error.URLError) and not isinstance(
                         exc, urllib.error.HTTPError) else type(exc).__name__
                     collector.not_retried[name] = collector.not_retried.get(name, 0) + 1
+                    collector.incidents.append({"owner": OWNER.get(), "logical_id": logical, "outcome": "not_retried",
+                                                "error": name, "attempt": attempt})
                     raise
                 collector.by_reason[reason] = collector.by_reason.get(reason, 0) + 1
                 reasons.append(reason)
                 if attempt > max_retries:
                     collector.exhausted.append({"logical_id": logical, "attempts": attempt, "reasons": reasons})
+                    collector.incidents.append({"owner": OWNER.get(), "logical_id": logical, "outcome": "exhausted",
+                                                "error": reason, "attempt": attempt})
                     raise
                 wait(delays[min(attempt - 1, len(delays) - 1)] if delays else 1.0, _host(request))
                 attempt += 1
@@ -153,6 +179,8 @@ def retrying(max_retries: int = MAX_RETRIES, *, delays: Optional[tuple[float, ..
                 usage_ledger.ATTEMPT.reset(token)
             if attempt > 1:
                 collector.recovered.append({"logical_id": logical, "attempts": attempt, "reasons": reasons})
+                collector.incidents.append({"owner": OWNER.get(), "logical_id": logical, "outcome": "recovered",
+                                            "error": reasons[-1], "attempt": attempt})
             return result
 
     urllib.request.urlopen = urlopen

@@ -773,7 +773,8 @@ def run(cases_path: Path, llm_factory: Callable[[], LLMClient], *, live: bool = 
             started = env.backend.start_session(case["customer_id"])
             env.reset_observations()
             before = env.counts()
-            reply = env.backend.handle_message(started.state, case["query"])
+            with transport_retry.owner(f"case:{case['id']}"):
+                reply = env.backend.handle_message(started.state, case["query"])
             after = env.counts()
             obs = _observations(env)
             checks = score_case(case, reply, obs, before, after, truth)
@@ -1104,7 +1105,8 @@ def run_conversations(path: Path, env: Environment, record_calls: bool = False) 
             before = env.counts()
             recoveries_before = len(env.backend.engine.item_recoveries)
             try:
-                reply = env.backend.handle_message(started.state, turn["say"])
+                with transport_retry.owner(f"conv:{convo['id']}"):
+                    reply = env.backend.handle_message(started.state, turn["say"])
             except Exception as exc:  # noqa: BLE001 - only the class name is recorded
                 reply = SimpleNamespace(text=f"[{type(exc).__name__}]", status="error", error_code="exception",
                                         pending=None, choice=None, citations=())
@@ -1163,6 +1165,11 @@ def run_conversations(path: Path, env: Environment, record_calls: bool = False) 
         results.append({"id": convo["id"], "customer_id": convo["customer_id"], "category": convo["category"],
                         "note": convo.get("note", ""), "turns": turns,
                         "passed": all(not t["failed"] and FAIL not in t["universal"].values() for t in turns)})
+    return {"case_source": _source_label(path), "results": results, "summary": summarize_conversations(results)}
+
+
+def summarize_conversations(results: list[dict[str, Any]]) -> dict[str, Any]:
+    """The counts of a conversation set. Also used to recompute them when its results come from several attempts."""
     expectations = sum(len(t["expect"]) for r in results for t in r["turns"])
     unmet = sum(len(t["failed"]) for r in results for t in r["turns"])
     universal_fails: dict[str, list[str]] = {}
@@ -1172,26 +1179,22 @@ def run_conversations(path: Path, env: Environment, record_calls: bool = False) 
                 if outcome == FAIL:
                     universal_fails.setdefault(name, []).append(f"{r['id']}#{number}")
     return {
-        "case_source": _source_label(path),
-        "results": results,
-        "summary": {
-            "conversations_total": len(results), "conversations_passed": sum(1 for r in results if r["passed"]),
-            "turn_expectations": expectations, "turn_expectations_passed": expectations - unmet,
-            # What "turn_expectations" counts: expectation KEYS declared across turns, not turns, and not the universal
-            # checks below. Kept under its old name so v2 and v5 stay comparable.
-            "turns_total": sum(len(r["turns"]) for r in results), "expectation_keys_total": expectations,
-            "universal_checks_applicable": sum(1 for r in results for tt in r["turns"]
-                                               for v in tt["universal"].values() if v != NA),
-            "universal_checks_passed": sum(1 for r in results for tt in r["turns"]
-                                           for v in tt["universal"].values() if v == PASS),
-            "denominators_note": ("turn_expectations counts expectation keys across turns (not turns); the universal "
-                                  "checks per turn are counted separately; neither is part of the single-turn "
-                                  "technical or conversational scorecards."),
-            "item_recovery_events": sum(len(tt.get("item_recoveries", [])) for r in results for tt in r["turns"]),
-            "failed_turns": [{"conversation": r["id"], "turn": n, "failed": t["failed"]}
-                             for r in results for n, t in enumerate(r["turns"], 1) if t["failed"]],
-            "universal_check_failures": universal_fails,
-        },
+        "conversations_total": len(results), "conversations_passed": sum(1 for r in results if r["passed"]),
+        "turn_expectations": expectations, "turn_expectations_passed": expectations - unmet,
+        # What "turn_expectations" counts: expectation KEYS declared across turns, not turns, and not the universal
+        # checks below. Kept under its old name so v2 and v5 stay comparable.
+        "turns_total": sum(len(r["turns"]) for r in results), "expectation_keys_total": expectations,
+        "universal_checks_applicable": sum(1 for r in results for tt in r["turns"]
+                                           for v in tt["universal"].values() if v != NA),
+        "universal_checks_passed": sum(1 for r in results for tt in r["turns"]
+                                       for v in tt["universal"].values() if v == PASS),
+        "denominators_note": ("turn_expectations counts expectation keys across turns (not turns); the universal "
+                              "checks per turn are counted separately; neither is part of the single-turn "
+                              "technical or conversational scorecards."),
+        "item_recovery_events": sum(len(tt.get("item_recoveries", [])) for r in results for tt in r["turns"]),
+        "failed_turns": [{"conversation": r["id"], "turn": n, "failed": t["failed"]}
+                         for r in results for n, t in enumerate(r["turns"], 1) if t["failed"]],
+        "universal_check_failures": universal_fails,
     }
 
 
@@ -1216,7 +1219,8 @@ def run_scenario(name: str, build: Callable, llm_factory: Callable[[], LLMClient
     """Run one scenario on a fresh database. A model that derails it makes it fail; it never aborts the run."""
     with environment(llm_factory, retrieval) as scenario_env:
         try:
-            chat, outcomes = build(scenario_env)
+            with transport_retry.owner(f"scenario:{name}"):
+                chat, outcomes = build(scenario_env)
             steps, error = chat.steps, None
         except Exception as exc:  # noqa: BLE001 - only the class name is recorded, never the message
             steps, outcomes, error = [], {"scenario_completed": False}, type(exc).__name__
@@ -1276,7 +1280,8 @@ def run_diagnostic(name: str, build: Callable, llm_factory: Callable[[], LLMClie
     """Run one diagnostic on a fresh database. Observations only: nothing is scored and nothing aborts the run."""
     with environment(llm_factory, retrieval) as diag_env:
         try:
-            chat, observations = build(diag_env)
+            with transport_retry.owner(f"diagnostic:{name}"):
+                chat, observations = build(diag_env)
             steps, error = chat.steps, None
         except Exception as exc:  # noqa: BLE001 - only the class name is recorded, never the message
             steps, observations, error = [], {}, type(exc).__name__
