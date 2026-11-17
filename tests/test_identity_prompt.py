@@ -95,7 +95,7 @@ class TestReturnIntents:
         assert "do not run an eligibility check first" in lowered
         assert "has asked a question: call check_return_eligibility" in lowered
         assert "never guess it" in lowered
-        assert "is asking for its status: call get_my_returns" in lowered
+        assert "is asking about its status: call get_my_returns" in lowered
         assert "never use start_return_request for (2) or (3)" in lowered
 
     def test_a_replacement_or_exchange_is_not_a_return_and_a_mixed_request_is_clarified(self):

@@ -179,7 +179,17 @@ def _get_order_status(ctx: CustomerContext, args: dict[str, Any]) -> ToolResult:
         "refund_amount": _money(order["refund_amount"]), "order_date": _date(order["order_date"]),
         "delivered_at": order["delivered_at"], "total": _money(order["total_amount"]),
         "items": items,
-    }, note="Prices are the prices on the order.")
+    }, note="Prices are the prices on the order." + (_RETURNED_ORDER_NOTE if order["status"] == "Returned" else ""))
+
+
+_NO_RETURN_ON_FILE_NOTE = (
+    "No return request is on file for this customer. If the customer asked about a particular order, also check that "
+    "order with get_order_status and report both. An order marked Returned is not proof that a return request exists "
+    "or was processed, and no request on file is not proof that nothing happened.")
+_RETURNED_ORDER_NOTE = (
+    " This order is marked Returned. Report the order status and the refund status exactly as given; do not say the "
+    "return was processed, approved or refunded unless the data says so. A return request for it may or may not be on "
+    "file (get_my_returns shows those).")
 
 
 @_guard
@@ -188,7 +198,10 @@ def _get_my_returns(ctx: CustomerContext, args: dict[str, Any]) -> ToolResult:
     shown = [{"return_id": r["return_id"], "order_id": r["order_id"], "item_id": r["item_id"],
               "status": r["status"], "requested_at": r["requested_at"],
               "reason_category": r["reason_category"]} for r in returns[:_LIST_LIMIT]]
-    return ToolResult("ok", "returns", {"returns": shown, "total_returns": len(returns)})
+    note = None
+    if not returns:
+        note = _NO_RETURN_ON_FILE_NOTE
+    return ToolResult("ok", "returns", {"returns": shown, "total_returns": len(returns)}, note=note)
 
 
 @_guard

@@ -56,12 +56,16 @@ SYSTEM_PROMPT = (
     "said. If the customer says they already gave information (an order number, the problem), never ask for "
     "it again: look earlier in this conversation, otherwise call list_my_orders, say sorry in one short "
     "sentence and continue from their orders. If they give no order ID, call list_my_orders and work from "
-    "their orders instead of asking, unless several orders could fit. If the customer names an order ID, "
-    "always call get_order_status for it; only if the tool says it is not on their account, say plainly that "
-    "you could not find it on their account and offer to list their own orders; never describe their own "
-    "orders as anyone else's. When they ask where an order is, describe every order that has not been "
-    "delivered (ID and status), not just one. Ask at most one clarifying question at a time, and only when "
-    "you cannot proceed without it.\n\n"
+    "their orders instead of asking, unless several orders could fit. The exception is a request to see "
+    "another customer's orders or account (by a customer ID, a name, or 'every customer'): do not call "
+    "list_my_orders for it, say in one short sentence that you can only help with the signed-in customer's "
+    "own account, and do not list orders or offer to list them unless they ask for their own. A named order "
+    "ID is always looked up first, whoever it belongs to. If the customer names an order ID, always call "
+    "get_order_status for it; only if the tool says it is not on their account, say plainly that you could "
+    "not find it on their account and offer to list their own orders; never describe their own orders as "
+    "anyone else's. When they ask where an order is, describe every order that has not been delivered (ID and "
+    "status), not just one. Ask at most one clarifying question at a time, and only when you cannot proceed "
+    "without it.\n\n"
     "FACTS. Use the provided tools to get facts; never guess order, delivery, refund, stock or policy "
     "details. For policy questions call search_policies or get_refund_policy and answer only from the "
     "returned text. If a tool fails or returns nothing, say honestly that you cannot confirm it. A refund "
@@ -79,8 +83,10 @@ SYSTEM_PROMPT = (
     "question: call check_return_eligibility with the item_id from get_order_status (never guess it) and give "
     "the facts_to_state paragraph that matches what they said, as written. It is a timing check, not an "
     "approval, so never say the item is eligible or that a return will be accepted. (3) A customer who asks "
-    "about a return they already made, for example whether it went through, is asking for its status: call "
-    "get_my_returns. Never use start_return_request for (2) or (3).\n\n"
+    "about a return they already made, for example whether it went through, is asking about its status: call "
+    "get_my_returns and, if they name an order, get_order_status for it too, and report what each says. An "
+    "order marked Returned is not proof that a return request exists or was processed, and no request on file "
+    "is not proof that nothing happened. Never use start_return_request for (2) or (3).\n\n"
     "ACTIONS. You cannot create, cancel or approve anything yourself. To begin a return call "
     "start_return_request with the order_id and item_id from the customer's orders (call get_order_status "
     "first if you do not have the item_id); to propose a ticket call start_support_ticket; the customer then "
@@ -154,6 +160,9 @@ class Engine:
         self.interpret = bool(interpret) if interpret is not None else bool(
             getattr(llm, "interprets_language", False))
         self.interpret_calls = 0  # how many interpret_reply requests were actually sent to the model
+        # Eligibility checks moved to the item the customer's words named: {"order_id", "model_item", "used_item"}.
+        # Read by the evaluation harness so recovery is visible in reports; never read by the engine itself.
+        self.item_recoveries: list[dict[str, str]] = []
 
     # ------------------------------------------------------------------
     # Entry points (the caller holds the session's turn lock)
@@ -597,8 +606,7 @@ class Engine:
             body += "\n\nIf you'd like, I can raise a support ticket for this issue."
         return Turn(self._with_notices(ctx, body), citations=ctx.citations)
 
-    @staticmethod
-    def _eligibility_for_the_named_item(ctoken: CustomerContext, arguments: Any, result: ToolResult,
+    def _eligibility_for_the_named_item(self, ctoken: CustomerContext, arguments: Any, result: ToolResult,
                                         text: str) -> ToolResult:
         """Make an eligibility check about the item the customer's own words name, never about one they did not.
 
@@ -630,6 +638,8 @@ class Engine:
         if again.status != "ok":
             return result
         log.info("eligibility check moved to the item the customer named (session %s)", ctoken.session_ref)
+        self.item_recoveries.append({"order_id": order_id, "model_item": str(arguments.get("item_id", "")),
+                                     "used_item": chosen})
         return ToolResult(again.status, again.code, {**again.data, "item_resolved_from_customer_words": chosen},
                           again.note)
 

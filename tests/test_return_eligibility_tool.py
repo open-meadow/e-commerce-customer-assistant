@@ -350,7 +350,7 @@ class TestPromptAndHarness:
         assert "has made a return request: call start_return_request" in lowered
         assert "do not run an eligibility check first" in lowered
         assert "has asked a question: call check_return_eligibility" in lowered
-        assert "is asking for its status: call get_my_returns" in lowered
+        assert "is asking about its status: call get_my_returns" in lowered
         assert "never use start_return_request for (2) or (3)" in lowered
         assert "timing check, not an approval" in lowered
 
