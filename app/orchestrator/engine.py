@@ -30,7 +30,7 @@ from app.llm.tasks import classify_relation, interpret_reply
 from app.orchestrator import guard
 from app.orchestrator.issues import Issue, build_description
 from app.orchestrator.summarizer import make_summary
-from app.tools import lookup_texts, return_texts, ticket_texts
+from app.tools import flow_texts, return_texts
 from app.tools.context import CustomerContext
 from app.tools.registry import (TOOL_SPECS, ArgumentError, execute_tool, llm_tool_definitions,
                                 validate_arguments)
@@ -125,19 +125,25 @@ def system_prompt_for_turn(text: str) -> str:
     return f"{SYSTEM_PROMPT}\n\n{line}" if line else SYSTEM_PROMPT
 
 
-CATEGORY_LABELS = {"damaged": "The item arrived damaged", "wrong_product": "I received the wrong product",
-                   "standard": "Another reason (changed my mind, etc.)"}
-CATEGORY_NAMES = {"damaged": "damaged item", "wrong_product": "wrong product", "standard": "standard return"}
+# English reference copies of two sentences the evaluation harness compares replies against.
+GROUNDING_REPLACEMENT = flow_texts.TEXTS["en"]["grounding"]
+REASON_NOTICE = flow_texts.TEXTS["en"]["reason_notice"]
+
+
+def _category_labels(language: str) -> dict[str, str]:
+    return {**{c: flow_texts.text(f"cat_{c}", language) for c in RETURN_CATEGORIES},
+            "cancel": flow_texts.text("cat_cancel", language)}
+
+
+def _category_name(category: str, language: str) -> str:
+    return flow_texts.text(f"catname_{category}", language)
+
 
 _FALSE_SUCCESS = re.compile(
     r"\b(i|we)(?:'ve| have)?\s+(?:just\s+)?(created|submitted|raised|processed|approved|initiated|cancell?ed|"
     r"refunded|escalated|opened|filed)\b"
     r"|\b(?:your|the)\s+(?:return(?: request)?|ticket|refund|cancellation)\s+(?:has|have)\s+been\s+"
     r"(?:created|submitted|raised|processed|approved|initiated|cancell?ed|opened|filed)\b", re.I)
-REASON_NOTICE = ("Your next message will be saved exactly as you write it as the reason for this return. "
-                 "Type cancel to stop.")
-GROUNDING_REPLACEMENT = ("I can't confirm that anything has been done. I can start a return request or "
-                         "propose a support ticket, and you will be asked to confirm before anything is saved.")
 
 
 @dataclass
@@ -162,15 +168,12 @@ class _Ctx:
     orders: list = field(default_factory=list)  # the customer's own orders, from list_my_orders this turn
     sources: list = field(default_factory=list)  # every tool result of this turn, as text (what a reply may rely on)
     lookups: dict = field(default_factory=dict)  # order ID -> get_order_status result this turn: one lookup per ID
+    refunds: dict = field(default_factory=dict)  # order ID -> (refund_status, refund_amount) from this turn's tools
 
 
-# Offered (as text only) when a damaged or wrong-product report is past its 48-hour window. It does not
-# create or pre-fill anything: the customer starts the ordinary ticket workflow and still has to Confirm.
-_TICKET_OFFER = ("I can help you raise a support ticket so a human agent can review what happened. Would you "
-                 "like to do that? A ticket is a request for review, and I can't promise any particular outcome.")
-
-
-_PLAIN_TICKET_SENTENCE = "I can raise a support ticket if you'd like a human agent to review it."
+# The ticket offer made (as text only) when a return is refused for a closed window is ``flow_texts`` key
+# ``ticket_offer_review``. It does not create or pre-fill anything: the customer starts the ordinary ticket workflow and
+# still has to Confirm.
 
 
 class Engine:
@@ -202,7 +205,7 @@ class Engine:
             return self._typed_cancel(s)
         pending = self.registry.open_pending(s)
         if pending is not None:
-            return self._remind_pending(pending)
+            return self._remind_pending(pending, s.language)
         if s.choice is not None:
             return self._remind_choice(s)
         if s.draft and s.draft.get("awaiting_reason"):
@@ -265,26 +268,24 @@ class Engine:
 
     def handle_decision(self, s: Session, decision: ConfirmationDecision) -> Turn:
         if not isinstance(decision, ConfirmationDecision) or not isinstance(decision.accepted, bool):
-            return Turn("That confirmation wasn't valid. Nothing was changed.", "error", "invalid_request")
+            return Turn(flow_texts.text("invalid_confirmation", s.language), "error", "invalid_request")
         if not decision.accepted:
             reason = self.registry.cancel(s, decision.action_id)
             if reason == "cancelled":
                 s.draft = None
-                return Turn(ticket_texts.text("cancelled", s.language))
-            return Turn(self._refusal_text(reason))
+                return Turn(flow_texts.text("cancelled", s.language))
+            return Turn(self._refusal_text(reason, s.language))
         action, reason = self.registry.claim(s, decision.action_id)
         if action is None:
-            return Turn(self._refusal_text(reason))
+            return Turn(self._refusal_text(reason, s.language))
         committed = False
         try:
             turn, committed = self._execute(s, action)
         except DatabaseError:
-            turn = Turn("I couldn't complete that just now, so I can't confirm it was saved. Please check "
-                        "your returns or tickets before trying again.")
+            turn = Turn(flow_texts.text("write_unconfirmed", s.language))
         except Exception:
             log.exception("unexpected failure executing a confirmed action (session %s)", s.session_ref)
-            turn = Turn("Something went wrong while completing that. Please check your returns or "
-                        "tickets before trying again.", "error", "internal")
+            turn = Turn(flow_texts.text("write_failed", s.language), "error", "internal")
         finally:
             self.registry.finish(s, action, committed)
         return turn
@@ -293,11 +294,10 @@ class Engine:
         c = s.choice
         if (not isinstance(selection, ChoiceSelection) or c is None
                 or selection.prompt_id != c.prompt_id or selection.option_id not in c.options):
-            return Turn("That choice is no longer available. Please continue the conversation.")
+            return Turn(flow_texts.text("choice_gone", s.language))
         if c.expires is not None and clock.now() >= c.expires:
             self._expire_stale(s)
-            return Turn("That choice has expired, so nothing was changed. Please start again if you still "
-                        "want it.")
+            return Turn(flow_texts.text("choice_expired", s.language))
         s.choice = None
         if c.kind == "return_category":
             return self._after_category(s, c, selection.option_id)
@@ -325,7 +325,7 @@ class Engine:
                 s.issues.suspend_active_and_start(message)
                 ctx.notices.append("I've dropped the issue that was on hold and put your current one on hold.")
             return self._record(s, message, self._answer(s, message, ctx))
-        return Turn("That choice is no longer available.")
+        return Turn(flow_texts.text("choice_gone_short", s.language))
 
     # ------------------------------------------------------------------
     # History and decoration
@@ -346,16 +346,11 @@ class Engine:
         return ("\n\n".join(ctx.notices) + "\n\n" + text) if ctx.notices else text
 
     @staticmethod
-    def _refusal_text(reason: str) -> str:
-        return {
-            "unknown": "I can't find that pending request. Nothing was changed.",
-            "expired": "That confirmation expired, so nothing was changed. Please ask again if you still want it.",
-            "claimed": "That request is already being processed.",
-            "done": "That request was already handled, so I haven't repeated it.",
-            "cancelled": "That request was already cancelled. Nothing was changed.",
-            "cap_reached": "You've reached the limit of requests for this session, so I can't create "
-                           "another. Nothing was changed.",
-        }.get(reason, "I can't process that request. Nothing was changed.")
+    def _refusal_text(reason: str, language: str = "en") -> str:
+        key = {"unknown": "refuse_unknown", "expired": "refuse_expired", "claimed": "refuse_claimed",
+               "done": "refuse_done", "cancelled": "refuse_cancelled", "cap_reached": "refuse_cap"}.get(
+                   reason, "refuse_default")
+        return flow_texts.text(key, language)
 
     # ------------------------------------------------------------------
     # Expiry and typed cancellation
@@ -397,7 +392,7 @@ class Engine:
         s.draft = None
         s.want_ticket = False
         s.ticket_offer = None
-        return Turn(ticket_texts.text("cancelled", s.language))
+        return Turn(flow_texts.text("cancelled", s.language))
 
     # ------------------------------------------------------------------
     # Reminders for outstanding prompts
@@ -406,9 +401,8 @@ class Engine:
     def _pending_view(self, a: PendingAction) -> PendingView:
         return PendingView(a.action_id, a.kind, a.summary, format_timestamp(a.expires))
 
-    def _remind_pending(self, a: PendingAction) -> Turn:
-        return Turn("Please confirm or cancel the request below first. Nothing is saved until you confirm.",
-                    "needs_confirmation", pending=self._pending_view(a))
+    def _remind_pending(self, a: PendingAction, language: str = "en") -> Turn:
+        return Turn(flow_texts.text("remind_pending", language), "needs_confirmation", pending=self._pending_view(a))
 
     def _choice_view(self, c: ChoiceState, question: str, labels: dict[str, str]) -> ChoiceView:
         return ChoiceView(c.prompt_id, question,
@@ -417,7 +411,7 @@ class Engine:
     def _remind_choice(self, s: Session) -> Turn:
         c = s.choice
         question, labels = c.data["question"], c.data["labels"]
-        return Turn("Please pick one of the options below to continue.", "needs_choice",
+        return Turn(flow_texts.text("remind_choice", s.language), "needs_choice",
                     choice=self._choice_view(c, question, labels))
 
     def _new_choice(self, s: Session, kind: str, options: tuple[str, ...], question: str,
@@ -437,8 +431,7 @@ class Engine:
         s.clarification = [(t, m) for t, m in s.clarification if now - t <= self.settings.clarification_ttl]
         s.clarification.append((now, text))
         del s.clarification[: -self.settings.clarification_max_messages]
-        return Turn("I'm sorry you're having trouble. Could you tell me which order or product this is about "
-                    "and what exactly went wrong?")
+        return Turn(flow_texts.text("ambiguous_help", s.language))
 
     def _start_issue(self, s: Session, text: str) -> Issue:
         now = clock.now()
@@ -522,12 +515,10 @@ class Engine:
                 result = self.llm.chat(system, messages, tools,
                                        max_output_tokens=self.settings.max_output_tokens)
             except LLMError:
-                return Turn("The assistant is temporarily unavailable. Please try again in a moment.",
-                            "error", "unavailable")
+                return Turn(flow_texts.text("unavailable", s.language), "error", "unavailable")
             except Exception:
                 log.exception("LLM adapter raised unexpectedly (session %s)", s.session_ref)
-                return Turn("The assistant is temporarily unavailable. Please try again in a moment.",
-                            "error", "unavailable")
+                return Turn(flow_texts.text("unavailable", s.language), "error", "unavailable")
             calls = tuple(result.tool_calls or ())
             if self.interpret and not named_checked and calls_used == 0:
                 named_checked = True
@@ -549,11 +540,10 @@ class Engine:
                     # Several orders could fit and the customer named none: never pick one for them. The listing is
                     # IDs and statuses from their own orders only.
                     listing = ", ".join(f"{o['order_id']} ({o['status']})" for o in ctx.orders)
-                    return Turn(self._with_notices(ctx, lookup_texts.text("which_order", s.language, orders=listing)))
+                    return Turn(self._with_notices(ctx, flow_texts.text("which_order", s.language, orders=listing)))
                 return self._finish_text(s, result.text, ctx, wrote_tool_results)
             if calls_used + len(calls) > self.settings.max_tool_calls_per_turn:
-                return Turn(self._with_notices(ctx, "I wasn't able to finish that request. Could you rephrase "
-                                                    "it or ask for one thing at a time?"))
+                return Turn(self._with_notices(ctx, flow_texts.text("too_many_calls", s.language)))
             proposed: dict[str, Any] = {"role": "assistant", "tool_calls": [
                 {"name": c.name, "arguments": c.arguments, "call_id": c.call_id} for c in calls]}
             if result.provider_items:
@@ -581,7 +571,7 @@ class Engine:
                             return self._start_return(
                                 s, {"order_id": feedback.data["order_id"], "item_id": chosen}, text, ctx)
                         if item_retry_used:  # the model missed twice: ask the customer instead of looping
-                            return Turn(self._with_notices(ctx, self._which_item_text(feedback)))
+                            return Turn(self._with_notices(ctx, self._which_item_text(feedback, s.language)))
                         item_retry_used = True
                         messages.append({"role": "tool", "name": name, "call_id": call.call_id,
                                          "content": feedback.to_json()})
@@ -601,8 +591,10 @@ class Engine:
                 if name == "list_my_orders" and tool_result.status == "ok":
                     ctx.orders = list(tool_result.data.get("orders", []))
                 ctx.sources.append(tool_result.to_json())
+                self._note_refund(ctx, name, tool_result)
                 if name == "check_return_eligibility":
                     tool_result = self._eligibility_for_the_named_item(ctoken, call.arguments, tool_result, text)
+                    tool_result = self._eligibility_needs_order(s, text, call.arguments, tool_result)
                 if (name == "check_return_eligibility" and tool_result.code == "return_check"
                         and tool_result.data.get("result") == "timing_check"):
                     ctx.eligibility.append(tool_result.data)
@@ -610,6 +602,78 @@ class Engine:
                 wrote_tool_results = True
                 messages.append({"role": "tool", "name": name, "call_id": call.call_id,
                                  "content": tool_result.to_json()})
+
+    @staticmethod
+    def _note_refund(ctx: _Ctx, name: str, result: ToolResult) -> None:
+        """Remember the refund status and amount an order lookup gave, for the refund wording check."""
+        if result.status != "ok" or not isinstance(result.data, dict):
+            return
+        order = result.data if name == "get_order_status" else (result.data.get("order") if name == "get_refund_policy"
+                                                                  else None)
+        if isinstance(order, dict) and order.get("order_id") and order.get("refund_status"):
+            ctx.refunds[order["order_id"]] = (order["refund_status"], order.get("refund_amount") or "")
+
+    def _refund_wording(self, s: Session, ctx: _Ctx, body: str) -> str:
+        """A reply may say what the refund status says and no more. A sentence that promises a refund (or says it has
+        arrived or is complete) is replaced by the status said plainly: Pending is not paid and carries no date or
+        promise; Processed is not known to have arrived; Failed offers a ticket. With several refunds the sentence is
+        dropped. Only when this turn's tools gave a refund status other than Not Applicable."""
+        active = {order: v for order, v in ctx.refunds.items() if v[0] != "Not Applicable"}
+        if not active:
+            return body
+        status, amount = next(iter(active.values())) if len(active) == 1 else (None, "")
+        key = {"Pending": "refund_pending", "Processed": "refund_processed", "Failed": "refund_failed"}.get(status)
+        replacement = flow_texts.text(key, s.language, amount=amount) if key and amount else None
+        reworded = guard.reword_refund_claims(body, replacement, future=status != "Processed")
+        if reworded != body:
+            log.info("refund wording replaced by the status (session %s)", s.session_ref)
+        return reworded or (replacement or body)
+
+    def _ambiguous_delivered_orders(self, s: Session, text: str, order_id: str, item_id: str) -> list[dict[str, Any]]:
+        """The customer's delivered orders that hold the same product as this order and item, when the customer typed no
+        order ID anywhere in the conversation and two or more such orders exist. Empty otherwise. The assistant never
+        picks one of them on the customer's behalf."""
+        if self._order_given(s, text):
+            return []
+        try:
+            items = repository.get_order_items(s.customer_id, order_id)
+            product = next((i["product_id"] for i in items if i["item_id"] == item_id), None)
+            if product is None:
+                return []
+            found = []
+            for order in repository.list_customer_orders(s.customer_id):
+                if order["status"] == "Delivered" and any(
+                        i["product_id"] == product for i in repository.get_order_items(s.customer_id, order["order_id"])):
+                    found.append({"order_id": order["order_id"], "status": order["status"]})
+        except DatabaseError:
+            return []
+        return found if len(found) >= 2 else []
+
+    @staticmethod
+    def _shares_a_product_with_another_order(s: Session, order_id: str) -> bool:
+        """Another order of this customer holds a product that this order holds (so a product name alone cannot say which)."""
+        try:
+            mine = {i["product_id"] for i in repository.get_order_items(s.customer_id, order_id)}
+            return any(mine & {i["product_id"] for i in repository.get_order_items(s.customer_id, o["order_id"])}
+                       for o in repository.list_customer_orders(s.customer_id) if o["order_id"] != order_id)
+        except DatabaseError:
+            return False
+
+    def _eligibility_needs_order(self, s: Session, text: str, arguments: Any, result: ToolResult) -> ToolResult:
+        """An eligibility answer about an order the model chose, when several of the customer's delivered orders hold that
+        product and the customer named none, becomes a request to ask which order, not an answer about one of them."""
+        if result.status != "ok" or not isinstance(arguments, dict) or not isinstance(result.data, dict):
+            return result
+        order_id = self._order_arg(arguments)
+        item_id = str(result.data.get("item_id") or arguments.get("item_id") or "").strip().upper()
+        if not order_id or not item_id:
+            return result
+        candidates = self._ambiguous_delivered_orders(s, text, order_id, item_id)
+        if not candidates:
+            return result
+        return ToolResult("invalid_input", "which_order", {"orders": candidates}, note=(
+            "Several of the customer's delivered orders contain this product and they named none. Do not pick one and "
+            "do not state any dates: ask which order they mean, listing only the order IDs and statuses in data.orders."))
 
     @staticmethod
     def _order_arg(arguments: Any) -> Optional[str]:
@@ -663,7 +727,7 @@ class Engine:
         if not all(r.status == "not_found" for r in results):
             return None
         log.info("named order not on the account answered by code (session %s)", ctoken.session_ref)
-        return Turn(self._with_notices(ctx, lookup_texts.text("not_on_account", s.language, ids=", ".join(unlooked))))
+        return Turn(self._with_notices(ctx, flow_texts.text("not_on_account", s.language, ids=", ".join(unlooked))))
 
     def _return_item_feedback(self, s: Session, arguments: Any) -> Optional[ToolResult]:
         """A tool result listing the customer's own items when a proposed return names the wrong one.
@@ -700,16 +764,16 @@ class Engine:
                                "fewer. Never guess an ID.")
 
     @staticmethod
-    def _which_item_text(feedback: ToolResult) -> str:
+    def _which_item_text(feedback: ToolResult, language: str = "en") -> str:
         names = ", ".join(f"{i['item_id']} ({i['product_name']})" for i in feedback.data["items"])
-        return f"Which item would you like to return? This order has: {names}."
+        return flow_texts.text("which_item", language, names=names)
 
     def _finish_text(self, s: Session, text: Optional[str], ctx: _Ctx, used_tools: bool) -> Turn:
         body = (text or "").strip()
         if not body:
-            body = "I'm sorry, I couldn't put together an answer. Could you rephrase your question?"
+            body = flow_texts.text("no_answer", s.language)
         if _FALSE_SUCCESS.search(body):
-            body = GROUNDING_REPLACEMENT
+            body = flow_texts.text("grounding", s.language)
         else:
             # A timeline is stated only when the policy or a tool result gave it: other sentences with a duration go.
             # Verified sources only: this turn's tool results and what earlier tool results gave in this session. The
@@ -719,13 +783,14 @@ class Engine:
             s.verified_durations |= verified
             if supported != body:
                 log.info("reply sentence with an unsupported duration removed (session %s)", s.session_ref)
-                body = supported or "I can't confirm a timeline for that."
+                body = supported or flow_texts.text("no_timeline", s.language)
+            body = self._refund_wording(s, ctx, body)
             body = self._with_eligibility_disclosures(s, ctx, body)
         if len(body) > 4000:
             body = body[:3999] + "…"
         if (ctx.issue_turn and s.issues.active is not None and "ticket" not in body.lower()
                 and not ctx.named_not_found and not ctx.eligibility):
-            body += "\n\n" + ticket_texts.text("issue_offer", s.language)
+            body += "\n\n" + flow_texts.text("issue_offer", s.language)
         return Turn(self._with_notices(ctx, body), citations=ctx.citations)
 
     def _eligibility_for_the_named_item(self, ctoken: CustomerContext, arguments: Any, result: ToolResult,
@@ -807,12 +872,11 @@ class Engine:
             order = repository.get_order(s.customer_id, order_id)
             items = repository.get_order_items(s.customer_id, order_id) if order else []
         except DatabaseError:
-            return None, Turn("I can't reach the order system right now. Please try again shortly.",
-                              "error", "unavailable")
+            return None, Turn(flow_texts.text("order_system_down", s.language), "error", "unavailable")
         if order is None:
-            return None, Turn("I couldn't find that order on your account.")
+            return None, Turn(flow_texts.text("ineligible_order_not_found", s.language))
         if item_id not in {i["item_id"] for i in items}:
-            return None, Turn("I couldn't find that item on that order.")
+            return None, Turn(flow_texts.text("ineligible_item_not_found", s.language))
         return items, None
 
     def _interpret(self, kind: str, asked: str, text: str) -> Optional[str]:
@@ -835,7 +899,7 @@ class Engine:
 
     @staticmethod
     def _reason_problem(text: str, item_words: frozenset[str] = frozenset(),
-                        model_says_reason: bool = False) -> Optional[str]:
+                        model_says_reason: bool = False, language: str = "en") -> Optional[str]:
         """Why *text* cannot be stored as the return reason, or ``None`` if it can.
 
         The reason is the customer's own message, stored exactly. It is
@@ -843,20 +907,17 @@ class Engine:
         back to the customer to shorten.
         """
         if len(text) > RETURN_REASON_MAX:
-            return (f"That message is {len(text)} characters long, and a return reason can be at most "
-                    f"{RETURN_REASON_MAX}. Please send a shorter explanation in your own words. "
-                    + REASON_NOTICE)
+            return (flow_texts.text("reason_too_long", language, n=len(text), max=RETURN_REASON_MAX)
+                    + flow_texts.text("reason_notice", language))
         try:
             validate_text(text, "reason", RETURN_REASON_MAX)
         except (TypeError, ValueError):
-            return ("I couldn't use that text. Please tell me in a sentence or two, in your own words, "
-                    "why you want to return this item. " + REASON_NOTICE)
+            return flow_texts.text("reason_unusable", language) + flow_texts.text("reason_notice", language)
         # A model label replaces the word-list judgement, never the hard checks above; and it cannot turn
         # punctuation into a reason.
         explained = guard.has_words(text) if model_says_reason else guard.has_explanation(text, item_words)
         if not explained:  # naming the item says what, not why
-            return ("Could you tell me briefly, in your own words, why you want to return this item? "
-                    + REASON_NOTICE)
+            return flow_texts.text("reason_ask", language) + flow_texts.text("reason_notice", language)
         return None
 
     def _start_return(self, s: Session, arguments: Any, user_text: str, ctx: _Ctx) -> Turn:
@@ -867,16 +928,19 @@ class Engine:
         try:
             args = validate_arguments(TOOL_SPECS["start_return_request"], arguments)
         except ArgumentError:
-            return Turn(self._with_notices(ctx, "I need a valid order ID and item ID to start a return. "
-                                                "Could you check them?"))
+            return Turn(self._with_notices(ctx, flow_texts.text("need_ids", s.language)))
         if self.registry.capacity_left(s, "return_request") <= 0:
-            return Turn("You've reached the limit of return requests for this session, so I can't start "
-                        "another one.")
+            return Turn(flow_texts.text("return_limit", s.language))
         order_id, item_id = args["order_id"], args["item_id"]
         items, failure = self._check_owned(s, order_id, item_id)
         if failure is not None:
             failure.text = self._with_notices(ctx, failure.text)
             return failure
+        ambiguous = self._ambiguous_delivered_orders(s, user_text, order_id, item_id)
+        if ambiguous:  # several delivered orders hold this product and the customer named none: never pick one
+            listing = ", ".join(f"{o['order_id']} ({o['status']})" for o in ambiguous)
+            return Turn(self._with_notices(ctx, flow_texts.text(
+                "which_order_for_item", s.language, product=self._item_name(items, item_id), orders=listing)))
         item_words = guard.PRODUCT_WORDS | guard.product_words(self._item_name(items, item_id))
         refusal = self._refusal_before_reason(s, order_id, item_id)
         if refusal is not None:  # no reason or category is asked for a return that cannot be made
@@ -884,10 +948,10 @@ class Engine:
             return refusal
         label = self._interpret("return_request", "The customer asked to return an item.", user_text)
         if label == "no_reason":
-            problem = ("Could you tell me briefly, in your own words, why you want to return this item? "
-                       + REASON_NOTICE)
+            problem = flow_texts.text("reason_ask", s.language) + flow_texts.text("reason_notice", s.language)
         else:
-            problem = self._reason_problem(user_text, item_words, model_says_reason=(label == "has_reason"))
+            problem = self._reason_problem(user_text, item_words, model_says_reason=(label == "has_reason"),
+                                           language=s.language)
         if problem is not None:
             s.draft = {"order_id": order_id, "item_id": item_id, "awaiting_reason": True,
                        "expires": clock.now() + self.settings.pending_ttl, "item_words": item_words}
@@ -905,18 +969,16 @@ class Engine:
             verdict = repository.check_return_eligibility(
                 s.customer_id, order_id, item_id, reason_category="standard")
         except DatabaseError:
-            return Turn("I can't reach the order system right now. Please try again shortly.",
-                        "error", "unavailable")
+            return Turn(flow_texts.text("order_system_down", s.language), "error", "unavailable")
         if verdict["outcome"] == "eligible":
             return None
         closes = (verdict.get("window_closes_at") or "")[:10]
         hours = verdict.get("window_hours")
         if verdict["outcome"] == "outside_return_window" and hours and closes:
             self._offer_ticket(s, order_id, item_id)  # the text below asks the question
-            return Turn(f"Returns can be requested within {hours} hours of delivery, and that window for this "
-                        f"order closed on {closes}, so I can't start a return. Nothing was started. "
-                        f"{_TICKET_OFFER}")
-        return Turn(self._ineligible_text(verdict))
+            return Turn(flow_texts.text("window_closed_before", s.language, hours=hours, closes=closes)
+                        + flow_texts.text("ticket_offer_review", s.language))
+        return Turn(self._ineligible_text(verdict, s.language))
 
     def _take_reason(self, s: Session, text: str) -> Turn:
         """The customer's next message becomes the return reason, if it is one.
@@ -927,28 +989,26 @@ class Engine:
         model, and the customer is asked again.
         """
         draft = s.draft
-        waiting = Turn(f"I'm still waiting for your reason for returning item {draft['item_id']} from "
-                       f"order {draft['order_id']}, so I haven't saved that message. To ask something "
-                       f"else, type cancel first; otherwise write the reason. " + REASON_NOTICE)
+        waiting = Turn(flow_texts.text("reason_waiting", s.language, item_id=draft["item_id"],
+                                       order_id=draft["order_id"]) + flow_texts.text("reason_notice", s.language))
         label = self._interpret("return_reason", "Why do you want to return this item?", text)
         if label == "changes_mind":
             s.draft = None
-            return Turn("Okay, I won't start that return. Nothing was changed.")
+            return Turn(flow_texts.text("return_aborted", s.language))
         if label == "other_request":
             return waiting
         if label == "unclear":
-            return Turn("Could you tell me briefly, in your own words, why you want to return this item? "
-                        + REASON_NOTICE)
+            return Turn(flow_texts.text("reason_ask", s.language) + flow_texts.text("reason_notice", s.language))
         if label == "gives_reason":
             if guard.names_other_target(text, draft["order_id"], draft["item_id"]):
                 return waiting
-            problem = self._reason_problem(text, model_says_reason=True)
+            problem = self._reason_problem(text, model_says_reason=True, language=s.language)
             if problem is not None:
                 return Turn(problem)
             return self._offer_category(s, draft["order_id"], draft["item_id"], text)
         if guard.looks_unrelated_to_a_reason(text, draft["order_id"], draft["item_id"]):
             return waiting
-        problem = self._reason_problem(text, draft.get("item_words", frozenset()))
+        problem = self._reason_problem(text, draft.get("item_words", frozenset()), language=s.language)
         if problem is not None:
             return Turn(problem)  # still waiting; the original expiry is unchanged
         return self._offer_category(s, draft["order_id"], draft["item_id"], text)
@@ -962,8 +1022,8 @@ class Engine:
         name = self._item_name(items, item_id)
         return self._new_choice(
             s, "return_category", (*RETURN_CATEGORIES, "cancel"),
-            f"What best describes the reason for returning {name} (item {item_id}) from order {order_id}?",
-            {**CATEGORY_LABELS, "cancel": "Never mind"}, {"order_id": order_id, "item_id": item_id})
+            flow_texts.text("category_question", s.language, name=name, item_id=item_id, order_id=order_id),
+            _category_labels(s.language), {"order_id": order_id, "item_id": item_id})
 
     @staticmethod
     def _item_name(items: list[dict[str, Any]], item_id: str) -> str:
@@ -978,40 +1038,39 @@ class Engine:
     def _after_category(self, s: Session, c: ChoiceState, option: str) -> Turn:
         draft, s.draft = s.draft, None
         if option == "cancel" or not draft:
-            return Turn("Okay, I haven't started a return.")
+            return Turn(flow_texts.text("category_cancel", s.language))
         try:
             verdict = repository.check_return_eligibility(
                 s.customer_id, draft["order_id"], draft["item_id"], reason_category=option)
         except DatabaseError:
-            return Turn("I can't reach the order system right now. Please try again shortly.",
-                        "error", "unavailable")
+            return Turn(flow_texts.text("order_system_down", s.language), "error", "unavailable")
         if verdict["outcome"] != "eligible":
             return Turn(self._category_refusal(s, draft["order_id"], draft["item_id"], option, verdict))
         payload = {**draft, "reason_category": option}
         # The customer sees, before confirming, the exact text that will be stored.
-        summary = (f"Return item {draft['item_id']} from order {draft['order_id']} "
-                   f"({CATEGORY_NAMES[option]}).\n\nYour reason, saved exactly as you wrote it:\n"
-                   f"{draft['reason']}\n\nNothing is saved until you confirm.")
+        summary = flow_texts.text("return_card_summary", s.language, item_id=draft["item_id"],
+                                  order_id=draft["order_id"], category=_category_name(option, s.language),
+                                  reason=draft["reason"])
         action = self.registry.put_pending(s, "return_request", payload, summary)
-        return Turn("This item is eligible for a return. Please confirm to submit the request.",
-                    "needs_confirmation", pending=self._pending_view(action))
+        return Turn(flow_texts.text("return_card_lead", s.language), "needs_confirmation",
+                    pending=self._pending_view(action))
 
     def _category_refusal(self, s: Session, order_id: str, item_id: str, category: str,
                           verdict: dict[str, Any]) -> str:
-        """Explain a refusal for the chosen category. A ticket offer is remembered only if the text asks for it."""
-        text = self._category_refusal_text(s, order_id, item_id, category, verdict)
-        if _TICKET_OFFER in text:
+        """Explain a refusal for the chosen category. A ticket offer is remembered only if the text makes one."""
+        text, offered = self._category_refusal_text(s, order_id, item_id, category, verdict)
+        if offered:
             self._offer_ticket(s, order_id, item_id)
         return text
 
     @staticmethod
-    def _window_closed_offer_text(verdict: dict[str, Any]) -> str:
+    def _window_closed_offer_text(verdict: dict[str, Any], language: str = "en") -> str:
         """The plain window-closed message with its ticket sentence turned into the explicit offer question."""
-        return Engine._ineligible_text(verdict).replace(_PLAIN_TICKET_SENTENCE, _TICKET_OFFER)
+        return Engine._ineligible_text(verdict, language, offer=True)
 
     def _category_refusal_text(self, s: Session, order_id: str, item_id: str, category: str,
-                               verdict: dict[str, Any]) -> str:
-        """Explain a refusal for the category the customer chose.
+                               verdict: dict[str, Any]) -> tuple[str, bool]:
+        """Explain a refusal for the category the customer chose, and say whether it offers a support ticket.
 
         The 48-hour damaged and wrong-product windows are shorter than the 168-hour standard window. When
         the chosen category's window has closed, say so and offer a support ticket. The customer's selection
@@ -1019,57 +1078,55 @@ class Engine:
         different reason; nothing is started, and no outcome is promised. The offer is text only: a ticket is
         created only through the ordinary ticket workflow and its explicit Confirm action.
         """
+        language = s.language
         if verdict.get("outcome") != "outside_return_window":
-            return self._ineligible_text(verdict)
+            return self._ineligible_text(verdict, language), False
+        closed_offer = (self._window_closed_offer_text(verdict, language), True)
         if category == "standard":
-            return self._window_closed_offer_text(verdict)
+            return closed_offer
         try:
             standard = repository.check_return_eligibility(
                 s.customer_id, order_id, item_id, reason_category="standard")
         except DatabaseError:
-            return self._window_closed_offer_text(verdict)
+            return closed_offer
         hours, closed = verdict.get("window_hours"), (verdict.get("window_closes_at") or "")[:10]
         standard_hours, standard_closes = standard.get("window_hours"), (standard.get("window_closes_at") or "")[:10]
         if not (hours and closed and standard_hours and standard_closes):
-            return self._window_closed_offer_text(verdict)
-        name = CATEGORY_NAMES[category]
+            return closed_offer
+        name = _category_name(category, language)
+        offer = flow_texts.text("ticket_offer_review", language)
         if standard["outcome"] == "eligible":
-            return (f"The {hours}-hour reporting window for {name} returns closed on {closed}, so I can't "
-                    f"start a return for that reason. Nothing was started. {_TICKET_OFFER}")
+            return (flow_texts.text("cat_window_closed", language, hours=hours, name=name, closes=closed) + offer,
+                    True)
         if standard["outcome"] == "outside_return_window":
-            return (f"The {hours}-hour reporting window for {name} returns closed on {closed}, and the standard "
-                    f"{standard_hours}-hour return window closed on {standard_closes}, so I can't start a "
-                    f"return. Nothing was started. {_TICKET_OFFER}")
-        return self._window_closed_offer_text(verdict)
+            return (flow_texts.text("cat_window_closed_both", language, hours=hours, name=name, closes=closed,
+                                    standard_hours=standard_hours, standard_closes=standard_closes) + offer, True)
+        return closed_offer
 
     @staticmethod
-    def _ineligible_text(verdict: dict[str, Any]) -> str:
+    def _ineligible_text(verdict: dict[str, Any], language: str = "en", offer: bool = False) -> str:
         outcome = verdict["outcome"]
         if outcome == "order_not_found":
-            return "I couldn't find that order on your account."
+            return flow_texts.text("ineligible_order_not_found", language)
         if outcome == "item_not_found":
-            return "I couldn't find that item on that order."
+            return flow_texts.text("ineligible_item_not_found", language)
         if outcome == "order_status_ineligible":
             status = verdict.get("order_status")
             if status:
-                return ("Returns can only be requested for delivered orders. This order's status is "
-                        f"{status}.")
-            return "Returns can only be requested for delivered orders."
+                return flow_texts.text("ineligible_status", language, status=status)
+            return flow_texts.text("ineligible_status_plain", language)
         if outcome == "active_return_exists":
-            return "There is already an active return request for that item, so I can't start another."
+            return flow_texts.text("ineligible_active", language)
         if outcome == "delivery_timestamp_missing":
-            return ("I can't confirm the delivery date for this order, so I can't check the return window. "
-                    "I can raise a support ticket for a human agent to look into it.")
+            return flow_texts.text("ineligible_no_delivery_date", language)
         if outcome == "outside_return_window":
             closes = (verdict.get("window_closes_at") or "")[:10]
             hours = verdict.get("window_hours")
+            tail = flow_texts.text("ticket_offer_review" if offer else "ticket_plain", language)
             if hours and closes:
-                return (f"The {hours}-hour return window for this type of return closed on {closes}, so I "
-                        "can't start a return. I can raise a support ticket if you'd like a human agent to "
-                        "review it.")
-            return ("The return window for this type of return has closed, so I can't start a return. "
-                    "I can raise a support ticket if you'd like a human agent to review it.")
-        return "I can't start a return for that item."
+                return flow_texts.text("outside_window_body", language, hours=hours, closes=closes) + " " + tail
+            return flow_texts.text("outside_window_body_generic", language) + " " + tail
+        return flow_texts.text("cannot_start", language)
 
     def _write_rejected_text(self, s: Session, payload: dict[str, Any], outcome: str) -> str:
         """Message for a return the database refused at confirmation time.
@@ -1099,7 +1156,7 @@ class Engine:
     def _propose_ticket(self, s: Session, arguments: Any, user_text: str, ctx: Optional[_Ctx] = None) -> Turn:
         ctx = ctx or _Ctx()
         if self.registry.capacity_left(s, "support_ticket") <= 0:
-            return Turn(ticket_texts.text("ticket_limit", s.language))
+            return Turn(flow_texts.text("ticket_limit", s.language))
         issue = s.issues.active
         names_order = bool(user_text) and guard.mentions_order_or_item(user_text)
         bare_request = bool(user_text) and guard.is_ticket_request(user_text) and not names_order  # "I have a complaint"
@@ -1107,7 +1164,7 @@ class Engine:
             issue = self._start_issue(s, user_text)  # the customer already said what it is about: do not ask again
         if issue is None:
             s.want_ticket = True
-            return Turn(self._with_notices(ctx, ticket_texts.text("ask_issue", s.language)))
+            return Turn(self._with_notices(ctx, flow_texts.text("ask_issue", s.language)))
         args: dict[str, Any] = {}
         if arguments:
             try:
@@ -1121,23 +1178,29 @@ class Engine:
             try:
                 order = repository.get_order(s.customer_id, order_id)
             except DatabaseError:
-                return Turn(ticket_texts.text("order_system_down", s.language), "error", "unavailable")
+                return Turn(flow_texts.text("order_system_down", s.language), "error", "unavailable")
             if order is None:
-                return Turn(self._with_notices(ctx, ticket_texts.text("order_not_found_check", s.language)))
+                return Turn(self._with_notices(ctx, flow_texts.text("order_not_found_check", s.language)))
             facts.append(f"Order {order_id}: status {order['status']}, payment {order['payment_status']}, "
                          f"refund {order['refund_status']}.")
+            if (not (self._order_given(s, user_text) or guard.order_ids_in(" ".join(issue.messages)))
+                    and self._shares_a_product_with_another_order(s, order_id)):
+                # the model chose this (owned) order, the customer did not, and another of their orders holds the same
+                # product: the ticket is not linked to a guess
+                log.info("ambiguous ticket order chosen by the model was dropped (session %s)", s.session_ref)
+                order_id, facts = None, []
         description = build_description(issue.messages)
         summary, _source = make_summary(self.llm, issue.messages, facts, issue.actions,
                                         max_output_tokens=self.settings.max_output_tokens)
         payload = {"issue_type": issue_type, "order_id": order_id, "description": description,
                    "conversation_summary": summary, "issue_id": issue.issue_id}
         preview = description if len(description) <= 200 else description[:199] + "…"
-        text = ticket_texts.text("pending_order" if order_id else "pending_plain", s.language,
+        text = flow_texts.text("pending_order" if order_id else "pending_plain", s.language,
                                  issue_type=issue_type, order_id=order_id, preview=preview)
         action = self.registry.put_pending(s, "support_ticket", payload, text)
         limit = guard.unsupported_request(user_text) if user_text else None
-        lead = (ticket_texts.text("lead_limit", s.language, limit=limit) if limit
-                else ticket_texts.text("lead_plain", s.language))
+        lead = (flow_texts.text("lead_limit", s.language, limit=limit) if limit
+                else flow_texts.text("lead_plain", s.language))
         return Turn(self._with_notices(ctx, lead), "needs_confirmation", pending=self._pending_view(action))
 
     def _offer_ticket(self, s: Session, order_id: str, item_id: str) -> None:
@@ -1165,29 +1228,29 @@ class Engine:
                 new_request = guard.is_new_request_not_a_reply(text)
             if answer == "negative":
                 s.ticket_offer = None
-                return Turn(ticket_texts.text("declined", s.language))
+                return Turn(flow_texts.text("declined", s.language))
             if answer != "affirmative":
                 if new_request:
                     s.ticket_offer = None
                     return None
-                return Turn(ticket_texts.text("unclear", s.language))
+                return Turn(flow_texts.text("unclear", s.language))
             if self.registry.capacity_left(s, "support_ticket") <= 0:
                 s.ticket_offer = None
-                return Turn(ticket_texts.text("ticket_limit", s.language))
+                return Turn(flow_texts.text("ticket_limit", s.language))
             items, failure = self._check_owned(s, offer["order_id"], offer["item_id"])
             if failure is not None:
                 s.ticket_offer = None
                 return failure
             offer["stage"] = "details"
             offer["item_words"] = guard.PRODUCT_WORDS | guard.product_words(self._item_name(items, offer["item_id"]))
-            return Turn(ticket_texts.text("describe", s.language, item=self._item_name(items, offer["item_id"]),
+            return Turn(flow_texts.text("describe", s.language, item=self._item_name(items, offer["item_id"]),
                                           item_id=offer["item_id"], order_id=offer["order_id"]))
         # stage "details": the customer's description of the problem
         label = self._interpret("ticket_details", "Please describe the problem with the item.", text)
         if label == "declines" or (label is None and guard.classify_offer_reply(text) == "negative"):
             s.ticket_offer = None
-            return Turn(ticket_texts.text("declined", s.language))
-        again = ticket_texts.text("again", s.language)
+            return Turn(flow_texts.text("declined", s.language))
+        again = flow_texts.text("again", s.language)
         try:
             validate_text(text, "description", TICKET_TEXT_MAX)
             if label == "gives_details":  # the model judged the meaning; the hard checks stay in code
@@ -1208,7 +1271,7 @@ class Engine:
             key = {"meaningless": "problem_meaningless", "too_long": "problem_too_long",
                    "other_target": "problem_other_target", "new_return": "problem_new_return",
                    "unrelated": "problem_unrelated"}.get(problem, "problem_default")
-            return Turn(ticket_texts.text(key, s.language, n=len(text), max=TICKET_TEXT_MAX, item_id=offer["item_id"],
+            return Turn(flow_texts.text(key, s.language, n=len(text), max=TICKET_TEXT_MAX, item_id=offer["item_id"],
                                           order_id=offer["order_id"]) + again)
         return self._propose_offered_ticket(s, offer, text)
 
@@ -1221,10 +1284,10 @@ class Engine:
         try:
             order = repository.get_order(s.customer_id, order_id)
         except DatabaseError:
-            return Turn(ticket_texts.text("order_system_down", s.language), "error", "unavailable")
+            return Turn(flow_texts.text("order_system_down", s.language), "error", "unavailable")
         if order is None:
             s.ticket_offer = None
-            return Turn(ticket_texts.text("order_not_found", s.language))
+            return Turn(flow_texts.text("order_not_found", s.language))
         facts = [f"Order {order_id}, item {item_id}: status {order['status']}, payment {order['payment_status']}, "
                  f"refund {order['refund_status']}."]
         actions = ["A return request was not started because its return window had closed."]
@@ -1237,10 +1300,10 @@ class Engine:
         payload = {"issue_type": "return", "order_id": order_id, "description": description,
                    "conversation_summary": summary, "issue_id": active.issue_id if active is not None else None}
         preview = description if len(description) <= 200 else description[:199] + "…"
-        text = ticket_texts.text("pending_offered", s.language, order_id=order_id, item_id=item_id, preview=preview)
+        text = flow_texts.text("pending_offered", s.language, order_id=order_id, item_id=item_id, preview=preview)
         action = self.registry.put_pending(s, "support_ticket", payload, text)
         s.ticket_offer = None
-        return Turn(ticket_texts.text("lead_plain", s.language), "needs_confirmation",
+        return Turn(flow_texts.text("lead_plain", s.language), "needs_confirmation",
                     pending=self._pending_view(action))
 
     # ------------------------------------------------------------------
@@ -1258,8 +1321,8 @@ class Engine:
             if s.issues.active is not None:
                 s.issues.active.actions.append(
                     f"Return request {result['return_id']} created for item {p['item_id']} (status requested).")
-            return Turn(f"Your return request {result['return_id']} has been submitted for item "
-                        f"{p['item_id']} on order {p['order_id']}. Its status is 'requested'."), True
+            return Turn(flow_texts.text("return_submitted", s.language, return_id=result["return_id"],
+                                        item_id=p["item_id"], order_id=p["order_id"])), True
         if action.kind == "support_ticket":
             result = repository.create_support_ticket(
                 s.customer_id, p["issue_type"], p["description"], p["conversation_summary"],
@@ -1267,5 +1330,5 @@ class Engine:
             active = s.issues.active
             if active is not None and active.issue_id == p.get("issue_id"):
                 s.issues.end_active()
-            return Turn(ticket_texts.text("created", s.language, ticket_id=result["ticket_id"])), True
-        return Turn("I can't process that request.", "error", "internal"), False
+            return Turn(flow_texts.text("created", s.language, ticket_id=result["ticket_id"])), True
+        return Turn(flow_texts.text("refuse_default", s.language), "error", "internal"), False

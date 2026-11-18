@@ -18,7 +18,7 @@ from app.backend import Backend, Settings  # noqa: E402
 from app.llm.base import LLMResult  # noqa: E402
 from app.orchestrator import engine as engine_module  # noqa: E402
 from app.orchestrator import guard  # noqa: E402
-from app.tools import lookup_texts, ticket_texts  # noqa: E402
+from app.tools import flow_texts  # noqa: E402
 from app.tools.context import CustomerContext  # noqa: E402
 from app.tools.registry import execute_tool  # noqa: E402
 from tests.backend_helpers import Client, ScriptedLLM, calls  # noqa: E402
@@ -198,7 +198,7 @@ class TestWhereTheGuardStaysOut:
         client = Client(backend, "C102")
         language = guard.decisive_language(text)
         assert language in ("hinglish", "hi")
-        assert client.say(text).text == lookup_texts.text("not_on_account", language, ids=ids)
+        assert client.say(text).text == flow_texts.text("not_on_account", language, ids=ids)
 
 
 class TestC003SeveralOrdersNoneNamed:
@@ -257,32 +257,32 @@ def _ticket_flow(language_text):
 
 class TestC023TicketTextsAreLocalised:
     def test_every_language_has_every_sentence_with_the_same_placeholders(self):
-        english = ticket_texts.TEXTS["en"]
+        english = flow_texts.TEXTS["en"]
         for language in ("hinglish", "hi"):
-            assert set(ticket_texts.TEXTS[language]) == set(english)
+            assert set(flow_texts.TEXTS[language]) == set(english)
             for key, sentence in english.items():
-                assert set(re.findall(r"\{(\w+)\}", ticket_texts.TEXTS[language][key])) == set(re.findall(r"\{(\w+)\}", sentence)) \
+                assert set(re.findall(r"\{(\w+)\}", flow_texts.TEXTS[language][key])) == set(re.findall(r"\{(\w+)\}", sentence)) \
                     or key == "lead_limit", key  # the Hinglish and Hindi lead omits the English limit phrase
 
     def test_the_english_sentences_are_exactly_the_ones_the_engine_used_before(self):
-        assert ticket_texts.text("ask_issue") == ("Happy to raise a ticket. What is the issue you'd like it to be "
+        assert flow_texts.text("ask_issue") == ("Happy to raise a ticket. What is the issue you'd like it to be "
                                                   "about? Please include the order ID if there is one.")
-        assert ticket_texts.text("created", ticket_id="T1") == "Your support ticket T1 has been created. A human agent will follow up."
-        assert ticket_texts.text("cancelled") == "Okay, I've cancelled that. Nothing was changed."
-        assert ticket_texts.text("lead_plain") == "Here's the ticket I can create. Please confirm to submit it."
+        assert flow_texts.text("created", ticket_id="T1") == "Your support ticket T1 has been created. A human agent will follow up."
+        assert flow_texts.text("cancelled") == "Okay, I've cancelled that. Nothing was changed."
+        assert flow_texts.text("lead_plain") == "Here's the ticket I can create. Please confirm to submit it."
 
     def test_hindi_is_in_devanagari_and_hinglish_is_recognised_as_hinglish(self):
-        for key, sentence in ticket_texts.TEXTS["hi"].items():
+        for key, sentence in flow_texts.TEXTS["hi"].items():
             assert re.search(r"[ऀ-ॿ]", sentence), key
         for key in ("ask_issue", "lead_plain", "declined", "cancelled", "created", "unclear", "again", "describe"):
-            sentence = ticket_texts.TEXTS["hinglish"][key].format(ticket_id="T1", item="x", item_id="IT1", order_id="ORD1")
+            sentence = flow_texts.TEXTS["hinglish"][key].format(ticket_id="T1", item="x", item_id="IT1", order_id="ORD1")
             assert guard.detect_language(sentence) == "hinglish", key
 
     def test_unknown_languages_fall_back_to_english(self):
-        assert ticket_texts.text("cancelled", "fr") == ticket_texts.text("cancelled", "en")
+        assert flow_texts.text("cancelled", "fr") == flow_texts.text("cancelled", "en")
 
     def test_the_draft_status_of_the_hinglish_and_hindi_wording_is_pinned(self):
-        for module in (ticket_texts, lookup_texts):
+        for module in (flow_texts, flow_texts):
             assert module.REVIEW_STATUS["en"] == "approved"
             assert module.REVIEW_STATUS["hinglish"].startswith("draft") and module.REVIEW_STATUS["hi"].startswith("draft")
 
@@ -291,20 +291,20 @@ class TestC023TicketTextsAreLocalised:
                                                   ("I want to talk to a person please", "en")])
     def test_c023_the_issue_question_is_in_the_customers_language(self, temp_db, message, language):
         backend, _, _ = scripted(calls(("start_support_ticket", {})))
-        assert say(backend, "C102", message).text == ticket_texts.text("ask_issue", language)
+        assert say(backend, "C102", message).text == flow_texts.text("ask_issue", language)
 
     def test_cancelling_keeps_the_conversations_language(self, temp_db):
         backend, _, _ = scripted(calls(("start_support_ticket", {})))
         client = Client(backend, "C102")
         client.say("kisi insaan se baat karao")
-        assert client.say("cancel").text == ticket_texts.text("cancelled", "hinglish")
+        assert client.say("cancel").text == flow_texts.text("cancelled", "hinglish")
 
     def test_the_whole_confirmed_ticket_flow_stays_in_hinglish(self, temp_db):
         backend, _, _ = scripted(calls(("start_support_ticket", {"issue_type": "order", "order_id": "ORD1003"})))
         client = Client(backend, "C102")
         reply = client.say("mera order ORD1003 abhi tak nahi aaya hai, kya aap ticket bana sakte hain")
         assert reply.status == "needs_confirmation"
-        assert reply.text == ticket_texts.text("lead_plain", "hinglish")
+        assert reply.text == flow_texts.text("lead_plain", "hinglish")
         assert "ek support ticket banayein".lower() in reply.pending.summary.lower() or "Ek support ticket banayein" in reply.pending.summary
         created = client.confirm(reply)
         assert re.fullmatch(r"Aapka support ticket \S+ ban gaya hai\. Ek human agent follow up karega\.", created.text)
@@ -314,7 +314,7 @@ class TestC023TicketTextsAreLocalised:
         client = Client(backend, "C102")
         reply = client.say("मेरा ऑर्डर ORD1003 अभी तक नहीं आया, कृपया टिकट बनाइए")
         declined = client.confirm(reply, accepted=False)
-        assert declined.text == ticket_texts.text("cancelled", "hi")
+        assert declined.text == flow_texts.text("cancelled", "hi")
 
 
 class TestS03RefundTimelinesNeedSupport:
@@ -449,7 +449,7 @@ class TestTicketOffersThatBelongAreKept:
     def test_the_offer_follows_the_customers_language(self, temp_db):
         backend, _, _ = scripted(calls(("get_order_status", {"order_id": "ORD1002"})), LLMResult(text="Shipped hai."))
         reply = say(backend, "C101", "mera order ORD1002 late hai, kab aayega")
-        assert reply.text.endswith(ticket_texts.text("issue_offer", "hinglish"))
+        assert reply.text.endswith(flow_texts.text("issue_offer", "hinglish"))
 
     def test_an_id_the_model_made_up_does_not_suppress_the_offer(self, temp_db):
         backend, _, _ = scripted(calls(("get_order_status", {"order_id": "ORD9999"})), LLMResult(text="Could not confirm."))
@@ -465,7 +465,7 @@ class TestTicketOffersThatBelongAreKept:
 
     def test_an_explicit_ticket_request_is_unaffected(self, temp_db):
         backend, _, _ = scripted(calls(("start_support_ticket", {})))
-        assert say(backend, "C102", "I want to talk to a person please").text == ticket_texts.text("ask_issue")
+        assert say(backend, "C102", "I want to talk to a person please").text == flow_texts.text("ask_issue")
 
     def test_no_generic_offer_after_an_eligibility_answer_or_a_named_order_not_found(self, temp_db):
         backend, _, _ = scripted(calls(("get_order_status", {"order_id": "ORD1004"})), LLMResult(text="Not found."))

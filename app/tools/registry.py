@@ -179,9 +179,17 @@ def _get_order_status(ctx: CustomerContext, args: dict[str, Any]) -> ToolResult:
         "refund_amount": _money(order["refund_amount"]), "order_date": _date(order["order_date"]),
         "delivered_at": order["delivered_at"], "total": _money(order["total_amount"]),
         "items": items,
-    }, note="Prices are the prices on the order." + (_RETURNED_ORDER_NOTE if order["status"] == "Returned" else ""))
+    }, note="Prices are the prices on the order." + (_RETURNED_ORDER_NOTE if order["status"] == "Returned" else "")
+        + (_REFUND_STATUS_NOTE if order["refund_status"] != "Not Applicable" else ""))
 
 
+# What each refund_status means, so the model says no more than the status says (see guard.reword_refund_claims).
+_REFUND_STATUS_NOTE = (
+    " Refund status meanings: Pending = a refund is recorded and has NOT been paid; Processed = the store has processed "
+    "it (when it shows in the customer's account depends on their bank); Failed = it did not go through; Not Applicable "
+    "= no refund. Say only what the status says. Never say the customer will receive, get or be credited the refund, "
+    "never say it has been received, credited, completed or refunded, and never call a refund completed: Completed is "
+    "not a refund status.")
 _NO_RETURN_ON_FILE_NOTE = (
     "No return request is on file for this customer. If the customer asked about a particular order, also check that "
     "order with get_order_status and report both. An order marked Returned is not proof that a return request exists "
@@ -272,6 +280,8 @@ def _get_refund_policy(ctx: CustomerContext, args: dict[str, Any]) -> ToolResult
             "refund or a return is possible, so do not suggest either way. The policy's processing timeline starts "
             "only after a returned item passes quality checks and the order record does not show that this has "
             "happened: give it only as the policy's typical range, never as a date or a promise for this order.")
+    if data.get("order", {}).get("refund_status", "Not Applicable") != "Not Applicable":
+        note += _REFUND_STATUS_NOTE
     if policy_unavailable:
         note += " The policy text is unavailable, so say that you cannot confirm the policy."
     return ToolResult("ok", "refund_policy", data, note=note)

@@ -13,12 +13,21 @@ import pytest
 from app.backend import Backend, Settings
 from app.llm.rule_based import RuleBasedLLM
 from app.orchestrator import guard
+from app.tools import flow_texts
 from backend_helpers import Client
 
 UTC = timezone.utc
 DELIVERED = datetime(2026, 11, 4, tzinfo=UTC)  # ORD1001 / IT101 earbuds (C101)
 ASK_FOR_REASON = "why you want to return"
 STILL_WAITING = "still waiting for your reason"
+
+
+def waiting_in(reply_text, message):
+    """English keeps the original phrase; a Hindi or Hinglish message gets the sentence in its own language."""
+    language = guard.customer_language(message, "en")
+    if language == "en":
+        return STILL_WAITING in reply_text
+    return flow_texts.text("reason_waiting", language, item_id="IT101", order_id="ORD1001") in reply_text
 REQUEST = "I want to return item IT101 from order ORD1001"
 REQUEST_WITH_REASON = REQUEST + " because it is damaged"
 DETAILS = "The left earbud is not working and the case is cracked."
@@ -137,7 +146,7 @@ class TestProductNameConversations:
         c = Client(backend, "C101")
         c.say(REQUEST)
         reply = c.say(question)
-        assert STILL_WAITING in reply.text and reply.choice is None
+        assert waiting_in(reply.text, question) and reply.choice is None
         assert rows(raw, "return_requests") == []
         assert c.say("It stopped working").status == "needs_choice"  # the real reason still works afterwards
 

@@ -22,6 +22,7 @@ from app.backend import Backend, Settings
 from app.llm import rule_based
 from app.llm.rule_based import RuleBasedLLM
 from app.orchestrator import guard
+from app.tools import flow_texts
 from backend_helpers import Client, ScriptedLLM
 
 UTC = timezone.utc
@@ -443,7 +444,7 @@ class TestStoredReasonInOtherScripts:
         c.say("I want to return item IT101 from order ORD1001")
         too_long = "खराब " * 201  # 1005 code points
         reply = c.say(too_long)
-        assert reply.choice is None and "at most 1000" in reply.text
+        assert reply.choice is None and flow_texts.text("reason_too_long", "hi", n=1005, max=1000) in reply.text  # Hindi in, Hindi out
         assert rows(raw, "return_requests") == []
         assert c.say("खराब " * 100).status == "needs_choice"  # 500 code points are fine
 

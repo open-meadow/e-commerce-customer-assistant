@@ -26,12 +26,21 @@ from app.db.errors import DatabaseOperationalError
 from app.llm import rule_based
 from app.llm.rule_based import RuleBasedLLM
 from app.orchestrator import guard
+from app.tools import flow_texts
 from backend_helpers import Client, ScriptedLLM
 
 UTC = timezone.utc
 DELIVERED = datetime(2026, 11, 4, tzinfo=UTC)  # ORD1001 / IT101 (C101)
 ASK_FOR_ORDER = "Which order would you like to return? Please share the order ID."
 STILL_WAITING = "still waiting for your reason"
+
+
+def waiting_in(reply_text, message):
+    """English keeps the original phrase; a Hindi or Hinglish message gets the sentence in its own language."""
+    language = guard.customer_language(message, "en")
+    if language == "en":
+        return STILL_WAITING in reply_text
+    return flow_texts.text("reason_waiting", language, item_id="IT101", order_id="ORD1001") in reply_text
 ASK_FOR_REASON = "why you want to return"
 
 
@@ -265,7 +274,7 @@ class TestOffTopicReasonConversations:
         c = Client(backend, "C101")
         assert ASK_FOR_REASON in c.say("I want to return item IT101 from order ORD1001").text
         reply = c.say(text)
-        assert STILL_WAITING in reply.text and reply.choice is None and reply.pending is None
+        assert waiting_in(reply.text, text) and reply.choice is None and reply.pending is None
         assert rows(raw, "return_requests") == []
 
     @pytest.mark.parametrize("reason", HINDI_REASONS + HINGLISH_REASONS)
@@ -282,7 +291,7 @@ class TestOffTopicReasonConversations:
     def test_after_an_off_topic_message_a_real_reason_is_still_accepted(self, backend, raw):
         c = Client(backend, "C101")
         c.say("I want to return item IT101 from order ORD1001")
-        assert STILL_WAITING in c.say("मेरा ऑर्डर कहाँ है").text
+        assert waiting_in(c.say("मेरा ऑर्डर कहाँ है").text, "मेरा ऑर्डर कहाँ है")
         assert c.say("यह काम नहीं कर रहा है").status == "needs_choice"
 
     @pytest.mark.parametrize("junk", ["!!!", "...", "।", "", "   ", "please", "I want to return it", "yes"])

@@ -18,6 +18,7 @@ from app.backend import Backend, Settings
 from app.llm.base import LLMError, LLMResult
 from app.llm import tasks
 from app.orchestrator import engine as engine_module
+from app.tools import flow_texts
 from backend_helpers import Client, ScriptedLLM
 
 UTC = timezone.utc
@@ -161,7 +162,8 @@ class TestReturnReasonInterpretation:
     def test_the_first_message_without_a_reason_is_asked_for_one(self, temp_db, raw):
         llm, backend, c = make(temp_db, ["no_reason"])
         reply = c.say(REQUEST + " yaar jaldi karo")  # the word rule alone would have taken this as a reason
-        assert "why you want to return" in reply.text and reply.choice is None
+        # a Hinglish message gets the Hinglish sentence (it used to be English whatever the customer wrote)
+        assert reply.text.startswith(flow_texts.text("reason_ask", "hinglish")) and reply.choice is None
 
     def test_eligibility_is_still_decided_by_the_database_not_the_model(self, temp_db, raw):
         llm, backend, c = make(temp_db, ["has_reason"])

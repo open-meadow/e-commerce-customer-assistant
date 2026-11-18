@@ -454,11 +454,15 @@ def asks_for_own_orders(text: str) -> bool:
     return isinstance(text, str) and bool(_OWN_ORDERS.search(text))
 
 
+_ORDER_ID_FORMS = re.compile(r"\bORD(?:(\d+)|[-_ ](\d{3,}))\b", re.I)
+
+
 def order_ids_in(text: str) -> list[str]:
-    """Order IDs written in the text, upper-cased, each once, in order. Only the strict ``ORD<digits>`` form."""
+    """Order IDs written in the text, normalised to ``ORD<digits>``, each once, in order. The data's own format is
+    ``ORD`` plus four digits (ORD1001 to ORD1015); ``ORD-1010``, ``ord 1010`` and ``ORD_1010`` are read as ORD1010."""
     found: list[str] = []
-    for match in _ORDER_RE.findall(text or ""):
-        order_id = match.upper()
+    for match in _ORDER_ID_FORMS.finditer(text or ""):
+        order_id = "ORD" + (match.group(1) or match.group(2))
         if order_id not in found:
             found.append(order_id)
     return found
@@ -466,15 +470,23 @@ def order_ids_in(text: str) -> list[str]:
 
 # A duration in a reply (English or Hinglish unit) and in a tool result (English unit). Only the NUMBER is compared, so a
 # Hinglish "3-7 business din" is supported by the policy text "3-7 business days" and an invented "24 hours" is not.
+_NUMBER_WORDS = {"a": "1", "an": "1", "one": "1", "two": "2", "three": "3", "four": "4", "five": "5", "six": "6",
+                 "seven": "7", "eight": "8", "nine": "9", "ten": "10", "twelve": "12"}
+_WORD = "|".join(_NUMBER_WORDS)
 _REPLY_DURATION = re.compile(
-    r"(\d+(?:\s*[-\u2013]\s*\d+)?)\s*(?:business\s+|working\s+)?"
-    r"(?:days?|hours?|weeks?|months?|din|ghante|ghanta|hafte|hafta|mahine)\b", re.I)
+    rf"((?:\d+|\b(?:{_WORD})\b)(?:\s*(?:[-\u2013]|to|or)\s*(?:\d+|\b(?:{_WORD})\b))?)\s*"
+    r"(?:business\s+|working\s+)?"
+    r"(?:(?:days?|hours?|weeks?|months?|din|ghante|ghanta|hafte|hafta|mahine)\b|"
+    r"\u0926\u093f\u0928|\u0918\u0902\u091f\u0947|\u0918\u0902\u091f\u093e|\u0938\u092a\u094d\u0924\u093e\u0939|"
+    r"\u0939\u092b\u094d\u0924\u0947|\u092e\u0939\u0940\u0928\u0947)", re.I)
 _SOURCE_DURATION = re.compile(
     r"(\d+(?:\s*[-\u2013]\s*\d+)?)[\s-]*(?:business\s+|working\s+)?(?:days?|hours?|weeks?|months?)\b", re.I)
 
 
 def _duration_key(number: str) -> str:
-    return re.sub(r"\s*[-\u2013]\s*", "-", number.strip())
+    """``3 - 7``, ``3\u20137`` and ``three to seven`` all become ``3-7``; ``a``/``one`` become ``1``."""
+    words = re.sub(r"\s*(?:[-\u2013]|to|or)\s*", "-", number.strip().lower())
+    return "-".join(_NUMBER_WORDS.get(part, part) for part in words.split("-"))
 
 
 def duration_keys(texts: list[str]) -> set[str]:
@@ -499,6 +511,51 @@ def strip_unsupported_durations(text: str, supported: set[str]) -> str:
         else:
             dropped = True
     return "".join(kept).strip() if dropped else text
+
+
+# What a reply may say about a refund. The refund_status in the data is one of Not Applicable, Pending, Processed, Failed.
+# Pending: recorded, not paid, no promise of an outcome or a date. Processed: the store has processed it; when it shows in
+# the customer's account depends on the bank, so "received" or "completed" is not known. Failed: it did not go through.
+# (Completed is a status of a RETURN REQUEST in this system, never of a refund.)
+_REFUND_WORDS = re.compile(r"refund|money|reimburs|paisa|paise|amount|\u20b9|\brs\b|rupee|\u0930\u093f\u092b\u0902\u0921|\u092a\u0948\u0938\u0947|"
+                           r"\u092a\u0948\u0938\u093e", re.I)
+_REFUND_FUTURE = re.compile(
+    r"(?:\b(?:will|'ll|going to|gonna|should|expect(?:ed)? to|set to|due to)\s+(?:be\s+)?"
+    r"(?:receiv\w*|get(?:ting)?|credit\w*|refund\w*|paid|sent|reflect\w*|arriv\w*|deposit\w*|returned)\b"
+    r"|\bmilne\s+wal[ai]\b|\bmil\s*(?:jaa?y?eg[ai]|jayega|jayegi)\b|\bmileg[ai]\b|\bwapas\s+mil(?:ega|egi|ne)\b"
+    r"|\bcredit\s+ho\s+(?:jaa?y?eg[ai]|jayega|jayegi|jaega)\b|\baaye?g[ai]\b"
+    r"|\u0915\u094d\u0930\u0947\u0921\u093f\u091f\s+\u0939\u094b\s+\u091c\u093e\u090f\u0917\u093e"
+    r"|\u092e\u093f\u0932(?:\u0947\u0917\u093e|\u0947\u0917\u0940|\u0928\u0947 \u0935\u093e\u0932\u093e|"
+    r"\u0928\u0947 \u0935\u093e\u0932\u0940|\u091c\u093e\u090f\u0917\u093e|\u091c\u093e\u090f\u0917\u0940)|"
+    r"\u0906\u090f\u0917\u093e)", re.I)
+_REFUND_DONE = re.compile(
+    r"(?:\b(?:has|have|had|was|were|is|are)\s+(?:been\s+)?(?:credited|refunded|completed|received|deposited|"
+    r"transferred|reflected)\b|\balready\s+(?:refunded|credited|paid|received)\b|\bin your (?:bank )?account\b"
+    r"|\brefund\s+(?:is\s+)?complete[d]?\b|\bcredit\s+ho\s+gaya\b|\bmil\s+gaya\b|\bwapas\s+mil\s+gaya\b|\baa\s+gaya\b"
+    r"|\u092e\u093f\u0932 \u0917\u092f\u093e|\u0915\u094d\u0930\u0947\u0921\u093f\u091f \u0939\u094b \u0917\u092f\u093e|"
+    r"\u092a\u0942\u0930\u093e \u0939\u094b \u0917\u092f\u093e)", re.I)
+
+
+def reword_refund_claims(text: str, replacement: Optional[str], *, future: bool) -> str:
+    """Replace each sentence that talks about a refund and promises it (``future``) or says it is done or received. The
+    first such sentence becomes ``replacement`` (the status said plainly, by code); the others are dropped. Unchanged when
+    no sentence does either."""
+    parts = re.split(r"(?<=[.!?\u0964])(\s+)", text or "")
+    out: list[str] = []
+    changed = used = False
+    for index in range(0, len(parts), 2):
+        sentence = parts[index]
+        separator = parts[index + 1] if index + 1 < len(parts) else ""
+        hit = _REFUND_WORDS.search(sentence) and ((future and _REFUND_FUTURE.search(sentence))
+                                                  or _REFUND_DONE.search(sentence))
+        if hit:
+            changed = True
+            if replacement and not used:
+                out.append(replacement + separator)
+                used = True
+            continue
+        out.append(sentence + separator)
+    return "".join(out).strip() if changed else text
 
 
 REPEAT_REMINDER = (
