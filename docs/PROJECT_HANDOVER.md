@@ -1,14 +1,14 @@
 # Project handover: e-commerce customer-support assistant
 
 Branch `rukum/corrective-v2` (local only; nothing is pushed). Written at the end of the corrective-v2 cycle. For the full
-evaluation evidence see `docs/corrective_v2_evaluation_report.md`; for wording that needs a human reader see
+evaluation evidence see `docs/evaluation/EVALUATION_REPORT.md`; for wording that needs a human reader see
 `docs/localization_review_hinglish_hindi.md` and `.csv`.
 
 ## 0. Status at a glance (read this first)
 
 | Category | What it covers | Evidence |
 |---|---|---|
-| **Live-validated** (real `gpt-4o-mini`, replies read by hand) | The behaviour of code `8fafd95` (Evaluations A and B); the first post-fix check of `bccbc12` (language switching, policy routing, refund lookup, N01/N02); the final check of `78f9790` (29 requests, 12 conversations all passed): named orders not on the account (H10, C027, N01, N02, H09, E07), the repeat-complaint order list (C003), Hinglish ticket question (C023), S02 and S03 | `docs/corrective_v2_evaluation_report.md` sections 3 to 8 |
+| **Live-validated** (real `gpt-4o-mini`, replies read by hand) | The behaviour of code `8fafd95` (Evaluations A and B); the first post-fix check of `bccbc12` (language switching, policy routing, refund lookup, N01/N02); the final check of `78f9790` (29 requests, 12 conversations all passed): named orders not on the account (H10, C027, N01, N02, H09, E07), the repeat-complaint order list (C003), Hinglish ticket question (C023), S02 and S03 | `docs/evaluation/EVALUATION_REPORT.md` sections 3 to 8 |
 | **Offline-tested only** (3079 tests; NOT validated against the live model) | Everything added after `78f9790`: refund-status wording replacement; the whole localised return journey; the ambiguity guards (returns, eligibility, tickets in `41c1c9c`; status, refund and listing, and the "ask before any tool runs" rule in `4462cb5`); issue-management, greeting, thanks and scope localisation; Hindi and Hinglish courtesy detection; order IDs written `ORD-1010`; number-word and Hindi-unit durations | `tests/test_final_cycle.py`, `tests/test_handover_cycle.py` and the older files; offline tests show the code does what it says, not that the model behaves |
 | **Human-review pending** | All 104 Hinglish and Hindi sentences, drafts written by the assistant; **13 are High priority and are awaiting fluent human review** (`lead_limit`, `created`, `not_on_account`, `which_order`, `grounding`, `reason_notice`, `return_card_lead`, `return_card_summary`, `return_submitted`, `ticket_offer_review`, `refund_pending`, `refund_processed`, `refund_failed`). Also every manual verdict in the evaluation report | `docs/localization_review_hinglish_hindi.md` and `.csv` |
 | **Remaining known limitations** | Section 5 below | |
@@ -75,7 +75,7 @@ app/db  repository.py (the authorization boundary, SQL filters on the signed-in 
 | Evaluation engineering | Real-backend harness with denominators kept explicit; persistent usage ledger (every request, embeddings included, fail-closed ceiling); harness-only retry of pre-transmission failures; per-test attribution of transport failures; composition of attempts (first clean result per test, everything disclosed) |
 | Tests | 3079 offline tests, all passing (section 6) |
 
-## 4. Evaluation results (details and caveats in `docs/corrective_v2_evaluation_report.md`)
+## 4. Evaluation results (details and caveats in `docs/evaluation/EVALUATION_REPORT.md`)
 
 **Evaluation A, affected behaviours** (code `8fafd95`; 97 chat requests, five valid segments): generic requests about other customers
 safe 20/20; named other-person orders never looked up (0/10) before the later fixes; own orders 4/4; return and refund status facts
@@ -142,6 +142,10 @@ reports external attempts: 0).
 | `41c1c9c` | fix: refund-status wording, localised return journey, ambiguous-order guards |
 | `4462cb5` | fix: ask which order before reading anything; localise the remaining sentences; reviewer sheets |
 | the last commit (`git log -1`) | the handover documents and final report; the review sheets with the 13 High rows marked awaiting fluent human review; tests for every order-reading tool type, typed and earlier IDs and isolation |
+
+After `224f7a5` the branch adds the raw-evidence archive (`docs/evaluation/corrective_v2/raw/`, one commit) and a documentation and
+repository-presentation cleanup (README, architecture, status, contributor guides, document moves; no application code, prompt, dataset or
+result changed). Superseded documents moved to `docs/history/`; see `docs/README.md` for the map.
 
 ## 8. Running and maintaining the project
 

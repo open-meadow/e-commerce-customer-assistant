@@ -1,5 +1,16 @@
 # Evaluation files
 
+**Start with [EVALUATION_REPORT.md](EVALUATION_REPORT.md)**: the one authoritative report (Evaluations A and B, the post-fix
+validations, regression coverage and limitations). This page indexes the files.
+
+| Path | What it is |
+|---|---|
+| [EVALUATION_REPORT.md](EVALUATION_REPORT.md) | Current evaluation report (corrective v2) |
+| [corrective_v2/raw/](corrective_v2/raw/MANIFEST.md) | Archived raw evidence: 143 files with SHA-256 manifest, including failed and interrupted attempts. For audit; not needed to read the results |
+| `final_v5.json`, `baseline_v2_run1.json`, `results_summary.json` | The earlier (pre-corrective-v2) live runs described below |
+
+The sections below describe the earlier runs and the evaluation inputs. They are retained unchanged.
+
 Everything here comes from `scripts/eval/real_eval.py`, which runs the **real backend** (orchestrator, tools,
 temporary seeded SQLite database, Chroma retrieval) against a language model and scores the replies with
 mechanical checks. Synthetic data only.

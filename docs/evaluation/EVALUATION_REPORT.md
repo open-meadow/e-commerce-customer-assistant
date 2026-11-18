@@ -1,4 +1,6 @@
-# Corrective v2: final project report
+# Evaluation report: corrective v2 (Evaluations A and B and the post-fix validations)
+
+> **This is the one authoritative evaluation report.** Earlier results (v2 to v5, e47501e, corrective v1) are summarised in [README.md](README.md) and kept unchanged; the older [technical report](../history/technical_report.md) is historical.
 
 Model: `gpt-4o-mini`, temperature 0.2, OpenAI embeddings for retrieval. Branch `rukum/corrective-v2` (local only, nothing
 pushed). Final code commit `4462cb5` plus this report. **Full offline suite: 3079 passed, 0 failed, 0 skipped.** The project handover is in
@@ -8,6 +10,26 @@ pushed). Final code commit `4462cb5` plus this report. **Full offline suite: 307
 Every verdict below is a manual reading of the reply against its ground truth by the assistant that ran the evaluations. The
 harness's automated checks only flag. **No human reviewer has signed these verdicts.** The Hinglish and Hindi wording of every
 code-owned sentence is a draft awaiting a fluent reviewer (`docs/localization_review_hinglish_hindi.md`).
+
+## Overview
+
+| | |
+|---|---|
+| **Objectives** | **A:** do the corrective-v2 changes fix requests about other customers, return and refund status, and language switching? **B:** does the original set still behave, and how do the identity and eligibility sets, never observed on this code, do? Then fix confirmed defects and validate the fixes. |
+| **Method** | The real backend (orchestrator, tools, temporary seeded SQLite database, Chroma retrieval with production embeddings) against `gpt-4o-mini` at temperature 0.2. Every reply is read by hand against its ground truth; the harness's automated checks only flag. Each run has its own run ID and denominators; A and B are never added together. Every provider request goes through a usage ledger. Failed attempts are preserved and any composite is disclosed. |
+| **Data and sample sizes** | **A:** affected set (14 conversations) twice, generic and named cases four times, held-out H09 to H12 and H22 twice, L01 five times: 97 chat requests, five valid segments. **B:** original set (30 cases, 12 conversations, 5 scenarios), identity set (7), eligibility set (10), one post-confirmation diagnostic. **Validations:** about 70 requests, then 29 requests over 12 conversations. |
+| **Results** | Sections 4 to 8. In short: other-customer requests safe 20/20; named other-person orders never revealed but not looked up until the later fix, then **12 of 12 targeted conversations passed** in the final validation; B original set scenarios 5/5, conversations 11/12, tool selection 22/25, language match 27/28; identity 7/7; eligibility 9/10 (all ten read correct). |
+| **Safety and authorization** | Held throughout: no cross-customer exposure, no unconfirmed write, no false success claim, no invented contact details, correct refusal of role and instruction injection (section 6). |
+| **Regression coverage** | 3,079 offline tests, all passing. Each defect has a named regression class (sections 8 to 10); the order-ambiguity rule is tested for every order-reading tool type, typed and earlier IDs, and account isolation. |
+| **Limitations** | Section 11. Small sets, one to five repetitions, written by the team that wrote the prompts; manual verdicts are not independently signed. |
+
+**Evidence.** Raw reports and every attempt, including the failed and interrupted ones, are archived byte for byte in
+[`corrective_v2/raw/`](corrective_v2/raw/MANIFEST.md) (143 files, SHA-256 in the manifest). Key files: Evaluation A
+[`A1_valid.json`](corrective_v2/raw/live_v2/A1_valid.json) and [`A3_valid.json`](corrective_v2/raw/live_v2/A3_valid.json);
+Evaluation B composites [`B1_composite.json`](corrective_v2/raw/live_v2/B1_composite.json) and
+[`B2_composite.json`](corrective_v2/raw/live_v2/B2_composite.json); final validation
+[`final_validation_report.json`](corrective_v2/raw/live_v2/final/final_validation_report.json). Reports marked INVALID or aborted in
+the manifest are evidence of transport failures, not results.
 
 ## 0. What is validated how
 
@@ -71,7 +93,7 @@ chatbot behaviour.
   Earlier unrecoverable usage is recorded as an exact 12 plus an estimate of 62-144, never zero, so the cumulative figure is a
   conservative upper bound: **682 of the 700 runaway guard**. The earlier 150 and 160 call ceilings were retired by the user;
   provider-confirmed usage was not reconciled with the dashboard, also by the user's decision.
-* Preserved failed attempts: `try0_*`, `try1/`, `try_B1_invalid/` next to the reports.
+* Preserved failed attempts (`try0_*`, `try1/`, `try_B1_invalid/`, the interrupted first attempt of A): archived with the rest in [`corrective_v2/raw/`](corrective_v2/raw/MANIFEST.md).
 
 ## 4. Evaluation A results (affected behaviours; code `8fafd95`)
 
