@@ -58,3 +58,4 @@ CHANGES_BUNDLE*.md
 
 # Local agent planning notes (kept in Git history, not in the public tree)
 .claude/plans/
+.cursor/plans/

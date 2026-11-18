@@ -52,4 +52,4 @@ Each file begins with a banner saying what replaced it.
 | [history/ui_real_backend_plan.md](history/ui_real_backend_plan.md) | completed plan |
 | [history/GOAL.md](history/GOAL.md) | the original course brief |
 
-Internal planning notes that used to live in `.claude/plans/` were removed from the tree; they remain in Git history.
+Internal planning notes that used to live in `.claude/plans/` and `.cursor/plans/` were removed from the tree; they remain in Git history (for example `git log --stat --diff-filter=D -- .cursor/plans`).
