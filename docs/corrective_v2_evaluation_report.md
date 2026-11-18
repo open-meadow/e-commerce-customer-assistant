@@ -1,12 +1,22 @@
 # Corrective v2: final project report
 
 Model: `gpt-4o-mini`, temperature 0.2, OpenAI embeddings for retrieval. Branch `rukum/corrective-v2` (local only, nothing
-pushed). Final commit `41c1c9c` (code) plus this report. **Full offline suite: 2983 passed, 0 failed.** The original capstone PR branch
+pushed). Final code commit `4462cb5` plus this report. **Full offline suite: 3079 passed, 0 failed, 0 skipped.** The project handover is in
+`docs/PROJECT_HANDOVER.md`. The original capstone PR branch
 `rukum/capstone-final` is unchanged (`f9883ea`, same as its remote).
 
 Every verdict below is a manual reading of the reply against its ground truth by the assistant that ran the evaluations. The
 harness's automated checks only flag. **No human reviewer has signed these verdicts.** The Hinglish and Hindi wording of every
 code-owned sentence is a draft awaiting a fluent reviewer (`docs/localization_review_hinglish_hindi.md`).
+
+## 0. What is validated how
+
+| | Behaviour |
+|---|---|
+| **Live-validated** (real model, read by hand) | Code `8fafd95` in Evaluations A and B; `bccbc12` in the first post-fix check; `78f9790` in the final 12-conversation check (named orders not on the account, the repeat-complaint order list, the Hinglish ticket question, S02, S03) |
+| **Offline-tested only** | Everything after `78f9790`: refund-status wording replacement, the localised return journey, the order-ambiguity guards (including "ask before any tool runs"), issue-management, greeting, thanks and scope localisation, Hindi and Hinglish courtesy detection, `ORD-1010`-style IDs, number-word durations. **Not validated against the live model.** |
+| **Human-review pending** | All 104 Hinglish and Hindi sentences; the 13 High-priority ones are explicitly **awaiting fluent human review**; every manual verdict in this report |
+| **Remaining limitations** | Section 11 |
 
 ## 1. Implementation summary
 
@@ -22,8 +32,8 @@ validates everything, owns every state change, and writes only after an explicit
 | Order selection | A repeat complaint with several orders and none named gets a code-owned list of the customer's own order IDs and statuses and a question |
 | Timelines | A sentence stating a duration that no tool result or policy text gave is removed; only verified sources count |
 | Refund wording | A reply that promises a refund, or says it has arrived or is complete, is replaced by the refund status said plainly (Pending, Processed or Failed), in three languages |
-| One catalogue | `app/tools/flow_texts.py` holds all 85 fixed engine sentences in English, Hinglish and Hindi: ticket flow, order lookup, the whole return journey, confirmations, errors, refund status |
-| Ambiguity | A return, an eligibility answer or a ticket never rests on an order the model chose among several that hold the same product; the assistant asks which |
+| One catalogue | `app/tools/flow_texts.py` holds all 104 fixed engine sentences in English, Hinglish and Hindi: ticket flow, order lookup, the whole return journey, confirmations, errors, refund status, issue management, greeting, thanks and scope replies |
+| Ambiguity | A return, an eligibility check, a status or refund lookup, a listing or a ticket never rests on an order the model chose among several that hold the same product: the assistant asks which, before any tool runs |
 | Evaluation tooling | Retry runner, usage ledger, harness-only transport retry, per-test attribution of transport failures, composition of attempts |
 
 Ownership is unchanged and enforced in SQL: every repository function filters on the authenticated customer, no tool schema
@@ -134,38 +144,52 @@ own wording changes is therefore unmeasured, but every correction below is enfor
 | Automatic order selection | The model could choose one of several delivered orders holding the same product for a return, an eligibility answer or a ticket | The assistant asks which order (IDs and statuses only, no dates or amounts). A typed ID, in this message or earlier in the conversation, settles it; one matching order, or orders that are not delivered, need no question | `TestAmbiguousOrdersAreNeverResolvedByGuessing` (10 cases) |
 | Refund-duration guard | Checked English units and digits | Also number words ("a week", "three to seven days") and Hinglish and Hindi units; verified against 12 supported and 9 unsupported examples; the customer's words and the assistant's own prose never establish a duration | `TestTheRefundDurationGuard` |
 
-**Language review.** `docs/localization_review_hinglish_hindi.md` shows every one of the 85 sentences side by side in English,
-Hinglish and Hindi, says when each is shown, and marks 14 as High priority for a fluent reader (the three refund-status sentences,
+**Language review.** `docs/localization_review_hinglish_hindi.md` (and, with blank reviewer columns, `.csv`; see section 10) shows every one of the first 85 sentences side by side in English,
+Hinglish and Hindi, says when each is shown, and marks 13 as High priority for a fluent reader (the three refund-status sentences,
 the ticket offer, both confirmation cards, "eligible", the sentences that say a return or ticket now exists, the storing notice,
 the grounding reply and the IDs-and-statuses question). All Hinglish and Hindi wording is still a draft.
 
-## 10. Remaining known issues and limitations
+## 10. Handover cycle (code `4462cb5`; validated OFFLINE only, no live run)
 
-* **Not validated live**: section 9 is offline-validated only. A live check was not run because the ledger's conservative headroom is 18
-  requests. If one is wanted, about 20 requests would cover S02 (Hinglish), a Hindi return journey and the ambiguity question; that
-  needs the ceiling discussed first.
-* **Sentences still English for Hinglish and Hindi customers**: the issue-management prompts (the question asking whether a message is
-  part of the current issue, the two-issue limit and its options, the notices about dropped issues), the greeting, thanks and scope
-  redirect replies, the fallback name "the item" and the model-generated prose (which follows the per-turn language line). These are
-  outside the return journey; the same catalogue can take them.
-* **Model-chosen orders in read-only answers**: the ambiguity guard covers returns, eligibility answers and tickets. A refund or status
-  answer about an order the model chose among several look-alikes, with no ID typed, is still left to the model (it reads, never writes,
-  and the prompt tells it to list orders rather than pick).
-* **Typed IDs only**: forms such as "order 1010" or a bare "1010" are left to the model by design (too easy to confuse with other numbers).
-* **Refund and duration guards are conservative**: a sentence that quotes a duration or a refund promise is removed even if it was
-  harmless; Devanagari digits are not parsed; a reply in a fourth language is not checked.
-* **S03**: the refund timeline "3-7 business days" in that reply comes from the FAQ passage the tool returned, so it is supported and
-  kept; the removal path was exercised only offline.
-* **C003 scope**: the order clarification covers repeat complaints; other no-ID requests rely on the model.
-* **Human review pending**: all manual verdicts and the 85 sentences of Hinglish and Hindi wording are unreviewed by a person.
-* **Statistical weight**: A repeated cases four or five times, B and the validations ran each case once or twice, at temperature 0.2;
-  nothing here is a significance test and the sets were written by the same team as the prompts.
-* **Provider confirmation**: request counts are client-side bookkeeping, a conservative upper bound; other HTTP libraries or async
-  clients would not be counted.
+**Read-only order ambiguity, exactly.** Before this cycle the guard let a model look up *every* candidate order in one turn. That
+was a gap: each lookup returned the full order record (items, prices, dates, totals, payment and refund details), the model saw all
+of it, and the customer could be shown any of it although they had only named a product. Now, when the customer typed no order ID,
+named a product and two or more of their own orders hold it, the engine asks which order **before any tool of the model's response is
+executed**. It does so for a status lookup, a refund lookup, a listing of orders (a listing carries dates and totals) and an
+eligibility check, and also when the model looks up all the candidates at once. The model is not called again that turn and sees no
+order data; the customer sees one code-owned question listing order IDs and statuses only, taken from their own orders. Nothing is
+read, written or shown first. A customer who asks for their own orders in so many words still gets the listing; a typed order ID
+settles it; once they name an order the ordinary account-scoped lookup runs (another customer's ID is still "not found"). For an
+eligibility check with a loosely named item, the check is run internally once so the item resolves to a product; its result is
+discarded and reaches neither the model nor the customer.
 
-## 11. Test result
+| Item | Before | After | Regression evidence |
+|---|---|---|---|
+| Ambiguity, all tools | Looking up all candidates exposed each order's details to the model and possibly the customer | Ask first; nothing read or shown | `TestNothingIsReadOrShownBeforeTheCustomerClarifies` (5 proposals, IDs-and-statuses-only check, own-orders exception, typed ID, other customer's ID, no writes), `TestStatusAndRefundAnswersDoNotPickAmongLookAlikeOrders` |
+| Remaining English | Issue-management prompts, buttons and notices, greeting, thanks, scope redirect, the timed-out notice and the fallback item name | 19 more sentences in the one catalogue (104 in all); `grep` test: no English literal left in a customer-facing turn of the engine | `TestGreetingThanksAndScope`, `TestIssueManagementInTheCustomersLanguage`, `TestTheFallbackItemName`, `TestTheCatalogueIsComplete` |
+| Hinglish and Hindi courtesy | "namaste", "shukriya", "dhanyavaad" and Devanagari greetings and thanks were English-answered or unrecognised | Recognised, language settled by a lone courtesy word, answered in kind; "aaj mausam kaisa hai" and Devanagari off-topic cues are redirected | `TestCourtesyWordsSettleTheLanguage` |
+| Reviewer formats | A Markdown sheet generated by a scratch script | `scripts/localization_review.py` generates the Markdown sheet and a CSV (English, Hinglish, Hindi, priority, blank reviewer columns); a test fails when a sentence is added without a description or the committed sheets are stale | `tests/test_localization_review.py` |
 
-`uv run python -m pytest tests -q`: **2983 passed** at commit `41c1c9c` (2639 before the evaluation tooling; 2825 after the previous
-correction cycle; 158 tests added in this one, in `tests/test_final_cycle.py`). Thirteen older tests that pinned English sentences for
-Hindi and Hinglish input were updated to the localised sentences; one scoring test was adapted earlier so it still exercises the
-scorer. Evaluations A and B, their reports and every earlier attempt are unchanged.
+## 11. Remaining known issues and limitations
+
+* **Not validated live**: sections 9 and 10 are offline-validated only (ledger headroom 18 of 700). About 20 requests would cover S02 in Hinglish,
+  a Hindi return journey, the which-order question and a Hinglish greeting; the ceiling needs discussing first.
+* **Human review pending**: all 104 Hinglish and Hindi sentences (13 High priority) and every manual verdict in this report.
+* **Free prose**: the model's own sentences are steered by the per-turn language line, not enforced; model-facing prompts and tool notes are
+  English; the offline stand-in's `unsupported_reply` stays English.
+* **Model-chosen orders described without a tool call** are not caught by the ambiguity guards (they act on tool calls).
+* **Typed IDs only**: `ORD` plus digits, with `-`, `_` or a space accepted; "order 1010" or a bare number is left to the model by design.
+* **Refund and duration guards are conservative**: a harmless sentence quoting a duration or a refund promise is removed; Devanagari digits are not
+  parsed; a fourth language is not checked.
+* **Sequential look-ups**: a model that looks up look-alike orders one round at a time is asked to clarify at the first, by design.
+* **S03**: the refund timeline "3-7 business days" comes from the FAQ passage the tool returned, so it is supported and kept.
+* **C003 scope**: the order clarification covers repeat complaints; other no-ID requests rely on the model or the ambiguity guards.
+* **Statistical weight**: A repeated cases four or five times, B and the validations ran each case once or twice, at temperature 0.2; nothing here is a
+  significance test and the sets were written by the same team as the prompts.
+* **Provider confirmation**: request counts are client-side bookkeeping, a conservative upper bound; other HTTP libraries or async clients would not
+  be counted. Voice (LiveKit) was never run live; Docker was not rebuilt after these changes.
+
+## 12. Test result
+
+`uv run python -m pytest tests -q`: **3079 passed, 0 failed, 0 skipped** (2639 before the evaluation tooling; 2825 after the second correction round;
+2983 after the third; 3079 now; the last increase adds coverage for every order-reading tool type, typed and earlier order IDs, and account isolation). Evaluations A and B, their reports and every earlier attempt are unchanged.

@@ -176,7 +176,7 @@ def esc(s: str) -> str:
 
 def priority_of(key: str) -> str:
     if key in HIGH:
-        return f"**High**: {HIGH[key]}"
+        return f"**High**: {HIGH[key]}. AWAITING FLUENT HUMAN REVIEW"
     if key in MEDIUM:
         return f"Medium: {MEDIUM[key]}"
     return "Low"
@@ -214,7 +214,7 @@ status because customers write them that way. Hindi uses रिटर्न, ऑ
 status words (Pending, Processed, Failed, Shipped), IDs and the typed word `cancel` are never translated. Placeholders in
 braces are filled by code.
 
-Wording that most needs a fluent reader: the {high} **High** rows (the three refund-status sentences, which replace any promise a
+Every row is awaiting a fluent reader; the {high} rows marked High are **awaiting fluent human review** first (the three refund-status sentences, which replace any promise a
 reply makes about a refund; the ticket offer and the two confirmation cards, which the customer acts on; the sentences that say
 a return or ticket now exists; the storing notice; the "nothing was done" reply; the not-on-account reply and the which-order
 question). Medium rows are interface labels, sentences with dates or numbers inside them, and apology, expiry and greeting

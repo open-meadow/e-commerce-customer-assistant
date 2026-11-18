@@ -418,6 +418,29 @@ class TestAmbiguousOrdersAreNeverResolvedByGuessing:
         client.say("Where is ORD1001?")
         assert client.say(self.NO_ID).status == "needs_choice"
 
+    def test_an_eligibility_check_after_an_id_typed_earlier_is_unchanged(self, temp_db, two_delivered_earbud_orders):
+        backend, _, seen = scripted(LLMResult(text="Noted."),
+                                    calls(("check_return_eligibility", {"order_id": "ORD1001", "item_id": "IT101"})),
+                                    LLMResult(text="Open."))
+        client = Client(backend, "C101")
+        client.say("I am asking about ORD1001")
+        reply = client.say("Can I still return my earbuds?").text
+        assert reply.startswith("Open.") and "Which order" not in reply  # answered (the engine adds its own limits sentence)
+
+    def test_a_ticket_after_an_id_typed_earlier_keeps_that_order(self, temp_db):
+        backend, _, _ = scripted(LLMResult(text="Noted."),
+                                 calls(("start_support_ticket", {"issue_type": "order", "order_id": "ORD1002"})))
+        client = Client(backend, "C101")
+        client.say("ORD1002 is the order I mean")
+        reply = client.say("my charger stopped working, please raise a ticket")
+        assert reply.status == "needs_confirmation" and "ORD1002" in reply.pending.summary
+
+    def test_a_return_with_an_id_typed_earlier_proceeds(self, temp_db, two_delivered_earbud_orders):
+        backend, _, _ = scripted(LLMResult(text="Noted."), self.propose())
+        client = Client(backend, "C101")
+        client.say("ORD1001 is the order I mean")
+        assert client.say(self.NO_ID).status == "needs_choice"
+
     def test_a_single_matching_order_needs_no_question(self, temp_db):
         backend, _, _ = scripted(self.propose())
         assert say(backend, "C101", self.NO_ID).status == "needs_choice"  # only ORD1001 holds earbuds

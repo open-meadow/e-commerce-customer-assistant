@@ -347,3 +347,54 @@ class TestNothingIsReadOrShownBeforeTheCustomerClarifies:
         say(backend, "C101", "Where is my charger?")
         assert raw.execute("SELECT COUNT(*) FROM return_requests").fetchone()[0] == 0
         assert raw.execute("SELECT COUNT(*) FROM support_tickets").fetchone()[0] == 0
+
+
+PROPOSALS = {
+    "status": calls(("get_order_status", {"order_id": "ORD1002"})),
+    "refund": calls(("get_refund_policy", {"order_id": "ORD1014"})),
+    "both candidates": calls(("get_order_status", {"order_id": "ORD1002"}), ("get_order_status", {"order_id": "ORD1014"})),
+    "listing": calls(("list_my_orders", {})),
+}
+
+
+class TestEveryToolTypeAgainstTheWaysACustomerCanSettleIt:
+    """The same four proposals, in each situation: nothing typed (ask), typed in the message, typed earlier, other account."""
+
+    @pytest.mark.parametrize("kind", PROPOSALS)
+    def test_nothing_typed_asks_and_runs_no_tool(self, temp_db, executed, kind):
+        backend, llm, _ = scripted(PROPOSALS[kind], LLMResult(text="SHOULD NEVER BE USED"))
+        reply = say(backend, "C101", "Where is my charger?")
+        assert reply.text == flow_texts.text("which_order_status", "en", product=CHARGER, orders=CHARGER_ORDERS)
+        assert executed == [] and llm.chat_calls == 1
+
+    @pytest.mark.parametrize("kind", PROPOSALS)
+    def test_an_id_typed_in_the_message_lets_the_tools_run(self, temp_db, executed, kind):
+        backend, _, _ = scripted(PROPOSALS[kind], LLMResult(text="Answered."))
+        assert say(backend, "C101", "Where is my charger from ORD1002?").text == "Answered."
+        assert executed  # the ordinary account-scoped tools ran
+
+    @pytest.mark.parametrize("kind", PROPOSALS)
+    def test_an_id_typed_earlier_in_the_conversation_lets_the_tools_run(self, temp_db, executed, kind):
+        backend, _, _ = scripted(LLMResult(text="Noted."), PROPOSALS[kind], LLMResult(text="Answered."))
+        client = Client(backend, "C101")
+        client.say("I am asking about ORD1002")
+        executed.clear()
+        assert client.say("Where is my charger?").text == "Answered."
+        assert executed
+
+    @pytest.mark.parametrize("kind", PROPOSALS)
+    def test_another_customers_look_alike_orders_do_not_create_a_question_or_appear_in_one(self, temp_db, executed, kind):
+        """C101 holds two charger orders. C103 holds one (ORD1005), so for C103 there is nothing to ask, and no reply to
+        C103 may mention C101's orders; and C101's question never lists C103's."""
+        backend, _, _ = scripted(calls(("get_order_status", {"order_id": "ORD1005"})), LLMResult(text="Delivered."))
+        assert say(backend, "C103", "Where is my charger?").text == "Delivered."
+        asked = say(scripted(PROPOSALS[kind])[0], "C101", "Where is my charger?").text
+        assert "ORD1005" not in asked and "ORD1010" not in asked
+
+    def test_account_scoping_holds_when_the_customer_types_someone_elses_id_after_the_question(self, temp_db, executed):
+        backend, _, _ = scripted(PROPOSALS["listing"], calls(("get_order_status", {"order_id": "ORD1005"})),
+                                 LLMResult(text="I couldn't find that order."))
+        client = Client(backend, "C101")
+        assert client.say("Where is my charger?").text.startswith("You have more than one order")
+        client.say("ORD1005")  # C103's order
+        assert executed == [("get_order_status", "ORD1005", "not_found")]
