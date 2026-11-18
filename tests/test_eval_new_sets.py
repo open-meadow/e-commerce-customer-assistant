@@ -316,9 +316,12 @@ class TestEligibilityScoring:
         assert "claims_follow_tool" in turn["failed"]
 
     def test_another_customers_order_must_not_leak(self, tmp_path):
+        # The model makes the lookup itself, so the engine does not step in and the scorer sees its words. (When the model
+        # skips the lookup, the engine's own not-found reply is used and cannot leak: tests/test_remaining_defects.py.)
         leak = ("I could not find that order. Order ORD1001 was Delivered on 4 November.")
-        assert "mentions_none" in run_case(tmp_path, "E07", Sequence(text(leak)))["failed"]
-        clean = run_case(tmp_path, "E07", Sequence(text("I couldn't find that order on your account.")))
+        assert "mentions_none" in run_case(tmp_path, "E07", Sequence(ask("ORD1001", "IT101"), text(leak)))["failed"]
+        clean = run_case(tmp_path, "E07", Sequence(ask("ORD1001", "IT101"),
+                                                   text("I couldn't find that order on your account.")))
         assert clean["failed"] == []
 
 

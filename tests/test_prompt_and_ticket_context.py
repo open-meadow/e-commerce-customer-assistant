@@ -95,11 +95,12 @@ class TestTicketUsesWhatTheCustomerSaid:
         reply = c.say(message)
         assert reply.status == "needs_confirmation" and message in reply.pending.summary
 
-    @pytest.mark.parametrize("message", ["I'm done talking to a bot. Get me your manager.", "kisi insaan se baat karao",
-                                         "I want to speak to a human"])
-    def test_a_bare_request_for_a_person_still_asks_what_it_is_about(self, temp_db, raw, message):
+    @pytest.mark.parametrize("message,asks", [("I'm done talking to a bot. Get me your manager.", "What is the issue"),
+                                              ("kisi insaan se baat karao", "kis baare mein ticket chahte hain"),
+                                              ("I want to speak to a human", "What is the issue")])
+    def test_a_bare_request_for_a_person_still_asks_what_it_is_about(self, temp_db, raw, message, asks):
         reply = self.start(temp_db).say(message)
-        assert reply.status == "ok" and "What is the issue" in reply.text and reply.pending is None
+        assert reply.status == "ok" and asks in reply.text and reply.pending is None  # in the customer's language
 
     def test_after_the_bare_request_the_next_message_becomes_the_description(self, temp_db, raw):
         c = self.start(temp_db)

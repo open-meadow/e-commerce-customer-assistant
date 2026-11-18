@@ -131,7 +131,9 @@ class TestWhenItDoesNotApply:
         llm = Sequence(LOOKUP, ASK)
         backend, c = start(temp_db, llm)
         reply = c.say(COMPLAINT)
-        assert llm.chat_calls == 2 and "order ID" in reply.text
+        # No second reminder is sent (two model calls). The customer has several orders and named none, so the reply
+        # lists their own orders and asks which one, instead of the model asking for the ID again.
+        assert llm.chat_calls == 2 and "Which one is this about?" in reply.text and "ORD1001" in reply.text
 
     def test_a_complaint_answered_without_asking_is_left_alone(self, temp_db):
         llm = Sequence(LLMResult(text="Sorry about that. Which order is this about?"))

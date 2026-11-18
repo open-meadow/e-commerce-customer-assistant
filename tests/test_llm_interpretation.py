@@ -198,7 +198,8 @@ class TestTicketOfferInterpretation:
     def test_an_unclear_reply_keeps_the_offer_without_extending_it(self, temp_db, raw, set_now):
         llm, backend, c = offered(temp_db, set_now, ["unclear"])
         before = session_of(backend, c).ticket_offer["expires"]
-        assert "yes or no" in c.say("hmm theek hai dekhte hain").text
+        # a Hinglish message gets the Hinglish sentence now (it used to be English whatever the customer wrote)
+        assert "yes ya no" in c.say("hmm theek hai dekhte hain").text
         assert session_of(backend, c).ticket_offer["expires"] == before
 
     def test_another_request_drops_the_offer_and_is_answered_normally(self, temp_db, raw, set_now):
@@ -218,7 +219,7 @@ class TestTicketOfferInterpretation:
         assert ticket["description"] == text and ticket["order_id"] == "ORD1001"
 
     @pytest.mark.parametrize("label, text, expected", [
-        ("declines", "chhodo, nahi chahiye", "won't raise a ticket"),
+        ("declines", "chhodo, nahi chahiye", "ticket nahi banaunga"),  # Hinglish in, Hinglish out
         ("other_request", "where is my other order", "describe the problem"),
         ("unclear", "ugh", "describe the problem"),
     ])

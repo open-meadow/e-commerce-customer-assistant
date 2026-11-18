@@ -147,7 +147,8 @@ class TestTicketDetailConversations:
     def test_unrelated_meaningless_or_overlong_text_is_not_used(self, backend, raw, set_now, text):
         c = to_details(backend, set_now)
         reply = c.say(text)
-        assert reply.pending is None and "describe the problem" in reply.text
+        phrase = "describe the problem" if text.isascii() else "समस्या अपने शब्दों में"  # Hindi in, Hindi out
+        assert reply.pending is None and phrase in reply.text
         assert rows(raw, "support_tickets") == []
         assert session_of(backend, c).ticket_offer["stage"] == "details"
 

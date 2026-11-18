@@ -443,6 +443,64 @@ _ASKS_FOR_ORDER_ID = re.compile(
     r"|\border\s*(?:id|number)\b[^.?!\n]{0,40}\b(?:again|please)\b"
     r"|\bwhat(?:'s|\s+is)\s+(?:your|the)\s+order\s*(?:id|number)\b", re.I)
 
+# The customer also asks for their own orders in the same message (so a "not found" for someone else's order must not
+# stop the listing they asked for).
+_OWN_ORDERS = re.compile(
+    r"\b(?:my|our)\s+(?:recent\s+|other\s+|own\s+)?orders\b|\b(?:meri|mere|apne)\s+orders?\b|"
+    r"\ball\s+(?:the\s+)?orders\b", re.I)
+
+
+def asks_for_own_orders(text: str) -> bool:
+    return isinstance(text, str) and bool(_OWN_ORDERS.search(text))
+
+
+def order_ids_in(text: str) -> list[str]:
+    """Order IDs written in the text, upper-cased, each once, in order. Only the strict ``ORD<digits>`` form."""
+    found: list[str] = []
+    for match in _ORDER_RE.findall(text or ""):
+        order_id = match.upper()
+        if order_id not in found:
+            found.append(order_id)
+    return found
+
+
+# A duration in a reply (English or Hinglish unit) and in a tool result (English unit). Only the NUMBER is compared, so a
+# Hinglish "3-7 business din" is supported by the policy text "3-7 business days" and an invented "24 hours" is not.
+_REPLY_DURATION = re.compile(
+    r"(\d+(?:\s*[-\u2013]\s*\d+)?)\s*(?:business\s+|working\s+)?"
+    r"(?:days?|hours?|weeks?|months?|din|ghante|ghanta|hafte|hafta|mahine)\b", re.I)
+_SOURCE_DURATION = re.compile(
+    r"(\d+(?:\s*[-\u2013]\s*\d+)?)[\s-]*(?:business\s+|working\s+)?(?:days?|hours?|weeks?|months?)\b", re.I)
+
+
+def _duration_key(number: str) -> str:
+    return re.sub(r"\s*[-\u2013]\s*", "-", number.strip())
+
+
+def duration_keys(texts: list[str]) -> set[str]:
+    """The durations (numbers only) stated in tool results or policy text. Only verified sources go in here: never a
+    customer's message, and never the assistant's own earlier prose."""
+    return {_duration_key(m.group(1)) for t in texts if isinstance(t, str) for m in _SOURCE_DURATION.finditer(t)}
+
+
+def strip_unsupported_durations(text: str, supported: set[str]) -> str:
+    """Drop the sentences of a reply that state a duration the policy or a tool result did not give. A timeline is only
+    ever stated when verified information supports it; what a customer says cannot establish one. ``supported`` comes from
+    ``duration_keys``. Returns the text unchanged when every duration is supported; an empty string when nothing
+    supported is left."""
+    parts = re.split(r"(?<=[.!?\u0964])(\s+)", text or "")
+    kept: list[str] = []
+    dropped = False
+    for index in range(0, len(parts), 2):
+        sentence = parts[index]
+        separator = parts[index + 1] if index + 1 < len(parts) else ""
+        if all(_duration_key(m.group(1)) in supported for m in _REPLY_DURATION.finditer(sentence)):
+            kept.append(sentence + separator)
+        else:
+            dropped = True
+    return "".join(kept).strip() if dropped else text
+
+
 REPEAT_REMINDER = (
     "Reminder from the system: the customer says they already gave this information, so do not ask them to "
     "repeat it. Look for it earlier in this conversation. If an order ID appears there, call get_order_status "

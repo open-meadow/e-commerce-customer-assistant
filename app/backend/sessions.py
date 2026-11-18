@@ -61,6 +61,9 @@ class Session:
     last_active: datetime
     session_ref: str = ""
     language: str = "en"  # the customer's language, kept from their latest clear message
+    # Durations (numbers only) that a tool result or policy text has given in this session. A reply may state a
+    # duration only if it is in a tool result this turn or here; the customer's own words never add to it.
+    verified_durations: set[str] = field(default_factory=set)
     history: list[dict[str, str]] = field(default_factory=list)
     message_count: int = 0
     issues: IssueBook = field(default_factory=IssueBook)

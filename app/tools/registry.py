@@ -269,7 +269,9 @@ def _get_refund_policy(ctx: CustomerContext, args: dict[str, Any]) -> ToolResult
         return ToolResult("unavailable", "knowledge_unavailable", note=_KNOWLEDGE_UNAVAILABLE_NOTE)
     note = ("Report refund status and amount exactly as given. Do not predict dates. A refund_status of 'Not "
             "Applicable' only means no refund is in progress for this order; it says nothing about whether a "
-            "refund or a return is possible, so do not suggest either way.")
+            "refund or a return is possible, so do not suggest either way. The policy's processing timeline starts "
+            "only after a returned item passes quality checks and the order record does not show that this has "
+            "happened: give it only as the policy's typical range, never as a date or a promise for this order.")
     if policy_unavailable:
         note += " The policy text is unavailable, so say that you cannot confirm the policy."
     return ToolResult("ok", "refund_policy", data, note=note)

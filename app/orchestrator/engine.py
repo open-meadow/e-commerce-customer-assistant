@@ -30,7 +30,7 @@ from app.llm.tasks import classify_relation, interpret_reply
 from app.orchestrator import guard
 from app.orchestrator.issues import Issue, build_description
 from app.orchestrator.summarizer import make_summary
-from app.tools import return_texts
+from app.tools import lookup_texts, return_texts, ticket_texts
 from app.tools.context import CustomerContext
 from app.tools.registry import (TOOL_SPECS, ArgumentError, execute_tool, llm_tool_definitions,
                                 validate_arguments)
@@ -158,6 +158,10 @@ class _Ctx:
     citations: tuple[Citation, ...] = ()
     message: str = ""  # the customer's message this turn (cue words for the eligibility disclosures)
     eligibility: list = field(default_factory=list)  # check_return_eligibility timing results this turn
+    named_not_found: bool = False  # a get_order_status this turn found the order is not on the customer's account
+    orders: list = field(default_factory=list)  # the customer's own orders, from list_my_orders this turn
+    sources: list = field(default_factory=list)  # every tool result of this turn, as text (what a reply may rely on)
+    lookups: dict = field(default_factory=dict)  # order ID -> get_order_status result this turn: one lookup per ID
 
 
 # Offered (as text only) when a damaged or wrong-product report is past its 48-hour window. It does not
@@ -266,7 +270,7 @@ class Engine:
             reason = self.registry.cancel(s, decision.action_id)
             if reason == "cancelled":
                 s.draft = None
-                return Turn("Okay, I've cancelled that. Nothing was changed.")
+                return Turn(ticket_texts.text("cancelled", s.language))
             return Turn(self._refusal_text(reason))
         action, reason = self.registry.claim(s, decision.action_id)
         if action is None:
@@ -393,7 +397,7 @@ class Engine:
         s.draft = None
         s.want_ticket = False
         s.ticket_offer = None
-        return Turn("Okay, I've cancelled that. Nothing was changed.")
+        return Turn(ticket_texts.text("cancelled", s.language))
 
     # ------------------------------------------------------------------
     # Reminders for outstanding prompts
@@ -511,6 +515,7 @@ class Engine:
         wrote_tool_results = False
         item_retry_used = False  # a wrong item in a return is fed back to the model once per turn
         repeat_nudged = False  # a repeat-the-details question is challenged once per turn
+        named_checked = False  # an order ID the customer typed is looked up by code at most once per turn
         system = system_prompt_for_turn(text)
         while True:
             try:
@@ -524,6 +529,11 @@ class Engine:
                 return Turn("The assistant is temporarily unavailable. Please try again in a moment.",
                             "error", "unavailable")
             calls = tuple(result.tool_calls or ())
+            if self.interpret and not named_checked and calls_used == 0:
+                named_checked = True
+                refusal = self._unfound_named_orders_turn(s, ctoken, text, calls, ctx)
+                if refusal is not None:
+                    return refusal
             if not calls:
                 # A customer who says they already gave their details must not be asked for them again.
                 # A real model that does so without looking anything up is reminded once, with fixed text
@@ -534,6 +544,12 @@ class Engine:
                     messages.append({"role": "assistant", "content": result.text})
                     messages.append({"role": "user", "content": guard.REPEAT_REMINDER})
                     continue
+                if (self.interpret and guard.is_repeat_complaint(text) and len(ctx.orders) >= 2
+                        and not self._order_given(s, text)):
+                    # Several orders could fit and the customer named none: never pick one for them. The listing is
+                    # IDs and statuses from their own orders only.
+                    listing = ", ".join(f"{o['order_id']} ({o['status']})" for o in ctx.orders)
+                    return Turn(self._with_notices(ctx, lookup_texts.text("which_order", s.language, orders=listing)))
                 return self._finish_text(s, result.text, ctx, wrote_tool_results)
             if calls_used + len(calls) > self.settings.max_tool_calls_per_turn:
                 return Turn(self._with_notices(ctx, "I wasn't able to finish that request. Could you rephrase "
@@ -545,7 +561,15 @@ class Engine:
                 # the provider needs back, unchanged, with the tool results. Never inspected or shown.
                 proposed["provider_items"] = list(result.provider_items)
             messages.append(proposed)
-            for call in calls:
+            precomputed: dict[int, ToolResult] = {}
+            if self.interpret and any(c.name == "list_my_orders" for c in calls):
+                # A lookup of a named order runs before any listing of the customer's own orders in the same batch, so
+                # a not-found can stop the listing; the result is reused below, never fetched twice.
+                for position, c in enumerate(calls):
+                    if c.name == "get_order_status":
+                        precomputed[position] = self._lookup(ctoken, ctx, c.name, c.arguments)
+                        self._note_not_found(ctx, text, c.name, c.arguments, precomputed[position])
+            for position, call in enumerate(calls):
                 calls_used += 1
                 name = call.name if isinstance(call.name, str) else ""
                 if name == "start_return_request":
@@ -565,7 +589,18 @@ class Engine:
                     return self._start_return(s, call.arguments, text, ctx)
                 if name == "start_support_ticket":
                     return self._propose_ticket(s, call.arguments, text, ctx)
-                tool_result = execute_tool(ctoken, name, call.arguments)
+                if name == "list_my_orders" and ctx.named_not_found and not guard.asks_for_own_orders(text):
+                    # The order the customer asked about is not on their account: their own orders are not a substitute.
+                    tool_result = ToolResult("not_run", "not_requested", note=(
+                        "Not run: the customer asked about a specific order that is not on their account, not for "
+                        "their own orders. Do not list or describe their orders; say you could not find that order "
+                        "and offer to list their own."))
+                else:
+                    tool_result = precomputed.get(position) or self._lookup(ctoken, ctx, name, call.arguments)
+                self._note_not_found(ctx, text, name, call.arguments, tool_result)
+                if name == "list_my_orders" and tool_result.status == "ok":
+                    ctx.orders = list(tool_result.data.get("orders", []))
+                ctx.sources.append(tool_result.to_json())
                 if name == "check_return_eligibility":
                     tool_result = self._eligibility_for_the_named_item(ctoken, call.arguments, tool_result, text)
                 if (name == "check_return_eligibility" and tool_result.code == "return_check"
@@ -575,6 +610,60 @@ class Engine:
                 wrote_tool_results = True
                 messages.append({"role": "tool", "name": name, "call_id": call.call_id,
                                  "content": tool_result.to_json()})
+
+    @staticmethod
+    def _order_arg(arguments: Any) -> Optional[str]:
+        if isinstance(arguments, dict) and isinstance(arguments.get("order_id"), str):
+            return arguments["order_id"].strip().upper()
+        return None
+
+    def _lookup(self, ctoken: CustomerContext, ctx: _Ctx, name: str, arguments: Any) -> ToolResult:
+        """Run a tool. An order status lookup runs once per order ID per turn: a second request for the same ID (the
+        engine's own check and then the model's, or the model twice) gets the first result, not a second read."""
+        order_id = self._order_arg(arguments) if name == "get_order_status" else None
+        if order_id is not None and order_id in ctx.lookups:
+            return ctx.lookups[order_id]
+        result = execute_tool(ctoken, name, arguments)
+        if order_id is not None:
+            ctx.lookups[order_id] = result
+        return result
+
+    def _note_not_found(self, ctx: _Ctx, text: str, name: str, arguments: Any, result: ToolResult) -> None:
+        """Remember that an order the CUSTOMER typed is not on their account. An ID the model made up does not count."""
+        if name == "get_order_status" and result.status == "not_found" and self._order_arg(arguments) in \
+                guard.order_ids_in(text):
+            ctx.named_not_found = True
+
+    @staticmethod
+    def _order_given(s: Session, text: str) -> bool:
+        """The customer wrote an order ID in this message or an earlier one of this conversation."""
+        return bool(guard.order_ids_in(text)) or any(
+            m.get("role") == "user" and guard.order_ids_in(m.get("content") or "") for m in s.history)
+
+    def _unfound_named_orders_turn(self, s: Session, ctoken: CustomerContext, text: str, calls: tuple,
+                                   ctx: _Ctx) -> Optional[Turn]:
+        """The customer typed an order ID and the model made no tool call about it (it refused, or listed their own orders
+        instead). Code looks the order up itself, through the same customer-scoped tool, and only to catch ONE case: every
+        named order is not on the customer's account. The reply is then fixed text that says so and offers the customer's
+        own orders without listing them. Anything else (an order that is theirs, a mixed message, an invalid ID, a
+        message that also asks for their own orders, a return or ticket already being started) leaves the model's
+        response alone. Identifiers come from the current message only; nothing is guessed from history."""
+        if any(c.name in ("start_return_request", "start_support_ticket") for c in calls):
+            return None
+        ids = guard.order_ids_in(text)
+        if not ids or len(ids) > 3 or guard.asks_for_own_orders(text):
+            return None
+        mentioned = {str(v).strip().upper() for c in calls if isinstance(c.arguments, dict) for v in c.arguments.values()}
+        unlooked = [i for i in ids if i not in mentioned]
+        if not unlooked or len(unlooked) != len(ids):
+            return None  # the model already acted on one of them, or there is nothing left to look up
+        results = [self._lookup(ctoken, ctx, "get_order_status", {"order_id": i}) for i in unlooked]
+        if any(r.status == "not_found" for r in results):
+            ctx.named_not_found = True  # no fallback to listing the customer's own orders for an order they named
+        if not all(r.status == "not_found" for r in results):
+            return None
+        log.info("named order not on the account answered by code (session %s)", ctoken.session_ref)
+        return Turn(self._with_notices(ctx, lookup_texts.text("not_on_account", s.language, ids=", ".join(unlooked))))
 
     def _return_item_feedback(self, s: Session, arguments: Any) -> Optional[ToolResult]:
         """A tool result listing the customer's own items when a proposed return names the wrong one.
@@ -622,11 +711,21 @@ class Engine:
         if _FALSE_SUCCESS.search(body):
             body = GROUNDING_REPLACEMENT
         else:
+            # A timeline is stated only when the policy or a tool result gave it: other sentences with a duration go.
+            # Verified sources only: this turn's tool results and what earlier tool results gave in this session. The
+            # customer's words and the assistant's own earlier prose never establish a duration.
+            verified = guard.duration_keys(ctx.sources)
+            supported = guard.strip_unsupported_durations(body, verified | s.verified_durations)
+            s.verified_durations |= verified
+            if supported != body:
+                log.info("reply sentence with an unsupported duration removed (session %s)", s.session_ref)
+                body = supported or "I can't confirm a timeline for that."
             body = self._with_eligibility_disclosures(s, ctx, body)
         if len(body) > 4000:
             body = body[:3999] + "…"
-        if ctx.issue_turn and s.issues.active is not None and "ticket" not in body.lower():
-            body += "\n\nIf you'd like, I can raise a support ticket for this issue."
+        if (ctx.issue_turn and s.issues.active is not None and "ticket" not in body.lower()
+                and not ctx.named_not_found and not ctx.eligibility):
+            body += "\n\n" + ticket_texts.text("issue_offer", s.language)
         return Turn(self._with_notices(ctx, body), citations=ctx.citations)
 
     def _eligibility_for_the_named_item(self, ctoken: CustomerContext, arguments: Any, result: ToolResult,
@@ -1000,8 +1099,7 @@ class Engine:
     def _propose_ticket(self, s: Session, arguments: Any, user_text: str, ctx: Optional[_Ctx] = None) -> Turn:
         ctx = ctx or _Ctx()
         if self.registry.capacity_left(s, "support_ticket") <= 0:
-            return Turn("You've reached the limit of support tickets for this session, so I can't create "
-                        "another one.")
+            return Turn(ticket_texts.text("ticket_limit", s.language))
         issue = s.issues.active
         names_order = bool(user_text) and guard.mentions_order_or_item(user_text)
         bare_request = bool(user_text) and guard.is_ticket_request(user_text) and not names_order  # "I have a complaint"
@@ -1009,8 +1107,7 @@ class Engine:
             issue = self._start_issue(s, user_text)  # the customer already said what it is about: do not ask again
         if issue is None:
             s.want_ticket = True
-            return Turn(self._with_notices(ctx, "Happy to raise a ticket. What is the issue you'd like it to "
-                                                "be about? Please include the order ID if there is one."))
+            return Turn(self._with_notices(ctx, ticket_texts.text("ask_issue", s.language)))
         args: dict[str, Any] = {}
         if arguments:
             try:
@@ -1024,11 +1121,9 @@ class Engine:
             try:
                 order = repository.get_order(s.customer_id, order_id)
             except DatabaseError:
-                return Turn("I can't reach the order system right now. Please try again shortly.",
-                            "error", "unavailable")
+                return Turn(ticket_texts.text("order_system_down", s.language), "error", "unavailable")
             if order is None:
-                return Turn(self._with_notices(ctx, "I couldn't find that order on your account, so I haven't "
-                                                    "prepared a ticket. Could you check the order ID?"))
+                return Turn(self._with_notices(ctx, ticket_texts.text("order_not_found_check", s.language)))
             facts.append(f"Order {order_id}: status {order['status']}, payment {order['payment_status']}, "
                          f"refund {order['refund_status']}.")
         description = build_description(issue.messages)
@@ -1037,12 +1132,12 @@ class Engine:
         payload = {"issue_type": issue_type, "order_id": order_id, "description": description,
                    "conversation_summary": summary, "issue_id": issue.issue_id}
         preview = description if len(description) <= 200 else description[:199] + "…"
-        text = (f"Create a support ticket ({issue_type}" + (f", order {order_id}" if order_id else "")
-                + f") with this description: \"{preview}\". A human agent will follow up.")
+        text = ticket_texts.text("pending_order" if order_id else "pending_plain", s.language,
+                                 issue_type=issue_type, order_id=order_id, preview=preview)
         action = self.registry.put_pending(s, "support_ticket", payload, text)
         limit = guard.unsupported_request(user_text) if user_text else None
-        lead = (f"I'm not able to {limit} myself. Here's the ticket I can create so a human agent can follow up. "
-                "Please confirm to submit it.") if limit else ("Here's the ticket I can create. Please confirm to submit it.")
+        lead = (ticket_texts.text("lead_limit", s.language, limit=limit) if limit
+                else ticket_texts.text("lead_plain", s.language))
         return Turn(self._with_notices(ctx, lead), "needs_confirmation", pending=self._pending_view(action))
 
     def _offer_ticket(self, s: Session, order_id: str, item_id: str) -> None:
@@ -1070,33 +1165,29 @@ class Engine:
                 new_request = guard.is_new_request_not_a_reply(text)
             if answer == "negative":
                 s.ticket_offer = None
-                return Turn("Okay, I won't raise a ticket. Nothing was changed.")
+                return Turn(ticket_texts.text("declined", s.language))
             if answer != "affirmative":
                 if new_request:
                     s.ticket_offer = None
                     return None
-                return Turn("I'm not sure whether you'd like me to help you raise a support ticket. Please reply "
-                            "yes or no, or type cancel to leave it.")
+                return Turn(ticket_texts.text("unclear", s.language))
             if self.registry.capacity_left(s, "support_ticket") <= 0:
                 s.ticket_offer = None
-                return Turn("You've reached the limit of support tickets for this session, so I can't create "
-                            "another one.")
+                return Turn(ticket_texts.text("ticket_limit", s.language))
             items, failure = self._check_owned(s, offer["order_id"], offer["item_id"])
             if failure is not None:
                 s.ticket_offer = None
                 return failure
             offer["stage"] = "details"
             offer["item_words"] = guard.PRODUCT_WORDS | guard.product_words(self._item_name(items, offer["item_id"]))
-            return Turn(f"Please describe the problem with your {self._item_name(items, offer['item_id'])} "
-                        f"(item {offer['item_id']}, order {offer['order_id']}) in your own words. Nothing is "
-                        "saved until you confirm.")
+            return Turn(ticket_texts.text("describe", s.language, item=self._item_name(items, offer["item_id"]),
+                                          item_id=offer["item_id"], order_id=offer["order_id"]))
         # stage "details": the customer's description of the problem
         label = self._interpret("ticket_details", "Please describe the problem with the item.", text)
         if label == "declines" or (label is None and guard.classify_offer_reply(text) == "negative"):
             s.ticket_offer = None
-            return Turn("Okay, I won't raise a ticket. Nothing was changed.")
-        again = ("Please describe the problem with the item in your own words, or type cancel to stop. "
-                 "Nothing is saved until you confirm.")
+            return Turn(ticket_texts.text("declined", s.language))
+        again = ticket_texts.text("again", s.language)
         try:
             validate_text(text, "description", TICKET_TEXT_MAX)
             if label == "gives_details":  # the model judged the meaning; the hard checks stay in code
@@ -1114,18 +1205,11 @@ class Engine:
         except (TypeError, ValueError):
             problem = "invalid"
         if problem is not None:
-            return Turn({
-                "meaningless": "I need a few words about what is wrong. ",
-                "too_long": (f"That message is {len(text)} characters long and a ticket description can be at "
-                             f"most {TICKET_TEXT_MAX}. Please send a shorter description. "),
-                "other_target": ("That mentions another order or item, so I haven't saved it. This ticket is "
-                                 f"about item {offer['item_id']} on order {offer['order_id']}. "),
-                "new_return": ("That looks like a different return request rather than a description of the "
-                               "problem, so I haven't saved it. If you want to start that return, type cancel "
-                               "first. "),
-                "unrelated": ("I'm still waiting for a description of the problem, so I haven't saved that "
-                              "message. "),
-            }.get(problem, "I couldn't use that text. ") + again)
+            key = {"meaningless": "problem_meaningless", "too_long": "problem_too_long",
+                   "other_target": "problem_other_target", "new_return": "problem_new_return",
+                   "unrelated": "problem_unrelated"}.get(problem, "problem_default")
+            return Turn(ticket_texts.text(key, s.language, n=len(text), max=TICKET_TEXT_MAX, item_id=offer["item_id"],
+                                          order_id=offer["order_id"]) + again)
         return self._propose_offered_ticket(s, offer, text)
 
     def _propose_offered_ticket(self, s: Session, offer: dict[str, Any], details: str) -> Turn:
@@ -1137,11 +1221,10 @@ class Engine:
         try:
             order = repository.get_order(s.customer_id, order_id)
         except DatabaseError:
-            return Turn("I can't reach the order system right now. Please try again shortly.", "error",
-                        "unavailable")
+            return Turn(ticket_texts.text("order_system_down", s.language), "error", "unavailable")
         if order is None:
             s.ticket_offer = None
-            return Turn("I couldn't find that order on your account, so I haven't prepared a ticket.")
+            return Turn(ticket_texts.text("order_not_found", s.language))
         facts = [f"Order {order_id}, item {item_id}: status {order['status']}, payment {order['payment_status']}, "
                  f"refund {order['refund_status']}."]
         actions = ["A return request was not started because its return window had closed."]
@@ -1154,11 +1237,10 @@ class Engine:
         payload = {"issue_type": "return", "order_id": order_id, "description": description,
                    "conversation_summary": summary, "issue_id": active.issue_id if active is not None else None}
         preview = description if len(description) <= 200 else description[:199] + "…"
-        text = (f"Create a support ticket (return, order {order_id}, item {item_id}) with this description: "
-                f"\"{preview}\". A human agent will follow up. I can't promise any particular outcome.")
+        text = ticket_texts.text("pending_offered", s.language, order_id=order_id, item_id=item_id, preview=preview)
         action = self.registry.put_pending(s, "support_ticket", payload, text)
         s.ticket_offer = None
-        return Turn("Here's the ticket I can create. Please confirm to submit it.", "needs_confirmation",
+        return Turn(ticket_texts.text("lead_plain", s.language), "needs_confirmation",
                     pending=self._pending_view(action))
 
     # ------------------------------------------------------------------
@@ -1185,6 +1267,5 @@ class Engine:
             active = s.issues.active
             if active is not None and active.issue_id == p.get("issue_id"):
                 s.issues.end_active()
-            return Turn(f"Your support ticket {result['ticket_id']} has been created. A human agent will "
-                        "follow up."), True
+            return Turn(ticket_texts.text("created", s.language, ticket_id=result["ticket_id"])), True
         return Turn("I can't process that request.", "error", "internal"), False
