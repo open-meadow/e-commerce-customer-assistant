@@ -1,3 +1,5 @@
+> **Historical document.** The original course brief this project was built to satisfy, moved here from the repository root. The finished product is described in [../../README.md](../../README.md).
+
 ### This is the overall goal of the project ###
 E-Commerce Customer Support Assistant
 

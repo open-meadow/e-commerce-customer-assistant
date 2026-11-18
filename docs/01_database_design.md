@@ -1,3 +1,5 @@
+> **Design record.** The approved database design, referenced from the code and tests. Status and test counts in this file describe the time it was written; for the current state see [PROJECT_STATUS.md](PROJECT_STATUS.md). Some paths predate the merge.
+
 # Database Design — AI E-Commerce Customer Support Assistant
 
 **Phase:** 1 — Database Design
@@ -21,14 +23,14 @@
 - **Return eligibility:** precedence is validate, `order_not_found`, `order_status_ineligible` (status must be exactly `Delivered`), `item_not_found`, `active_return_exists`, `delivery_timestamp_missing` / `outside_return_window`, then `eligible`. Windows are inclusive: 48 hours (`damaged`, `wrong_product`) and 168 hours (`standard`) from `delivered_at`. A `delivered_at` later than the captured time raises `DatabaseDataIntegrityError`. Category-based non-returnable enforcement is not implemented (Section L, item 1).
 
 - **`reason_category` and `reason`:** the category is selected by the customer and persisted in its own column (the model never selects it). `reason` stores only the customer's own message, exactly as accepted (at most 1,000 code points; never trimmed, rewritten or prefixed). The backend (`app/orchestrator/engine.py`) takes it from the customer's own message and ignores any model-supplied reason; this repository layer stores the text it is given.
-- **Tests:** 7 database test files under `tests/` (`test_authorization`, `test_clock_validation`, `test_connection`, `test_returns`, `test_schema`, `test_seed`, `test_tickets`, plus the shared `conftest.py`). `uv run python -m pytest tests/test_authorization.py tests/test_returns.py tests/test_schema.py tests/test_tickets.py tests/test_clock_validation.py tests/test_connection.py tests/test_seed.py -q` gave **412 passed** on 2026-11-11 (database commit `7dfd2f0`). Database tests build temporary databases with the real initialization path; no test opens `data/app.db` or `data/app_d2.db`. The full suite including the backend tests is reported in `PROJECT_STATUS.md`.
+- **Tests:** 7 database test files under `tests/` (`test_authorization`, `test_clock_validation`, `test_connection`, `test_returns`, `test_schema`, `test_seed`, `test_tickets`, plus the shared `conftest.py`). `uv run python -m pytest tests/test_authorization.py tests/test_returns.py tests/test_schema.py tests/test_tickets.py tests/test_clock_validation.py tests/test_connection.py tests/test_seed.py -q` gave **412 passed** on 2026-11-11 (database commit `7dfd2f0`). Database tests build temporary databases with the real initialization path; no test opens `data/app.db` or `data/app_d2.db`. The full suite including the backend tests is reported in `docs/PROJECT_STATUS.md`.
 
 ---
 
 ## 0. Documents and Files Inspected
 
-- `PROJECT_STATUS.md` — confirms Phase 0 approved, single-`orders`-table model approved, voice deferred, simulated auth.
-- `docs/00_project_discovery.md` — source of the approved entity list and Section 6a schema sketch.
+- `docs/PROJECT_STATUS.md` — confirms Phase 0 approved, single-`orders`-table model approved, voice deferred, simulated auth.
+- `docs/history/00_project_discovery.md` — source of the approved entity list and Section 6a schema sketch.
 - `data/knowledge_base/FAQ.md` — source of the seven canonical order statuses (Q1.4) and return rules (Q3.1–Q3.4).
 - `data/knowledge_base/Policies.md` — source of the 7-day return window, non-returnable categories, and cancellation policy.
 - `data/Products.json` — product catalog (5 items: Wireless Earbuds, Over-Ear Headphones, 65W GaN Charger, 24-inch Monitor, Power Bank; categories: Audio, Accessories, Computers).
@@ -687,7 +689,7 @@ Seed data generation itself (a script) is **out of scope for this document**, pe
 
 Tests 13 to 23 are the **D2 test cases** (implemented in `tests/test_connection.py`, `tests/test_schema.py`, `tests/test_clock_validation.py`, `tests/test_returns.py`, `tests/test_tickets.py` and `tests/test_seed.py`). Tests 7 to 9 above describe the legacy contract: under D2 the order status is checked first, the outcome names change, and the legacy `reference_time` parameter is replaced by the shared `utc_now()` clock (Section F, D2 return contract). The legacy tests were rewritten for the D2 contract.
 
-Tests 2b, 5b, 7b, 8b, 11, and 12 are new or corrected in this revision, added to directly exercise the strengthened relational integrity (composite FKs), corrected enums, and storage conventions from this review round. These are specified as test *cases* here; the actual `test_authorization.py` implementation is Phase 2 work, explicitly required by `PROJECT_STATUS.md` to pass before any orchestration or UI code is written.
+Tests 2b, 5b, 7b, 8b, 11, and 12 are new or corrected in this revision, added to directly exercise the strengthened relational integrity (composite FKs), corrected enums, and storage conventions from this review round. These are specified as test *cases* here; the actual `test_authorization.py` implementation is Phase 2 work, explicitly required by `docs/PROJECT_STATUS.md` to pass before any orchestration or UI code is written.
 
 ---
 

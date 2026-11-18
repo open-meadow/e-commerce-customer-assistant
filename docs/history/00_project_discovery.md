@@ -1,3 +1,5 @@
+> **Historical document.** The Phase 0 discovery and requirements record that the later design documents were built on. Retained as the origin of the approved entity list and scope. Current state: [../PROJECT_STATUS.md](../PROJECT_STATUS.md).
+
 # Project Discovery Report — AI E-Commerce Customer Support Assistant
 
 **Phase:** 0 — Discovery

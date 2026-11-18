@@ -52,3 +52,9 @@ Thumbs.db
 
 # Generated review bundles (not part of the repository)
 CHANGES_BUNDLE*.md
+
+# Office temporary lock files (open PowerPoint/Word/Excel documents)
+~$*
+
+# Local agent planning notes (kept in Git history, not in the public tree)
+.claude/plans/

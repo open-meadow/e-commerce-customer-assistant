@@ -1,3 +1,5 @@
+> **Design record.** The backend design and implementation record (Revision 3.2). The current, shorter explanation is [architecture.md](architecture.md); this file keeps the full reasoning and contracts. Parts of its inventory (for example the `main.py` and `PROJECT_STATUS.md` notes in section 17) describe the repository before it was tidied.
+
 # Backend Architecture — AI E-Commerce Customer Support Assistant
 
 **Phase:** 3 — Backend architecture and contracts
@@ -12,7 +14,7 @@
 - **D2 contract freeze (2026-11-11):** reconciled the design with the contracts approved in the master handover (see the Status line). Documentation only at the time; implemented since (Section 19).
 
 **Scope of this document:** written as design only (no code was created by that checkpoint; the code now exists and Section 19 records it). At that checkpoint no application code, tests, schema, seed behavior, database content, dependencies, LLM, RAG, or Streamlit code is created or changed by this checkpoint.
-**Inputs:** `docs/00_project_discovery.md`, `docs/01_database_design.md`, `docs/02_database_implementation_plan.md`, `AGENTS.md`, the Checkpoint 10 inspection report, the four Technical Lead decisions in Section 1, and the Technical Lead's Revision 1 review.
+**Inputs:** `docs/history/00_project_discovery.md`, `docs/01_database_design.md`, `docs/02_database_implementation_plan.md`, `AGENTS.md`, the Checkpoint 10 inspection report, the four Technical Lead decisions in Section 1, and the Technical Lead's Revision 1 review.
 
 **Relationship to the database documents.** `docs/01` and `docs/02` remain canonical for the database, the repository, and the approved write contracts. This document builds on them and does not change them. The only addition it requires to the repository layer is one new read-only operation (Section 6), which needs matching amendments to `docs/01` Section F and `docs/02` Section 4 in a separately approved change. Where this document and `docs/01` or `docs/02` disagree, report the conflict instead of choosing silently.
 
@@ -1211,7 +1213,7 @@ Listed so they are not lost. None is fixed by this document.
 2. `app/` is not an installable package, and `pyproject.toml` builds the unused `src/ecommerce_support_assistant` stub. Imports work only from the repository root.
 3. `get_connection()` defaults to the relative path `data/app.db`, creates the parent directory, and creates the file if missing. Repository functions use that default, so a configurable database path would need a separately approved repository change. This document assumes the working directory is the project root. **Superseded (D2 implemented):** `APP_DB_PATH`, project-root-relative resolution and fail-if-missing normal connections replace this behavior (Section 9.6); the default is now `data/app_d2.db`.
 4. `main.py` prints a greeting and calls `get_connection()`, which can create an empty database.
-5. `PROJECT_STATUS.md` is stale.
+5. `docs/PROJECT_STATUS.md` is stale.
 6. The local, gitignored `data/app.db` contains one stray test ticket from an earlier manual check.
 7. *(Superseded.)* Two provider adapters now exist (OpenAI-compatible and Anthropic, selected by environment variables, never run live) and the offline `RuleBasedLLM` is the default. Retrieval is BM25; **embeddings and a vector store are deferred and not implemented.** There is still no `.env.example`; the configuration reference is `docs/04_frontend_handover.md` Section 3.
 8. The FAQ mentions replacement and courier pickup, and the policies mention cancellation and warranty, but the system supports none of those actions (Section 10).

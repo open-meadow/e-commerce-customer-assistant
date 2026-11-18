@@ -1,3 +1,5 @@
+> **Design record.** The contract between the UI and the backend (Person A to Person B). The contract is current; the test counts and status paragraphs in it are historical. Current status: [PROJECT_STATUS.md](PROJECT_STATUS.md).
+
 # Frontend and delivery handover (Person A to Person B)
 
 **Date:** 2026-11-11, refreshed 2026-11-12 (A4) and 2026-11-13 (integration of `rohan/voice`: Chroma retrieval, Docker services, LiveKit voice; Section 3 and Section 10 describe the embedding provider and the retrieval modes). **Status:** the backend described here is implemented; the UI is wired to it and the OpenAI Responses adapter is merged. Local `master` is at `fdb372a` (the merge of `rohan/voice`) and **has not been pushed**. The latest measured full-suite result is **1256 passed**, offline (`uv run --offline --frozen python -m pytest tests -q -p net_guard_plugin` in the integration worktree, 2026-11-13; the audit plugin, a scratch file outside the repository, counted 0 external network attempts). The earlier counts (939 on 2026-11-11, 1172 and 1181 on 2026-11-12) are historical. Anything marked **unverified** has not been run against the real thing. In particular, **real OpenAI embedding retrieval and the LiveKit voice worker have never been run**, and no language-model provider has been evaluated live. Section 10 (evaluation) was added on 2026-11-12.
@@ -57,7 +59,7 @@ Your old `scripts/init_demo_db.py` calls `get_connection(db_path)`, which no lon
 
 ### Status: the UI is wired to the backend
 
-Done and merged to `master` (plan: `docs/plans/ui_real_backend_plan.md`). `app/ui/client.py` re-exports the `app.backend` API by default and adds `backend_status()` (startup gate: not configured, not initialized, incompatible, unavailable). `UI_BACKEND=fake` selects the old canned `app/ui/fake_backend.py` for offline work. `session.py` is backend-independent, `streamlit_app.py` shows the gate, error banners from `reply.text`, the pending expiry, and choice and confirmation buttons. `handle_turn` is removed. Tests: `tests/ui/test_client_real.py`, `tests/ui/test_streamlit_app_real.py`. The text below is the original handover and is kept for the contract:
+Done and merged to `master` (plan: `docs/history/ui_real_backend_plan.md`). `app/ui/client.py` re-exports the `app.backend` API by default and adds `backend_status()` (startup gate: not configured, not initialized, incompatible, unavailable). `UI_BACKEND=fake` selects the old canned `app/ui/fake_backend.py` for offline work. `session.py` is backend-independent, `streamlit_app.py` shows the gate, error banners from `reply.text`, the pending expiry, and choice and confirmation buttons. `handle_turn` is removed. Tests: `tests/ui/test_client_real.py`, `tests/ui/test_streamlit_app_real.py`. The text below is the original handover and is kept for the contract:
 
 ### Original note: the early UI files (now replaced)
 

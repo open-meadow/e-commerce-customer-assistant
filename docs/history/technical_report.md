@@ -1,3 +1,5 @@
+> **Historical document.** Written 2026-11-14 for the first live-evaluated version of the assistant (nine tools, 2,158 tests, the v2 to v5 evaluation runs). It is superseded by [../evaluation/EVALUATION_REPORT.md](../evaluation/EVALUATION_REPORT.md) (current results), [../architecture.md](../architecture.md) (current design) and [../PROJECT_HANDOVER.md](../PROJECT_HANDOVER.md). Its figures are not the current ones. Kept because it records how the project reached that point.
+
 # Technical Report
 
 **Project:** AI E-Commerce Customer Support Assistant  
@@ -23,7 +25,7 @@ reached the category menu in 2 of 2 cases, replies were in the customer's langua
 conversations passed completely. The evaluation also shows what is not yet good: some fixed backend wording is
 English-only, results vary slightly between runs (in one case, C003, the assistant asked for an order ID again
 instead of looking up the customer's orders), the sample is small, and empathy and tone are not scored. Details,
-caveats and reproduction steps are in [`evaluation/README.md`](./evaluation/README.md).
+caveats and reproduction steps are in [`evaluation/README.md`](../evaluation/README.md).
 
 ## 1. Problem scope and assumptions
 
@@ -281,7 +283,7 @@ uv run python scripts/verify_real_backend.py
 
 On 2026-11-14, with provider and LiveKit variables blank and `PYTHON_DOTENV_DISABLED=1`: **2,158 tests passed**
 (none failed or skipped) and `verify_real_backend.py` passed 28 of 28 checks on a temporary database. That run also
-used a local audit plugin, kept outside the repository (see `PROJECT_STATUS.md`), which blocks external network
+used a local audit plugin, kept outside the repository (see `docs/PROJECT_STATUS.md`), which blocks external network
 connections and counted **0 attempts**; a reader without that plugin can still run the two commands above.
 
 Run the app (after seeding a database, see the README):
@@ -291,5 +293,5 @@ uv run python -m streamlit run app/ui/streamlit_app.py
 ```
 
 Live evaluation (billed; needs a provider key in the environment or a git-ignored `.env`, never committed) and the
-offline run are described in [`evaluation/README.md`](./evaluation/README.md). See the [README](../README.md) for
+offline run are described in [`evaluation/README.md`](../evaluation/README.md). See the [README](../README.md) for
 setup, Docker and limitations.

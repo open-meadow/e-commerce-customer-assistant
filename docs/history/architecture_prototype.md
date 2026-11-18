@@ -1,4 +1,4 @@
-> **Superseded diagram.** The diagram below shows the earlier fake-backend wiring and is kept for history only. The current system is: Streamlit UI -> `app.backend` -> orchestrator -> nine customer-scoped tools -> SQLite, with Chroma retrieval over `FAQ.md` and `Policies.md`, an LLM adapter (OpenAI Responses live-evaluated; Anthropic mock-tested; offline rule-based stand-in), and an optional LiveKit voice channel. See `docs/technical_report.md` section 2.
+> **Superseded diagram.** The diagram below shows the earlier fake-backend wiring and is kept for history only. The current system is: Streamlit UI -> `app.backend` -> orchestrator -> nine customer-scoped tools -> SQLite, with Chroma retrieval over `FAQ.md` and `Policies.md`, an LLM adapter (OpenAI Responses live-evaluated; Anthropic mock-tested; offline rule-based stand-in), and an optional LiveKit voice channel. See `docs/history/technical_report.md` section 2.
 
 # Project Architecture
 
@@ -79,5 +79,5 @@ flowchart LR
   replies, and does not observe tool calls or assess answer quality or safety.
 - **Target design** summarizes planned components. It is not evidence that an
   LLM, RAG pipeline, tool layer, or backend API is available in this checkout.
-  See [`03_backend_architecture.md`](./03_backend_architecture.md), a design
+  See [`03_backend_architecture.md`](../03_backend_architecture.md), a design
   draft whose proposed backend implementation does not yet exist.

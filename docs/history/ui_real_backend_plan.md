@@ -1,3 +1,5 @@
+> **Historical document.** The plan used to wire the Streamlit UI to the real backend. That work is done and merged; the plan is retained for the decisions it records. Current design: [../architecture.md](../architecture.md).
+
 <!-- Tracked copy of the approved plan. Each step is one commit; "[DONE]" marks a finished step. -->
 
 # Plan: wire the Streamlit UI to the real backend
@@ -58,10 +60,10 @@ _Step 5 result (2026-11-11, `demo/demo.db`, launched with `python -m streamlit r
 
 **[DONE] Step 6. Docs and config touched by the switch**
 
-_Step 6 result: README (current state, run instructions with seeding, `UI_BACKEND`), `docs/04` (status section and the "no fake" line), `CLAUDE.md` (UI section, status, test counts), `docker-compose.yml` (`UI_BACKEND: fake`), and a short update banner on Person B's `docs/architecture.md` and `docs/technical_report.md` (their content is not rewritten; Person B to revise)._
+_Step 6 result: README (current state, run instructions with seeding, `UI_BACKEND`), `docs/04` (status section and the "no fake" line), `CLAUDE.md` (UI section, status, test counts), `docker-compose.yml` (`UI_BACKEND: fake`), and a short update banner on Person B's `docs/architecture.md` and `docs/history/technical_report.md` (their content is not rewritten; Person B to revise)._
 - `README.md` (Running the Project and "Replies are canned" paragraphs): add the database initialization step, `UI_BACKEND`, and that replies now come from the backend.
 - `docs/04_frontend_handover.md`: remove the "obsolete stubs, replace them" section; record that the wiring is done and how.
-- `CLAUDE.md` UI section and the "Where the code stands" paragraph; Person B's `docs/architecture.md` and `docs/technical_report.md` mention the fake.
+- `CLAUDE.md` UI section and the "Where the code stands" paragraph; Person B's `docs/architecture.md` and `docs/history/technical_report.md` mention the fake.
 - `docker-compose.yml`: set `UI_BACKEND=fake` for now so the container keeps working unchanged until the separate Docker task (it lacks `data/source`, a database and the right variable names).
 
 **[DONE] Step 7. Commit**

@@ -17,7 +17,7 @@ date: "2026-11-11"
 
 **Important:** This is a prototype, not a live customer-support service.
 
-*Evidence: README.md; docs/technical_report.md*
+*Evidence: README.md; docs/history/technical_report.md*
 
 ## The support problem
 
@@ -31,7 +31,7 @@ Customers commonly need help with:
 The target system should answer from approved sources and use controlled,
 customer-scoped actions.
 
-*Evidence: docs/00_project_discovery.md; app/db/data/source/FAQ.md*
+*Evidence: docs/history/00_project_discovery.md; app/db/data/source/FAQ.md*
 
 ## Scope and data
 
@@ -113,7 +113,7 @@ safety behavior.
 
 These checks do not establish the quality or safety of an LLM-powered assistant.
 
-*Verified 2026-11-11; see docs/technical_report.md*
+*Verified 2026-11-11; see docs/history/technical_report.md*
 
 ## Key limitations
 
@@ -125,7 +125,7 @@ These checks do not establish the quality or safety of an LLM-powered assistant.
 
 Do not enter real personal, order, or payment information.
 
-*Evidence: README.md; docs/architecture.md; docs/technical_report.md*
+*Evidence: README.md; docs/architecture.md; docs/history/technical_report.md*
 
 ## Proposed next steps
 
@@ -137,7 +137,7 @@ Do not enter real personal, order, or payment information.
 
 These are future-work proposals, not implemented capabilities.
 
-*Evidence: docs/03_backend_architecture.md; docs/technical_report.md*
+*Evidence: docs/03_backend_architecture.md; docs/history/technical_report.md*
 
 ## Run the prototype
 
@@ -165,4 +165,4 @@ and a reproducible demo evaluation harness.
 Keep implemented behavior, measured evidence, and planned design clearly
 separate.
 
-*Further detail: docs/technical_report.md; docs/architecture.md*
+*Further detail: docs/history/technical_report.md; docs/architecture.md*
