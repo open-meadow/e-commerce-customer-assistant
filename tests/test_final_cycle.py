@@ -427,14 +427,16 @@ class TestAmbiguousOrdersAreNeverResolvedByGuessing:
         reply = say(backend, "C101", "I want to return my charger, it stopped working")  # ORD1002 and ORD1014: none delivered
         assert "delivered orders" in reply.text
 
-    def test_an_eligibility_answer_for_a_guessed_order_becomes_a_request_to_ask(self, temp_db, two_delivered_earbud_orders):
-        backend, _, seen = scripted(calls(("check_return_eligibility", {"order_id": "ORD1001", "item_id": "IT101"})),
-                                    LLMResult(text="Which order do you mean?"))
+    def test_an_eligibility_answer_for_a_guessed_order_becomes_a_question_the_model_never_composes(
+            self, temp_db, two_delivered_earbud_orders):
+        backend, llm, seen = scripted(calls(("check_return_eligibility", {"order_id": "ORD1001", "item_id": "IT101"})),
+                                      LLMResult(text="SHOULD NEVER BE USED"))
         reply = say(backend, "C101", "Can I still return my earbuds?")
-        assert reply.text == "Which order do you mean?"
-        tool_message = [m for m in seen["messages"][-1] if m.get("role") == "tool"][0]["content"]
-        assert '"which_order"' in tool_message and "ORD1099" in tool_message
-        assert "ordinary_return_window" not in tool_message and "delivered_at" not in tool_message  # no dates for a guess
+        assert reply.text == flow_texts.text("which_order_for_item", "en", product="Wireless Earbuds",
+                                              orders="ORD1001 (Delivered), ORD1099 (Delivered)")
+        assert llm.chat_calls == 1  # the model is not called again: it never sees the check's result
+        assert not any(m.get("role") == "tool" for m in seen["messages"][-1])
+        assert not re.search(r"UTC|ordinary|deadline|\d{4}", reply.text.replace("ORD1001", "").replace("ORD1099", ""))
 
     def test_an_eligibility_answer_with_a_typed_id_is_unchanged(self, temp_db, two_delivered_earbud_orders):
         backend, _, seen = scripted(calls(("check_return_eligibility", {"order_id": "ORD1001", "item_id": "IT101"})),

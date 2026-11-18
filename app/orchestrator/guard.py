@@ -16,8 +16,13 @@ _ORDER_RE = re.compile(r"\bORD\d+\b", re.I)
 _ITEM_RE = re.compile(r"\bIT\d+\b", re.I)
 _WORD_RE = re.compile(r"[a-z0-9']+")
 
-_GREETING = re.compile(r"^\s*(hi|hello|hey|hii+|good (morning|afternoon|evening)|namaste)\b[\s!.,?]*$", re.I)
-_THANKS = re.compile(r"^\s*(thanks|thank you|thx|ok thanks|okay thanks|bye|goodbye)\b[\s!.,?a-z]*$", re.I)
+_GREETING = re.compile(
+    r"^\s*(?:(?:hi|hello|hey|hii+|good (?:morning|afternoon|evening)|namaste|namaskar)\b|"
+    r"\u0928\u092e\u0938\u094d\u0924\u0947|\u0928\u092e\u0938\u094d\u0915\u093e\u0930)[\s!.,?]*$", re.I)
+_THANKS = re.compile(
+    r"^\s*(?:(?:thanks|thank you|thx|ok thanks|okay thanks|bye|goodbye|shukriya|dhanyavaad|dhanyawad|dhanyavad)\b"
+    r"[\s!.,?a-z]*|(?:\u0936\u0941\u0915\u094d\u0930\u093f\u092f\u093e|\u0927\u0928\u094d\u092f\u0935\u093e\u0926)"
+    r"[\s!.,?]*)$", re.I)
 
 IN_SCOPE_WORDS = frozenset("""order orders return returns refund refunds ticket tickets payment paid
 delivery delivered shipping shipped product products price stock item items earbuds earbud headphones
@@ -27,7 +32,9 @@ agent damaged broken wrong missing late delay invoice account""".split())
 _OUT_OF_SCOPE_CUES = ("weather", "joke", "poem", "recipe", "capital of", "president", "prime minister",
                       "write code", "python script", "javascript", "movie", "song", "lyrics", "football",
                       "cricket score", "translate", "horoscope", "bitcoin", "stock market", "homework",
-                      "story about")
+                      "story about", "mausam", "chutkula", "kavita", "gaana", "rashifal", "\u092e\u094c\u0938\u092e",
+                      "\u091a\u0941\u091f\u0915\u0941\u0932\u093e", "\u0915\u0935\u093f\u0924\u093e",
+                      "\u0917\u093e\u0928\u093e", "\u0930\u093e\u0936\u093f\u092b\u0932")
 
 _UNSUPPORTED = (
     (re.compile(r"\b(cancel|cancell?ing)\b.*\border\b|\border\b.*\bcancel", re.I), "cancel an order"),
@@ -220,6 +227,13 @@ def resolve_item_by_name(text: str, items: list[dict]) -> Optional[str]:
         return None
     (only_id,) = per_item
     return only_id if not ((message & _singular_forms(sorted(PRODUCT_WORDS))) - per_item[only_id]) else None
+
+
+def names_product(text: str, product_name: str) -> bool:
+    """The customer's own words name this product (any distinctive word of its catalogue name, plural or singular)."""
+    message = _singular_forms(_word_tokens(_ID_TOKEN.sub(" ", text or "")))
+    words = {w for w in _singular_forms(_word_tokens(product_name or "")) if len(w) > 2 and w not in _RESOLVE_IGNORED}
+    return bool(words & message)
 
 
 def has_explanation(text: str, ignore_words: frozenset[str] = frozenset()) -> bool:
@@ -587,7 +601,7 @@ _LATIN_WORDS_2 = re.compile(r"[a-z]{2,}")
 _HINGLISH_WORDS = frozenset("""mera meri mere mujhe mujhko hai hain nahi nahin kya kab kaha kahan kaise kyun kyu bhai
 yaar aap aapka aapki aapke aapko tum tumhara tumhari tumhe mein hoon karna karo karu kare chahiye wapas abhi tak aaya
 aayega aata aati batao bata dijiye kijiye sakta sakte sakti raha rahi rahe gaya gayi hua hui kitne kitna din ye yeh
-woh aur lekin agar toh matlab kuch koi kisi insaan baat karao ho chuka bilkul bekaar bakwas theek madad tha thi ka ki ke ko""".split())
+woh aur lekin agar toh matlab kuch koi kisi insaan baat karao ho chuka bilkul bekaar bakwas theek madad tha thi ka ki ke ko kaisa kaisi aaj kal""".split())
 # Words that, two or more in one message and with at most one Hinglish word, make it clearly English.
 _ENGLISH_FUNCTION_WORDS = frozenset("""the is are was were can could would should do does did have has i you your my we
 it this that what where when how why which who please from with for about still not and any there will been be an
@@ -601,6 +615,10 @@ def detect_language(text: str) -> str:
         return "hi"
     words = set(_LATIN_WORDS.findall((text or "").lower()))
     return "hinglish" if len(words & _HINGLISH_WORDS) >= 2 else "en"
+
+
+_HINDI_COURTESY = frozenset({"namaste", "namaskar", "shukriya", "dhanyavaad", "dhanyawad", "dhanyavad"})
+_COURTESY_FILLER = frozenset({"ji", "bhai", "aapka", "bahut", "bohot", "hai", "aur"})
 
 
 def decisive_language(text: str) -> Optional[str]:
@@ -619,6 +637,8 @@ def decisive_language(text: str) -> Optional[str]:
         return "en"
     if hinglish_hits == 0 and len(_LATIN_WORDS_2.findall(lowered)) >= 4:  # four or more words, none of them Hinglish
         return "en"
+    if words & _HINDI_COURTESY and words <= _HINDI_COURTESY | _COURTESY_FILLER:
+        return "hinglish"  # "namaste", "shukriya ji": a lone Hindi courtesy word settles the language
     return None
 
 

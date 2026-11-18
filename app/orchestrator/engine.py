@@ -219,14 +219,14 @@ class Engine:
         kind = guard.classify_scope(text, specific=known)
         ctx = _Ctx(message=text)
         if expired:
-            ctx.notices.append("Your earlier question timed out, so I've dropped it.")
+            ctx.notices.append(flow_texts.text("timed_out", s.language))
 
         if kind == "greeting":
-            return self._record(s, text, Turn(self._with_notices(ctx, guard.GREETING_REPLY)))
+            return self._record(s, text, Turn(self._with_notices(ctx, flow_texts.text("greeting", s.language))))
         if kind == "thanks":
-            return self._record(s, text, Turn(self._with_notices(ctx, guard.THANKS_REPLY)))
+            return self._record(s, text, Turn(self._with_notices(ctx, flow_texts.text("thanks", s.language))))
         if kind == "out_of_scope":
-            return self._record(s, text, Turn(self._with_notices(ctx, guard.SCOPE_REDIRECT)))
+            return self._record(s, text, Turn(self._with_notices(ctx, flow_texts.text("scope_redirect", s.language))))
 
         if s.want_ticket and s.issues.active is None:
             s.want_ticket = False
@@ -305,7 +305,7 @@ class Engine:
         message = c.data.get("message", "")
         if c.kind == "relation":
             if selection.option_id == "cancel":
-                return Turn("Okay, I've left things as they are.")
+                return Turn(flow_texts.text("relation_left", s.language))
             if selection.option_id == "same_issue":
                 self._add_to_active(s, message)
             else:
@@ -315,15 +315,15 @@ class Engine:
             return self._record(s, message, self._answer(s, message, ctx))
         if c.kind == "third_issue":
             if selection.option_id == "keep":
-                return Turn("Okay, I'll keep working on your current issues and set that aside.")
+                return Turn(flow_texts.text("third_kept", s.language))
             if selection.option_id == "drop_active":
                 s.issues.abandon("active")
                 self._start_issue(s, message)
-                ctx.notices.append("I've dropped your earlier active issue and started this one.")
+                ctx.notices.append(flow_texts.text("notice_dropped_active", s.language))
             else:  # drop_suspended
                 s.issues.abandon("suspended")
                 s.issues.suspend_active_and_start(message)
-                ctx.notices.append("I've dropped the issue that was on hold and put your current one on hold.")
+                ctx.notices.append(flow_texts.text("notice_dropped_hold", s.language))
             return self._record(s, message, self._answer(s, message, ctx))
         return Turn(flow_texts.text("choice_gone_short", s.language))
 
@@ -468,7 +468,7 @@ class Engine:
         if label == "switch_to_suspended_issue" and book.suspended is not None:
             book.swap_to_suspended()
             book.active.messages.append(text)
-            ctx.notices.append("Returning to the issue you raised earlier.")
+            ctx.notices.append(flow_texts.text("notice_returning", s.language))
             return None
         if label == "unrelated":
             ctx.issue_turn = False
@@ -476,8 +476,9 @@ class Engine:
         # related_but_unclear, malformed output, provider failure, or an invalid switch: ask.
         return self._new_choice(
             s, "relation", ("same_issue", "new_issue", "cancel"),
-            "Is this part of the issue we're already working on, or a separate issue?",
-            {"same_issue": "Same issue", "new_issue": "A separate issue", "cancel": "Never mind"},
+            flow_texts.text("relation_question", s.language),
+            {"same_issue": flow_texts.text("relation_same", s.language),
+             "new_issue": flow_texts.text("relation_new", s.language), "cancel": flow_texts.text("cat_cancel", s.language)},
             {"message": text})
 
     def _apply_new_issue(self, s: Session, text: str, ctx: _Ctx) -> Optional[Turn]:
@@ -487,13 +488,14 @@ class Engine:
             return None
         if book.suspended is None:
             book.suspend_active_and_start(text)
-            ctx.notices.append("I've put your earlier issue on hold and noted this as a separate issue.")
+            ctx.notices.append(flow_texts.text("notice_on_hold", s.language))
             return None
         return self._new_choice(
             s, "third_issue", ("drop_active", "drop_suspended", "keep"),
-            "I can only keep track of two issues at once. Which should I set aside for this new one?",
-            {"drop_active": "Drop the issue we're on now", "drop_suspended": "Drop the issue on hold",
-             "keep": "Keep both, ignore the new one"},
+            flow_texts.text("third_question", s.language),
+            {"drop_active": flow_texts.text("third_drop_active", s.language),
+             "drop_suspended": flow_texts.text("third_drop_suspended", s.language),
+             "keep": flow_texts.text("third_keep", s.language)},
             {"message": text})
 
     # ------------------------------------------------------------------
@@ -525,6 +527,10 @@ class Engine:
                 refusal = self._unfound_named_orders_turn(s, ctoken, text, calls, ctx)
                 if refusal is not None:
                     return refusal
+            if calls and self.interpret:
+                ask = self._ambiguous_read_turn(s, ctx, text, calls)
+                if ask is not None:
+                    return ask
             if not calls:
                 # A customer who says they already gave their details must not be asked for them again.
                 # A real model that does so without looking anything up is reminded once, with fixed text
@@ -594,7 +600,9 @@ class Engine:
                 self._note_refund(ctx, name, tool_result)
                 if name == "check_return_eligibility":
                     tool_result = self._eligibility_for_the_named_item(ctoken, call.arguments, tool_result, text)
-                    tool_result = self._eligibility_needs_order(s, text, call.arguments, tool_result)
+                    question = self._eligibility_question(s, ctx, text, call.arguments, tool_result)
+                    if question is not None:
+                        return question
                 if (name == "check_return_eligibility" and tool_result.code == "return_check"
                         and tool_result.data.get("result") == "timing_check"):
                     ctx.eligibility.append(tool_result.data)
@@ -659,21 +667,67 @@ class Engine:
         except DatabaseError:
             return False
 
-    def _eligibility_needs_order(self, s: Session, text: str, arguments: Any, result: ToolResult) -> ToolResult:
-        """An eligibility answer about an order the model chose, when several of the customer's delivered orders hold that
-        product and the customer named none, becomes a request to ask which order, not an answer about one of them."""
+    def _orders_matching_text(self, s: Session, text: str) -> list[dict[str, Any]]:
+        """The customer's orders (any status) that hold a product the customer's own words name."""
+        try:
+            catalog = catalog_module.default_catalog()
+            found = []
+            for order in repository.list_customer_orders(s.customer_id):
+                for item in repository.get_order_items(s.customer_id, order["order_id"]):
+                    name = catalog.name_for(item["product_id"]) or ""
+                    if guard.names_product(text, name):
+                        found.append({"order_id": order["order_id"], "status": order["status"], "product": name})
+                        break
+            return found
+        except (DatabaseError, catalog_module.CatalogError):
+            return []
+
+    def _ambiguous_read_turn(self, s: Session, ctx: _Ctx, text: str, calls: tuple) -> Optional[Turn]:
+        """Ask which order, instead of reading one, when the customer typed no order ID, named a product, and two or more of
+        their orders hold it.
+
+        Runs BEFORE any tool of the model's response is executed, so nothing about any candidate order is read, shown or
+        done first. It applies to a status or refund lookup of a candidate order and to a listing of the customer's orders
+        (a listing carries dates and totals), unless the customer asked for their own orders in so many words. It applies
+        even when the model looks up every candidate in the same turn: the answer would then carry each order's items,
+        prices, dates and refund details, and the customer asked for none of that yet. The question is code-owned text
+        that lists order IDs and statuses only, taken from the customer's own orders.
+        """
+        reads = {self._order_arg(c.arguments) for c in calls if c.name in ("get_order_status", "get_refund_policy")}
+        reads.discard(None)
+        listing_all = any(c.name == "list_my_orders" for c in calls) and not guard.asks_for_own_orders(text)
+        if not (reads or listing_all) or self._order_given(s, text):
+            return None
+        candidates = self._orders_matching_text(s, text)
+        ids = {c["order_id"] for c in candidates}
+        if len(ids) < 2 or (not listing_all and not (reads & ids)):
+            return None
+        listing = ", ".join(f"{c['order_id']} ({c['status']})" for c in candidates)
+        log.info("ambiguous order: asked which one before reading any (session %s)", s.session_ref)
+        return Turn(self._with_notices(ctx, flow_texts.text("which_order_status", s.language,
+                                                            product=candidates[0]["product"], orders=listing)))
+
+    def _eligibility_question(self, s: Session, ctx: _Ctx, text: str, arguments: Any, result: ToolResult) -> Optional[Turn]:
+        """An eligibility check about an order the model chose, when two or more of the customer's delivered orders hold
+        that product and the customer named no order ID, becomes a question: which order? The check's result (dates and
+        all) is discarded: it reaches neither the model nor the customer. It was read-only and account-scoped; it is run
+        before this point only so that a loosely named item can be resolved to a product."""
         if result.status != "ok" or not isinstance(arguments, dict) or not isinstance(result.data, dict):
-            return result
+            return None
         order_id = self._order_arg(arguments)
         item_id = str(result.data.get("item_id") or arguments.get("item_id") or "").strip().upper()
         if not order_id or not item_id:
-            return result
+            return None
         candidates = self._ambiguous_delivered_orders(s, text, order_id, item_id)
         if not candidates:
-            return result
-        return ToolResult("invalid_input", "which_order", {"orders": candidates}, note=(
-            "Several of the customer's delivered orders contain this product and they named none. Do not pick one and "
-            "do not state any dates: ask which order they mean, listing only the order IDs and statuses in data.orders."))
+            return None
+        try:
+            product = self._item_name(repository.get_order_items(s.customer_id, order_id), item_id, s.language)
+        except DatabaseError:
+            product = flow_texts.text("item_fallback", s.language)
+        listing = ", ".join(f"{o['order_id']} ({o['status']})" for o in candidates)
+        return Turn(self._with_notices(ctx, flow_texts.text("which_order_for_item", s.language, product=product,
+                                                            orders=listing)))
 
     @staticmethod
     def _order_arg(arguments: Any) -> Optional[str]:
@@ -940,7 +994,7 @@ class Engine:
         if ambiguous:  # several delivered orders hold this product and the customer named none: never pick one
             listing = ", ".join(f"{o['order_id']} ({o['status']})" for o in ambiguous)
             return Turn(self._with_notices(ctx, flow_texts.text(
-                "which_order_for_item", s.language, product=self._item_name(items, item_id), orders=listing)))
+                "which_order_for_item", s.language, product=self._item_name(items, item_id, s.language), orders=listing)))
         item_words = guard.PRODUCT_WORDS | guard.product_words(self._item_name(items, item_id))
         refusal = self._refusal_before_reason(s, order_id, item_id)
         if refusal is not None:  # no reason or category is asked for a return that cannot be made
@@ -1019,21 +1073,22 @@ class Engine:
             s.draft = None
             return failure
         s.draft = {"order_id": order_id, "item_id": item_id, "reason": reason}
-        name = self._item_name(items, item_id)
+        name = self._item_name(items, item_id, s.language)
         return self._new_choice(
             s, "return_category", (*RETURN_CATEGORIES, "cancel"),
             flow_texts.text("category_question", s.language, name=name, item_id=item_id, order_id=order_id),
             _category_labels(s.language), {"order_id": order_id, "item_id": item_id})
 
     @staticmethod
-    def _item_name(items: list[dict[str, Any]], item_id: str) -> str:
+    def _item_name(items: list[dict[str, Any]], item_id: str, language: str = "en") -> str:
+        fallback = flow_texts.text("item_fallback", language)
         for i in items:
             if i["item_id"] == item_id:
                 try:
-                    return catalog_module.default_catalog().name_for(i["product_id"]) or "the item"
+                    return catalog_module.default_catalog().name_for(i["product_id"]) or fallback
                 except catalog_module.CatalogError:
-                    return "the item"
-        return "the item"
+                    return fallback
+        return fallback
 
     def _after_category(self, s: Session, c: ChoiceState, option: str) -> Turn:
         draft, s.draft = s.draft, None
@@ -1243,7 +1298,7 @@ class Engine:
                 return failure
             offer["stage"] = "details"
             offer["item_words"] = guard.PRODUCT_WORDS | guard.product_words(self._item_name(items, offer["item_id"]))
-            return Turn(flow_texts.text("describe", s.language, item=self._item_name(items, offer["item_id"]),
+            return Turn(flow_texts.text("describe", s.language, item=self._item_name(items, offer["item_id"], s.language),
                                           item_id=offer["item_id"], order_id=offer["order_id"]))
         # stage "details": the customer's description of the problem
         label = self._interpret("ticket_details", "Please describe the problem with the item.", text)
