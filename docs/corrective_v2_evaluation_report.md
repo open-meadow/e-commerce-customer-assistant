@@ -1,7 +1,7 @@
 # Corrective v2: final project report
 
 Model: `gpt-4o-mini`, temperature 0.2, OpenAI embeddings for retrieval. Branch `rukum/corrective-v2` (local only, nothing
-pushed). Final commit `78f9790`. **Full offline suite: 2825 passed, 0 failed.** The original capstone PR branch
+pushed). Final commit `41c1c9c` (code) plus this report. **Full offline suite: 2983 passed, 0 failed.** The original capstone PR branch
 `rukum/capstone-final` is unchanged (`f9883ea`, same as its remote).
 
 Every verdict below is a manual reading of the reply against its ground truth by the assistant that ran the evaluations. The
@@ -21,6 +21,9 @@ validates everything, owns every state change, and writes only after an explicit
 | Named orders | An order ID the customer typed that the model ignored is looked up once by code through the customer-scoped tool; if it is not on the account the reply is fixed text that offers, never lists, the customer's own orders |
 | Order selection | A repeat complaint with several orders and none named gets a code-owned list of the customer's own order IDs and statuses and a question |
 | Timelines | A sentence stating a duration that no tool result or policy text gave is removed; only verified sources count |
+| Refund wording | A reply that promises a refund, or says it has arrived or is complete, is replaced by the refund status said plainly (Pending, Processed or Failed), in three languages |
+| One catalogue | `app/tools/flow_texts.py` holds all 85 fixed engine sentences in English, Hinglish and Hindi: ticket flow, order lookup, the whole return journey, confirmations, errors, refund status |
+| Ambiguity | A return, an eligibility answer or a ticket never rests on an order the model chose among several that hold the same product; the assistant asks which |
 | Evaluation tooling | Retry runner, usage ledger, harness-only transport retry, per-test attribution of transport failures, composition of attempts |
 
 Ownership is unchanged and enforced in SQL: every repository function filters on the authenticated customer, no tool schema
@@ -115,26 +118,54 @@ One pass over 12 conversations, a fresh run ID, every request counted (27 chat, 
 | S02 (control) | English reply to Hinglish | per-turn language line | | **Passed** (see remaining issues) |
 | Ticket offers | generic offer after not-found and eligibility answers | not appended there | `TestTicketOffersThatBelongAreKept` (late own order, Hinglish, closed deadline, explicit request, invented ID) | not targeted live |
 
-## 9. Remaining known issues and limitations
+## 9. Last correction cycle (code `41c1c9c`; validated OFFLINE only, no live run)
 
-* **Language of the return flow**: the fixed return-flow sentences (category menu prompt, ineligible texts, confirmation) are still
-  English for Hinglish and Hindi customers. No evaluation case exposed this, but it is the same class as C023. Next candidate.
-* **S02 phrasing**: the Hinglish reply says the customer "milne wala hai" (is going to receive) the pending refund, a mild
-  prediction beyond "Pending". Seen in 3 of 3 live S02 runs; not corrected.
-* **Typed IDs only**: the code-owned lookup recognises `ORD<digits>`; forms such as "order 1010" or "ORD-1010" and an ID only in an
-  earlier turn are left to the model by design.
-* **Refund durations**: a sentence with an unsupported duration is removed, so a customer who quotes a duration and expects the
-  assistant to echo it will not see it echoed unless a policy or tool result gives it.
-* **C003 scope**: the order clarification covers repeat complaints; other no-ID requests with several orders still rely on the model.
-* **Human review pending**: all manual verdicts and the Hinglish and Hindi wording (25 sentences) are unreviewed by a person.
-* **Statistical weight**: A repeated cases four or five times, B and the validations ran each case once or twice, at temperature
-  0.2; nothing here is a significance test and the sets were written by the same team as the prompts.
+The ledger sits at 682 of 700 as a conservative upper bound (18 requests of headroom), and the instruction was to prioritise
+offline validation, so none of this cycle was run against the live model. Each correction has regression tests; whether the model's
+own wording changes is therefore unmeasured, but every correction below is enforced by code, not by the prompt.
+
+| Item | Before | After | Regression evidence |
+|---|---|---|---|
+| S02 refund wording | Hinglish reply said the customer "milne wala hai" (is going to receive) a Pending refund, in 3 of 3 live runs | The sentence is replaced by the status said plainly: "The refund of ₹1,999 is Pending: it has not been paid yet, and I can't promise when it will be" (Hinglish and Hindi equivalents). Processed is never said to have arrived; Failed offers a ticket; a Not Applicable refund and policy statements are untouched; with several refunds the sentence is dropped | `TestRefundStatusWording` (12 promise and 6 completion phrasings in three languages, 8 phrasings that must stay untouched, the real S02 sentence before and after, Pending, Processed, Failed, Not Applicable, no tool result) |
+| Pending, Processed, Completed | The tool note did not say what each status means | Notes define them; **Completed does not exist as a refund status in the data** (`Not Applicable`, `Pending`, `Processed`, `Failed`); it is a return-request status. The assistant is told never to call a refund completed | note tests and a schema-vocabulary test |
+| Return journey language | The reason prompts, category menu and button labels, eligibility and deadline refusals, confirmation card, submission, cancellation, expiry, reminders and errors were English for Hinglish and Hindi customers | 60 new sentences in the one catalogue; the engine chooses by the session language. English wording is unchanged, character for character | `TestReturnJourneyLocalised` (full journey in three languages: menu and labels, card and summary, submitted, declined, never mind, typed cancel, closed window with ticket offer, reminders, repeated and unknown confirmations, shipped order), `TestEveryEligibilityOutcomeIsLocalised`, `TestEnglishIsExactlyWhatItWasBefore` (9 refusal texts and 5 other sentences pinned) |
+| Scattered translations | Two catalogues (ticket, lookup) and sentences in the engine | One catalogue; the earlier two modules were removed; a test checks the engine uses only catalogue keys and that every key has three languages with the same placeholders, Hindi in Devanagari, Hinglish in Latin letters | `TestTheCatalogue` |
+| ORD format | `ORD<digits>` only | The data's format is `ORD` plus four digits (ORD1001 to ORD1015); `ORD-1010`, `ord 1010` and `ORD_1010` are now read as ORD1010; `order 1010`, `1010` and short fragments are deliberately not read as IDs; item IDs are never mistaken for orders | `TestOrderIdFormat` |
+| Automatic order selection | The model could choose one of several delivered orders holding the same product for a return, an eligibility answer or a ticket | The assistant asks which order (IDs and statuses only, no dates or amounts). A typed ID, in this message or earlier in the conversation, settles it; one matching order, or orders that are not delivered, need no question | `TestAmbiguousOrdersAreNeverResolvedByGuessing` (10 cases) |
+| Refund-duration guard | Checked English units and digits | Also number words ("a week", "three to seven days") and Hinglish and Hindi units; verified against 12 supported and 9 unsupported examples; the customer's words and the assistant's own prose never establish a duration | `TestTheRefundDurationGuard` |
+
+**Language review.** `docs/localization_review_hinglish_hindi.md` shows every one of the 85 sentences side by side in English,
+Hinglish and Hindi, says when each is shown, and marks 14 as High priority for a fluent reader (the three refund-status sentences,
+the ticket offer, both confirmation cards, "eligible", the sentences that say a return or ticket now exists, the storing notice,
+the grounding reply and the IDs-and-statuses question). All Hinglish and Hindi wording is still a draft.
+
+## 10. Remaining known issues and limitations
+
+* **Not validated live**: section 9 is offline-validated only. A live check was not run because the ledger's conservative headroom is 18
+  requests. If one is wanted, about 20 requests would cover S02 (Hinglish), a Hindi return journey and the ambiguity question; that
+  needs the ceiling discussed first.
+* **Sentences still English for Hinglish and Hindi customers**: the issue-management prompts (the question asking whether a message is
+  part of the current issue, the two-issue limit and its options, the notices about dropped issues), the greeting, thanks and scope
+  redirect replies, the fallback name "the item" and the model-generated prose (which follows the per-turn language line). These are
+  outside the return journey; the same catalogue can take them.
+* **Model-chosen orders in read-only answers**: the ambiguity guard covers returns, eligibility answers and tickets. A refund or status
+  answer about an order the model chose among several look-alikes, with no ID typed, is still left to the model (it reads, never writes,
+  and the prompt tells it to list orders rather than pick).
+* **Typed IDs only**: forms such as "order 1010" or a bare "1010" are left to the model by design (too easy to confuse with other numbers).
+* **Refund and duration guards are conservative**: a sentence that quotes a duration or a refund promise is removed even if it was
+  harmless; Devanagari digits are not parsed; a reply in a fourth language is not checked.
+* **S03**: the refund timeline "3-7 business days" in that reply comes from the FAQ passage the tool returned, so it is supported and
+  kept; the removal path was exercised only offline.
+* **C003 scope**: the order clarification covers repeat complaints; other no-ID requests rely on the model.
+* **Human review pending**: all manual verdicts and the 85 sentences of Hinglish and Hindi wording are unreviewed by a person.
+* **Statistical weight**: A repeated cases four or five times, B and the validations ran each case once or twice, at temperature 0.2;
+  nothing here is a significance test and the sets were written by the same team as the prompts.
 * **Provider confirmation**: request counts are client-side bookkeeping, a conservative upper bound; other HTTP libraries or async
   clients would not be counted.
 
-## 10. Test result
+## 11. Test result
 
-`uv run python -m pytest tests -q`: **2825 passed** at commit `78f9790` (2639 before the evaluation tooling; tests added for the usage
-ledger, transport retry, attempt composition, the second-round prompt and language fixes and `tests/test_remaining_defects.py`).
-Five older tests that pinned English ticket text for Hinglish and Hindi input, or the model asking for an ID again, were updated to the
-corrected behaviour; one scoring test was adapted so it still exercises the scorer.
+`uv run python -m pytest tests -q`: **2983 passed** at commit `41c1c9c` (2639 before the evaluation tooling; 2825 after the previous
+correction cycle; 158 tests added in this one, in `tests/test_final_cycle.py`). Thirteen older tests that pinned English sentences for
+Hindi and Hinglish input were updated to the localised sentences; one scoring test was adapted earlier so it still exercises the
+scorer. Evaluations A and B, their reports and every earlier attempt are unchanged.
