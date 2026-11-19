@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 import re
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import timedelta
 from typing import Any, Optional
 
@@ -169,6 +169,7 @@ class _Ctx:
     sources: list = field(default_factory=list)  # every tool result of this turn, as text (what a reply may rely on)
     lookups: dict = field(default_factory=dict)  # order ID -> get_order_status result this turn: one lookup per ID
     refunds: dict = field(default_factory=dict)  # order ID -> (refund_status, refund_amount) from this turn's tools
+    return_tool_proposed: bool = False  # the model proposed start_return_request this turn (the return path owns the turn)
 
 
 # The ticket offer made (as text only) when a return is refused for a closed window is ``flow_texts`` key
@@ -547,6 +548,10 @@ class Engine:
                     # IDs and statuses from their own orders only.
                     listing = ", ".join(f"{o['order_id']} ({o['status']})" for o in ctx.orders)
                     return Turn(self._with_notices(ctx, flow_texts.text("which_order", s.language, orders=listing)))
+                if self.interpret:
+                    settled = self._return_prose_turn(s, ctx, text, result.text or "")
+                    if settled is not None:
+                        return settled
                 return self._finish_text(s, result.text, ctx, wrote_tool_results)
             if calls_used + len(calls) > self.settings.max_tool_calls_per_turn:
                 return Turn(self._with_notices(ctx, flow_texts.text("too_many_calls", s.language)))
@@ -569,6 +574,7 @@ class Engine:
                 calls_used += 1
                 name = call.name if isinstance(call.name, str) else ""
                 if name == "start_return_request":
+                    ctx.return_tool_proposed = True
                     # Only a real language model can use the feedback; the offline stand-in keeps its fixed reply.
                     feedback = self._return_item_feedback(s, call.arguments) if self.interpret else None
                     if feedback is not None:
@@ -973,6 +979,80 @@ class Engine:
         if not explained:  # naming the item says what, not why
             return flow_texts.text("reason_ask", language) + flow_texts.text("reason_notice", language)
         return None
+
+    def _return_prose_turn(self, s: Session, ctx: _Ctx, text: str, reply: str) -> Optional[Turn]:
+        """The customer explicitly asked to return something and the model answered in prose instead of calling
+        ``start_return_request``. A model that proposed that tool this turn is engaging the return path (its checks run in
+        code on valid arguments; after item feedback it may ask the customer which item), so the turn is left to it. It does
+        not matter whether the model ran the read-only eligibility check first: that tool is for questions, and its result
+        gave the model's wording no authority to send the customer to a category that does not exist. Code settles it
+        through ``_start_return``, the path a ``start_return_request`` call takes, so the same checks decide: a delivered order whose window has closed gets the fixed refusal and the ticket offer (never
+        "choose the reason category in the interface"), an eligible one starts the real flow (the reason question, then the
+        category buttons), look-alike orders get the which-order question, and an order with several items gets the
+        which-item question. Every clarification is fixed text with IDs, statuses and names from the customer's own records.
+
+        Live report: ORD1003, delivered 10 days earlier, was offered for return and the customer was told to pick a
+        category that did not exist, because the eligibility check only ran when the model called the tool.
+
+        Eligibility depends on the item only through an active return request on it (order status and the window are
+        the order's), so no item is ever assumed. The order comes from what the customer typed (this message, else earlier in
+        the conversation) or the product their words name, else all of their delivered orders; the model's reply is never
+        used to pick an order. Every candidate is an order of the signed-in customer that is delivered: an ID that is not
+        theirs or not delivered leaves the reply to the model and nothing about it is read. A model reply that claims a
+        completed action never reaches the customer: a closed window gets the fixed refusal, an eligible return begins with
+        the fixed "I can't confirm that anything has been done" sentence and then its real first step. Only the customer's
+        words trigger this and nothing is written here (a return needs the category and then the customer's Confirm).
+        """
+        if not guard.wants_to_return(text) or ctx.return_tool_proposed:
+            return None
+        try:
+            delivered = {o["order_id"]: o for o in repository.list_customer_orders(s.customer_id)
+                         if o["status"] == "Delivered"}
+            typed = guard.order_ids_in(text)
+            if not typed:
+                for message in reversed(s.history):
+                    if message.get("role") == "user" and guard.order_ids_in(message.get("content") or ""):
+                        typed = guard.order_ids_in(message["content"])
+                        break
+            if typed:
+                if any(i not in delivered for i in typed):  # not theirs, or not delivered: nothing to settle here
+                    return None
+                candidates = sorted(typed)
+            else:
+                matching = self._orders_matching_text(s, text)  # orders (any status) holding a product the customer named
+                by_words = [m["order_id"] for m in matching if m["order_id"] in delivered]
+                if matching and not by_words:  # the product they named is not in a delivered order
+                    return None
+                candidates = sorted(by_words or delivered)  # never the model's pick: its reply is not an input
+            if not candidates:
+                return None
+            if len(candidates) > 1:
+                listing = ", ".join(f"{i} ({delivered[i]['status']})" for i in candidates)
+                return Turn(self._with_notices(ctx, flow_texts.text("which_order_to_return", s.language, orders=listing)))
+            order_id = candidates[0]
+            items = repository.get_order_items(s.customer_id, order_id)
+            if not items:
+                return None
+            named_items = [{"item_id": i["item_id"], "product_name": self._item_name(items, i["item_id"])} for i in items]
+            item_id = guard.resolve_item_by_name(text, named_items)
+            if item_id is None:
+                if len(items) == 1:  # the customer's words name another product, which this order does not hold
+                    return None
+                verdicts = [repository.check_return_eligibility(s.customer_id, order_id, i["item_id"], reason_category="standard")
+                            for i in items]
+                if all(v["outcome"] == "outside_return_window" for v in verdicts):
+                    item_id = items[0]["item_id"]  # the closed window is the order's: every item gets the same refusal
+                else:  # which item matters (an active return, or an open window): never guessed
+                    feedback = ToolResult("invalid_input", "item_not_in_order", {"order_id": order_id, "items": named_items})
+                    return Turn(self._with_notices(ctx, self._which_item_text(feedback, s.language)))
+        except DatabaseError:
+            return None
+        settled = self._start_return(s, {"order_id": order_id, "item_id": item_id}, text, ctx)
+        if _FALSE_SUCCESS.search(reply) and (settled.choice is not None or (s.draft or {}).get("awaiting_reason")):
+            # The model claimed the return was done. A refusal replaces that claim outright (it says nothing was started);
+            # a return that is only now beginning says first, in fixed text, that nothing has been done yet.
+            settled = replace(settled, text=flow_texts.text("grounding", s.language) + "\n\n" + settled.text)
+        return settled
 
     def _start_return(self, s: Session, arguments: Any, user_text: str, ctx: _Ctx) -> Turn:
         # The model's own "reason" (if it sends one) is never used: the stored

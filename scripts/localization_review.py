@@ -108,6 +108,7 @@ WHEN = {
     "cannot_start": "Return refused for any other reason",
     "which_item": "The model named the wrong item on an order: asks which item",
     "which_order_for_item": "Several delivered orders hold the product and none was named: asks which order",
+    "which_order_to_return": "A return was asked for, several delivered orders could fit and none was named: asks which order (IDs and statuses only)",
     "refund_pending": "A reply promised a pending refund: replaced by the status said plainly",
     "refund_processed": "A reply said a processed refund had arrived: replaced by the status said plainly",
     "refund_failed": "A reply promised a failed refund: replaced by the status and a ticket offer",
@@ -148,6 +149,7 @@ HIGH = {  # wording where tone or meaning can change what the customer believes 
     "not_on_account": "must not hint whose the order is",
 }
 MEDIUM = {
+    "which_order_to_return": "neutral question listing IDs and statuses; NEW, added after the first review sheet: DRAFT, awaiting fluent review",
     "greeting": "first thing a customer reads; lists what the assistant can do", "thanks": "friendly register",
     "scope_redirect": "polite refusal wording", "timed_out": "tells the customer something expired",
     "relation_question": "neutral question; the buttons must match it", "third_question": "asks which problem to set aside",

@@ -376,6 +376,30 @@ def _starts_new_return(text: str) -> bool:
     return False
 
 
+_RETURN_IMPERATIVE = re.compile(r"(?:^|\b(?:please|pls|plz)\s+)return\s+(?:it|this|that|them|my)\b")
+_RETURN_HINGLISH = re.compile(r"\breturn\s+(?:karna|karni|karne|krna|krni|karwana|karwani|karo)\b")
+_RETURN_HINDI = re.compile("रिटर्न\\s*(?:करना|करनी)")
+_QUESTION_OPENER = re.compile(
+    r"^\s*(?:can|could|may|might|is|are|do|does|did|will|would|should|how|what|when|why|where|which|who)\b")
+
+
+def wants_to_return(text: str) -> bool:
+    """True if the customer's own message explicitly asks to return something ("I want to return it", "please return this",
+    "return karna hai"). A question about whether they can, a policy question and a negated sentence are not requests. Only
+    the customer's words count, never the model's reply. It decides nothing by itself: the engine uses it to settle a return
+    request the model answered in prose, through the same checks as ``start_return_request``."""
+    lower = (text or "").lower()
+    if not lower.strip() or lower.strip().endswith("?") or _QUESTION_OPENER.match(lower):
+        return False
+    if _starts_new_return(lower):
+        return True
+    for pattern in (_RETURN_IMPERATIVE, _RETURN_HINGLISH, _RETURN_HINDI):
+        for match in pattern.finditer(lower):
+            if not _NEGATED_BEFORE.search(lower[max(0, match.start() - 25):match.start()]):
+                return True
+    return False
+
+
 def _is_lookup_question(text: str) -> bool:
     """A question about an order, delivery or policy that describes no problem (so it is not ticket detail)."""
     lower = text.lower()
