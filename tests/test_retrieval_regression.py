@@ -17,10 +17,10 @@ from __future__ import annotations
 import pytest
 
 from app.backend import Backend, Settings
-from app.rag import default_knowledge_base, load_chunks
-from backend_helpers import Client, ScriptedLLM
+from app.rag import load_chunks
+from backend_helpers import Client, LazyKnowledgeBase, ScriptedLLM
 
-KB = default_knowledge_base()
+KB = LazyKnowledgeBase()  # resolved at call time: no key, index or network at import
 CHUNKS = {(c.source, c.section): c for c in load_chunks()}
 
 # (question, acceptable top passages, a fact the passage must contain)

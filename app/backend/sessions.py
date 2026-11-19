@@ -68,6 +68,9 @@ class Session:
     pending_id: Optional[str] = None
     draft: Optional[dict[str, Any]] = None
     want_ticket: bool = False
+    # An offer of a support ticket made in text after a refused return: {"order_id", "item_id",
+    # "stage": "offered" | "details", "expires"}. It creates nothing; a ticket still needs its own Confirm.
+    ticket_offer: Optional[dict[str, Any]] = None
     committed: dict[str, int] = field(default_factory=lambda: {"return_request": 0, "support_ticket": 0})
     reserved: dict[str, int] = field(default_factory=lambda: {"return_request": 0, "support_ticket": 0})
     turn_lock: threading.Lock = field(default_factory=threading.Lock)

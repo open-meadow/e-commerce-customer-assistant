@@ -8,13 +8,13 @@ from __future__ import annotations
 
 import pytest
 
-from app.rag import default_knowledge_base, load_chunks
+from app.rag import load_chunks
 from app.rag.retriever import Chunk, KnowledgeBase
 from app.tools import CustomerContext, execute_tool
-from backend_helpers import Client, ScriptedLLM
+from backend_helpers import Client, LazyKnowledgeBase, ScriptedLLM
 from app.backend import Backend, Settings
 
-KB = default_knowledge_base()
+KB = LazyKnowledgeBase()  # resolved at call time: no key, index or network at import
 
 TOP_HIT = [  # (query, source, section) - the clearly best passage must rank first
     ("how long do refunds take", "FAQ.md", "Q3.3"),
@@ -77,7 +77,9 @@ class TestRelevance:
         assert len(KB.search("order", k=1)) == 1
 
     def test_min_score_filters_weak_matches(self):
-        assert KB.search("refund", k=5, min_score=10_000) == []
+        # ``min_score`` is a parameter of the retained lexical component only; the Chroma
+        # retriever filters by cosine distance instead (see test_vector_retrieval.py).
+        assert KnowledgeBase(load_chunks()).search("refund", k=5, min_score=10_000) == []
 
     def test_an_empty_corpus_returns_nothing(self):
         assert KnowledgeBase([]).search("refund") == []

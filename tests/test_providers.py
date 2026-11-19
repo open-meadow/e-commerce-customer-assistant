@@ -755,7 +755,8 @@ class TestResponsesAdapterWithTheBackend:
             self, temp_db, raw, monkeypatch):
         t = Transport(monkeypatch, responses_call(
             "start_return_request",
-            '{"order_id": "ORD1001", "item_id": "IT101", "reason": "MODEL-INVENTED-REASON"}', "ret1"))
+            '{"order_id": "ORD1001", "item_id": "IT101", "reason": "MODEL-INVENTED-REASON"}', "ret1"),
+            responses_text("has_reason"))  # the tool-free label: does the customer's message state a reason?
         customer = Client(self.backend(), "C101")
         message = "I want to return item IT101 from order ORD1001 because I changed my mind about it"
         count = lambda: raw.execute("SELECT count(*) FROM return_requests").fetchone()[0]
@@ -767,7 +768,9 @@ class TestResponsesAdapterWithTheBackend:
         assert "RET_" in done.text and count() == 1
         row = raw.execute("SELECT customer_id, reason, reason_category FROM return_requests").fetchone()
         assert tuple(row) == ("C101", message, "standard")
-        assert len(t.requests) == 1  # choice, confirmation and the write used no further model call
+        assert len(t.requests) == 2  # the tool turn and one label; choice, confirmation and the write use none
+        label_request = t.sent(1)["body"]
+        assert label_request["instructions"].startswith("TASK: interpret_reply") and "tools" not in label_request
         assert "MODEL-INVENTED-REASON" not in json.dumps(tuple(row))
 
     def test_a_ticket_needs_an_explicit_confirm_and_the_summary_call_is_tool_free(self, temp_db, raw, monkeypatch):

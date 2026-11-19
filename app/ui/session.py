@@ -16,6 +16,18 @@ if TYPE_CHECKING:
 
 SessionState = MutableMapping[Any, Any]
 
+
+class ChatMessage(TypedDict):
+    role: str
+    content: str
+
+
+class LiveKitVoiceSession(TypedDict):
+    session_id: str
+    url: str
+    token: str
+
+
 AUTHENTICATED_CUSTOMER_ID_KEY = "authenticated_customer_id"
 CHATS_KEY = "chats"
 ACTIVE_CHAT_ID_KEY = "active_chat_id"
@@ -26,12 +38,13 @@ CHOICE_VIEW_KEY = "choice_view"
 UI_ERROR_KEY = "ui_error"
 UI_NOTICE_KEY = "ui_notice"
 REQUEST_ID_KEY = "request_id"
+VOICE_SESSION_KEY = "livekit_voice_session"
 NEW_CHAT_TITLE = "New chat"
 
 
 class ChatSession(TypedDict):
     title: str
-    messages: list[dict[str, str]]
+    messages: list[ChatMessage]
     conversation_state: ConversationState | None
     pending_view: PendingView | None
     choice_view: ChoiceView | None
@@ -47,6 +60,7 @@ def initialize_session(session_state: SessionState) -> None:
     session_state.setdefault(CHOICE_VIEW_KEY, None)
     session_state.setdefault(UI_ERROR_KEY, None)
     session_state.setdefault(UI_NOTICE_KEY, None)
+    session_state.setdefault(VOICE_SESSION_KEY, None)
 
 def clear_conversation(session_state: SessionState) -> None:
     initialize_session(session_state=session_state)
@@ -56,6 +70,7 @@ def clear_conversation(session_state: SessionState) -> None:
     session_state[CHOICE_VIEW_KEY] = None
     session_state[UI_ERROR_KEY] = None
     session_state[UI_NOTICE_KEY] = None
+    session_state[VOICE_SESSION_KEY] = None
     session_state[CHATS_KEY] = {}
     session_state[ACTIVE_CHAT_ID_KEY] = None
     session_state.pop(REQUEST_ID_KEY, None)

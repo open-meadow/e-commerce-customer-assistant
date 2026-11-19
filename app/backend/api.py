@@ -24,6 +24,7 @@ from app.db.health import check_database_health
 from app.llm.base import LLMClient, LLMError
 from app.llm.providers import build_llm_client
 from app.orchestrator.engine import Engine, Turn
+from app.rag import embedding_configuration
 
 log = logging.getLogger("app.backend")
 
@@ -35,11 +36,16 @@ class Backend:
     """One backend instance: registry, engine, LLM client and settings."""
 
     def __init__(self, llm: Optional[LLMClient] = None, settings: Optional[Settings] = None,
-                 env: Optional[Mapping[str, str]] = None):
+                 env: Optional[Mapping[str, str]] = None, interpret_replies: Optional[bool] = None):
         self.settings = settings or Settings()
         self.llm = llm if llm is not None else build_llm_client(env if env is not None else os.environ)
         self.registry = SessionRegistry(self.settings)
-        self.engine = Engine(self.registry, self.llm, self.settings)
+        self.engine = Engine(self.registry, self.llm, self.settings, interpret=interpret_replies)
+
+    @property
+    def interpretation_active(self) -> bool:
+        """True when a language model interprets replies at open prompts (see ``Engine.interpret``)."""
+        return self.engine.interpret
 
     # -- login ----------------------------------------------------------
 
@@ -123,7 +129,9 @@ class Backend:
 
     def check_backend(self) -> BackendHealth:
         health = check_database_health()
-        notes = ("Policy retrieval is lexical (BM25), not embedding based.",)
+        # Retrieval has its own provider requirement, separate from the LLM: say which embeddings
+        # are configured (production OpenAI embeddings need OPENAI_API_KEY) without calling them.
+        notes = (f"Policy retrieval uses a persistent Chroma index. Embeddings: {embedding_configuration()}.",)
         if getattr(self.llm, "name", "") == "rule_based":
             notes += ("Using the offline rule-based assistant, not a language model.",)
         return BackendHealth(health.status, health.reason, getattr(self.llm, "name", "unknown"), notes)
