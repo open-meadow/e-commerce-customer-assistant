@@ -210,7 +210,7 @@ discarded and reaches neither the model nor the customer.
 * **Statistical weight**: A repeated cases four or five times, B and the validations ran each case once or twice, at temperature 0.2; nothing here is a
   significance test and the sets were written by the same team as the prompts.
 * **Provider confirmation**: request counts are client-side bookkeeping, a conservative upper bound; other HTTP libraries or async clients would not
-  be counted. Voice (LiveKit) was never run live; Docker was not rebuilt after these changes.
+  be counted. Voice (LiveKit) was never run live; Docker `api` and `app` were built and health-checked on 2026-11-19 after these changes, the voice worker was not tested.
 
 ## 12. Test result
 

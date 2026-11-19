@@ -100,6 +100,8 @@ This keeps the volume (the database and index survive). `docker compose down -v`
 
 Evidence (2026-11-13, offline, on the tree committed as `fdb372a`, in a separate worktree with no `.env` and a separate Compose project name): `docker compose build` succeeded; `up -d api app` gave `api` healthy and `app` running; Streamlit `/_stcore/health` returned `ok`; the volume held `app_d2.db` with 6 customers and schema version 1; the logs showed no traceback; `down -v --rmi local` left no containers or volumes. **Not covered:** the `worker` (not started), the voice call, any browser interaction with the Docker UI, a clean clone from a remote, and any live service.
 
+Evidence (2026-11-19, offline, a fresh clone of `master` at `6e82d86`, no `.env`, compose project name `fresh-verify`): `docker compose build api app` succeeded; `up -d api app` gave `api` **healthy** and `app` running; Streamlit `/_stcore/health` returned `ok`; the volume held `app_d2.db` with 6 customers and schema version 1; the logs showed no traceback; `OPENAI_API_KEY` was not set in the container; `down -v --rmi local` left no containers, volumes or images. **Not covered:** the voice `worker` (never started, **not tested**), a browser session against the Docker UI, and any live service. This verifies the `api` and `app` services only, not the whole stack.
+
 ## 6. The demo conversation
 
 Choose a customer in the sidebar. Use **New chat** for another conversation and select a listed chat to return to it (the chat list is temporary session state; reloading loses it).

@@ -76,9 +76,7 @@ Choose a customer in the sidebar and start chatting. With no API key the app use
 understands a fixed set of phrasings and is a demo path, not a language model. Policy search needs `OPENAI_API_KEY` even in that
 mode. To use a real model set `LLM_PROVIDER`, `LLM_MODEL` and the matching key in `.env`.
 
-Docker (real backend, seeded database volume, port 8501). **Not recently verified:** the compose setup was last checked on
-2026-11-13 (the `api` and `app` services only), before the corrective-v2 changes, and the image has not been rebuilt since. The voice
-`worker` has never been run:
+Docker (real backend, seeded database volume, port 8501). **Partly verified on 2026-11-19:** the `api` and `app` images were built from the merged `master` (`6e82d86`) and started without a `.env`; `api` reported healthy, Streamlit's health check answered `ok`, and the database was initialised in the volume (6 customers, schema version 1). This does **not** verify the whole stack: the optional voice `worker` has **not been tested**, the Docker UI was not driven in a browser, and no live provider was used. Details: [docs/06_demo_runbook.md](docs/06_demo_runbook.md):
 
 ```bash
 docker compose up --build
@@ -152,7 +150,8 @@ Read the full methodology, sample sizes and caveats in the [evaluation report](d
 - Hinglish and Hindi wording is unreviewed. The model's own free prose is steered towards the customer's language, not enforced.
 - The evaluation sets are small (one to five repetitions, temperature 0.2) and were written by the same team as the prompts.
 - Order IDs are recognised in the form `ORD1010` (also `ORD-1010`, `ord 1010`); a bare number is left to the model.
-- Voice has never been run live. Docker was last verified on 2026-11-13 and has not been rebuilt since the corrective-v2 changes.
+- Voice has never been run live, and the optional voice `worker` container has not been tested. Docker `api` and `app` were built and
+  health-checked on 2026-11-19; the rest of the stack, the Docker UI in a browser and any live provider were not exercised.
 - The ambiguity guards act on tool calls; an order the model describes without calling a tool is not caught.
 
 The full list is in section 11 of the evaluation report.

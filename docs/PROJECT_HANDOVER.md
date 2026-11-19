@@ -1,6 +1,6 @@
 # Project handover: e-commerce customer-support assistant
 
-Branch `rukum/corrective-v2` (local only; nothing is pushed). Written at the end of the corrective-v2 cycle. For the full
+Branch `rukum/corrective-v2` (kept locally; its content reached `master` through the sanitized branch `integrate/corrective-v2-public`, PR #2, 2026-11-19). Written at the end of the corrective-v2 cycle. For the full
 evaluation evidence see `docs/evaluation/EVALUATION_REPORT.md`; for wording that needs a human reader see
 `docs/localization_review_hinglish_hindi.md` and `.csv`.
 
@@ -99,7 +99,7 @@ scenarios 5/5, conversations 11/12 (45/46 keys, 133/134 universal), single-turn 
 6. **Sentences not in the catalogue**: the offline stand-in's own replies (`guard.unsupported_reply`), model prompts and tool notes
    (English, model-facing), and the model's free prose (steered by the per-turn language line, not enforced).
 7. **Statistical weight**: small sets, one to five repetitions, temperature 0.2, written by the same team as the prompts.
-8. **Voice (LiveKit)** has never been run live. **Docker** was built before these changes and not re-run.
+8. **Voice (LiveKit)** has never been run live. **Docker**: the `api` and `app` services were built and health-checked on 2026-11-19 (see `docs/PROJECT_STATUS.md`); the voice `worker` was not tested.
 9. **Request counts** are client-side bookkeeping at the `urllib`/`httpx` layer; other HTTP libraries would not be counted.
 
 ## 6. Final offline test result
@@ -120,7 +120,7 @@ reports external attempts: 0).
 ## 7. Git
 
 * Branch **`rukum/corrective-v2`**: 15 commits on top of the preserved tag `corrective-v1-0ca21fa` (an annotated tag whose commit is `0ca21fa`), 34 commits ahead of local `master`.
-  **Nothing has been pushed.** The original capstone PR branch `rukum/capstone-final` is unchanged (`f9883ea`, same as its remote).
+  **The branch itself was never pushed** (it holds the unredacted evidence archive; its content was merged via PR #2). The original capstone PR branch `rukum/capstone-final` is unchanged (`f9883ea`, same as its remote).
   `ecommerce-customer-assistant` (the GitHub project behind `origin`) was not touched.
 * Diff against the tag `corrective-v1-0ca21fa`: 39 files, +7068 / -279. Against `master`: 78 files, +24472 / -413 (`git diff --shortstat master..HEAD` gives the exact current figure).
 * Preserved and unchanged: the historical v2, v5 and e47501e results, the corrective-v1 results and attempts, the held-out set (hash

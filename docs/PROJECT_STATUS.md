@@ -1,6 +1,6 @@
 # Project status
 
-**Project:** E-commerce customer-support assistant (capstone). **Branch:** `rukum/corrective-v2` (source of truth).
+**Project:** E-commerce customer-support assistant (capstone). **Branch:** `master` (PRs #1 and #2 were merged on 2026-11-19, `6e82d86`). The development line `rukum/corrective-v2` is kept locally.
 **Code checkpoint:** `224f7a5` (frozen: no application-code or prompt changes after it). **Offline tests:** 3,079 passed, 0 failed,
 0 skipped (`uv run python -m pytest tests -q`, about 3 minutes, no network).
 
@@ -16,7 +16,8 @@ trusting any status text, including this one.
 | Localization (English, Hinglish, Hindi) | 104 sentences in one catalogue; Hinglish and Hindi are **drafts** |
 | Evaluation | Evaluations A and B and two post-fix validations complete; raw evidence archived |
 | Repository presentation | README, architecture, evaluation report and documentation index current |
-| Publication | **Not pushed.** PR #1 (`rukum/capstone-final`) comes first; a separate PR of the corrective-v2 work follows after it merges |
+| Docker | `api` and `app` built and verified on 2026-11-19 from `master` `6e82d86` (health checks, database initialised); the voice `worker` is **not tested**; this is not a verification of the whole stack |
+| Publication | **Published.** PR #1 (`rukum/capstone-final`) and PR #2 (the corrective-v2 work, via the sanitized branch `integrate/corrective-v2-public`) are merged into `master`. `rukum/corrective-v2` was never pushed because it holds the unredacted evidence archive |
 
 ## What is validated, and how
 
@@ -34,9 +35,9 @@ Details: [evaluation/EVALUATION_REPORT.md](evaluation/EVALUATION_REPORT.md) and 
 1. A fluent Hinglish and Hindi reviewer to sign the 104 sentences (13 High priority first).
 2. A small live check (about 20 requests) of the offline-only changes. The evaluation ledger stands at 682 of its 700-request
    guard (a conservative upper bound), so the ceiling has to be agreed first.
-3. Publication: wait for PR #1 to merge, then open a PR containing only the corrective-v2 work and the cleanup.
+3. Housekeeping: the merged remote branch `integrate/corrective-v2-public` can be deleted (owner's decision); keep `rukum/corrective-v2` and the private evidence backup.
 4. Refresh `docs/Capstone_Presentation.pptx` (it predates the corrective-v2 results; see [deck/README.md](deck/README.md)).
-5. Live runs of voice (LiveKit) and a Docker rebuild; neither has happened since these changes.
+5. Voice (LiveKit) has never been run live, and the Docker `worker` has not been tested. Docker `api` and `app` were verified on 2026-11-19 (see the table above).
 
 ## Known limitations
 
