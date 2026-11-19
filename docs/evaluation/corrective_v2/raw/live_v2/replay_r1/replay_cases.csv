@@ -1,0 +1,4 @@
+id,query,intent,category,example_expected_action,notes,customer_id,expected_behavior,expected_tool
+C011,mera ORD1015 kab tak aayega yaar,delivery,hinglish,Report the status of ORD1015,Shipped,C102,answer,get_order_status
+C012,Refund kitne din mein aata hai?,refund_timeline,hinglish,Answer from the refund policy,Policy question,C103,answer,get_refund_policy|search_policies
+C014,मेरा ऑर्डर ORD1013 कहाँ है?,order_status,hinglish,Report the status of ORD1013,Devanagari,C106,answer,get_order_status

@@ -1,3 +1,5 @@
+> **Guide, dated 2026-11-13.** This runbook covers the offline demo, Docker and the scripted verification and is still how to run them. Its evidence paragraphs were recorded on `fdb372a`, before the corrective-v2 work and the repository cleanup; for the current assistant, results and status see [../README.md](../README.md), [evaluation/EVALUATION_REPORT.md](evaluation/EVALUATION_REPORT.md) and [PROJECT_STATUS.md](PROJECT_STATUS.md).
+
 # Demo runbook and scripted verification
 
 **Date:** 2026-11-12 (A5), refreshed 2026-11-13 for the integrated Docker setup and Chroma retrieval. **Audience:** whoever runs the demo (Person A or Person B). Commands are PowerShell, run from the repository root, and use only commands and files that exist in this repository. The standard demo needs no live provider, no API key and no network, with one exception: **policy and FAQ answers need `OPENAI_API_KEY`** (live embedding requests), so the offline demo answers policy questions with "cannot look up" (Section 6).

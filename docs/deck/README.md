@@ -1,3 +1,5 @@
+> **Notice: the deck predates the final corrective-v2 results.** `docs/Capstone_Presentation.pptx` was built on 2026-11-14 and still shows 2,158 tests and the earlier evaluation figures (the evaluation numbers are hard-coded in `build_deck.py`). The current figures are in [../evaluation/EVALUATION_REPORT.md](../evaluation/EVALUATION_REPORT.md) and [../PROJECT_STATUS.md](../PROJECT_STATUS.md). It has not been regenerated.
+
 # Rebuilding the capstone deck
 
 `build_deck.py` regenerates `docs/Capstone_Presentation.pptx` (23 slides) from the course PowerPoint template.

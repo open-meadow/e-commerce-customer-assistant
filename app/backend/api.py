@@ -69,9 +69,9 @@ class Backend:
             return StartSessionResult(False, None, "That customer isn't available.", "unknown_customer")
         session = self.registry.create(match["customer_id"], match["name"])
         log.info("session started ref=%s", session.session_ref)
-        greeting = (f"Hi {match['name']}! I can check order status, answer refund and policy questions, "
-                    "look up products, start return requests and raise support tickets. "
-                    "What can I help you with?")
+        greeting = (f"Hi {match['name']}! I'm the store's automated support assistant. I can check order "
+                    "status, answer refund and policy questions, look up products, start return requests "
+                    "and raise support tickets. What can I help you with?")
         return StartSessionResult(True, ConversationState(session.handle), greeting)
 
     def end_session(self, state: ConversationState) -> None:

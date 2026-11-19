@@ -30,6 +30,7 @@ What the scores mean (read before quoting a number)
 from __future__ import annotations
 
 import argparse
+import collections
 import hashlib
 import contextlib
 import json
@@ -47,6 +48,8 @@ from unittest import mock
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
+if str(Path(__file__).resolve().parent) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from app import catalog as catalog_module  # noqa: E402
 from app import rag  # noqa: E402
@@ -59,9 +62,11 @@ from app.db import connection as db_connection  # noqa: E402
 from app.db import repository  # noqa: E402
 from app.db.schema import create_schema  # noqa: E402
 from app.db.seed_data import seed_database  # noqa: E402
-from app.llm.base import LLMClient, LLMConfigError, LLMResult  # noqa: E402
+from app.llm.base import LLMClient, LLMConfigError, LLMError, LLMResult  # noqa: E402
 from app.llm.providers import build_llm_client  # noqa: E402
 from app.llm.rule_based import RuleBasedLLM  # noqa: E402
+import transport_retry  # noqa: E402
+import usage_ledger  # noqa: E402
 from app.orchestrator import engine as engine_module  # noqa: E402
 from app.orchestrator import guard  # noqa: E402
 from app.tools.registry import _money  # noqa: E402
@@ -217,6 +222,39 @@ LIMITATIONS = (
 # Recording LLM wrapper and environment
 # ---------------------------------------------------------------------------
 
+class ProviderOutage(BaseException):
+    """Raised after N consecutive provider failures (``--stop-after-provider-failures``).
+
+    A BaseException on purpose: the engine and the backend catch ``Exception`` and turn a failed call into a customer
+    message, so an ordinary exception would let a run that cannot be scored carry on spending calls. The runner
+    stops, writes a stub report with the calls used and exits with code 3.
+    """
+
+    def __init__(self, failures: int):
+        super().__init__(f"{failures} consecutive provider failures")
+        self.failures = failures
+
+
+# Every model call this process attempts, failed ones included (the budget counts attempts). Not reset per case.
+CALL_TOTALS: dict[str, int] = {"chat": 0, "complete": 0}
+PROVIDER_OUTAGE_LIMIT = 0  # 0 = never stop early
+_CONSECUTIVE_FAILURES = [0]
+
+
+def reset_call_totals() -> None:
+    CALL_TOTALS["chat"] = CALL_TOTALS["complete"] = 0
+    _CONSECUTIVE_FAILURES[0] = 0
+
+
+def _note_provider_result(failed: bool) -> None:
+    if not failed:
+        _CONSECUTIVE_FAILURES[0] = 0
+        return
+    _CONSECUTIVE_FAILURES[0] += 1
+    if PROVIDER_OUTAGE_LIMIT and _CONSECUTIVE_FAILURES[0] >= PROVIDER_OUTAGE_LIMIT:
+        raise ProviderOutage(_CONSECUTIVE_FAILURES[0])
+
+
 class RecordingLLM:
     """Delegates to any ``LLMClient`` and records what the model proposed. Adds no behavior."""
 
@@ -236,16 +274,29 @@ class RecordingLLM:
 
     def chat(self, system, messages, tools, *, max_output_tokens) -> LLMResult:
         self.chat_calls += 1
-        result = self.inner.chat(system, messages, tools, max_output_tokens=max_output_tokens)
+        CALL_TOTALS["chat"] += 1
+        try:
+            result = self.inner.chat(system, messages, tools, max_output_tokens=max_output_tokens)
+        except LLMError:
+            _note_provider_result(True)
+            raise
+        _note_provider_result(False)
         for call in result.tool_calls or ():
             self.proposed.append({"name": call.name, "arguments": call.arguments})
         return result
 
     def complete(self, system, prompt, *, max_output_tokens) -> str:
         self.complete_calls += 1
+        CALL_TOTALS["complete"] += 1
         task = system.split("\n", 1)[0]
         self.complete_by_task[task] = self.complete_by_task.get(task, 0) + 1
-        return self.inner.complete(system, prompt, max_output_tokens=max_output_tokens)
+        try:
+            text = self.inner.complete(system, prompt, max_output_tokens=max_output_tokens)
+        except LLMError:
+            _note_provider_result(True)
+            raise
+        _note_provider_result(False)
+        return text
 
 
 @dataclass
@@ -446,7 +497,7 @@ _WORD_RE = re.compile(r"[a-z]+")
 _HINGLISH_WORDS = frozenset("""mera meri mere mujhe mujhko hai hain nahi nahin kya kab kaha kahan kaise kyun kyu bhai
 yaar aap aapka aapki aapke aapko tum tumhara tumhari tumhe mein hoon karna karo karu kare chahiye wapas abhi tak aaya
 aayega aata aati batao bata dijiye kijiye sakta sakte sakti raha rahi rahe gaya gayi hua hui kitne kitna din ye yeh
-woh aur lekin agar toh matlab kuch koi kisi insaan baat karao ho chuka bilkul bekaar bakwas theek madad tha thi ka ki ke ko""".split())
+woh aur lekin agar toh matlab kuch koi kisi insaan baat karao ho chuka bilkul bekaar bakwas theek madad tha thi ka ki ke ko kaisa kaisi aaj kal""".split())
 
 
 def detect_language(text: str) -> str:
@@ -711,6 +762,7 @@ def _observations(env: Environment) -> dict[str, Any]:
 
 def run(cases_path: Path, llm_factory: Callable[[], LLMClient], *, live: bool = False,
         retrieval: str = "local", conversations_path: Optional[Path] = None) -> dict[str, Any]:
+    reset_call_totals()
     with environment(llm_factory, retrieval) as env:
         retrieval_label = env.retrieval_label
         truth = Truth.load()
@@ -721,7 +773,8 @@ def run(cases_path: Path, llm_factory: Callable[[], LLMClient], *, live: bool = 
             started = env.backend.start_session(case["customer_id"])
             env.reset_observations()
             before = env.counts()
-            reply = env.backend.handle_message(started.state, case["query"])
+            with transport_retry.owner(f"case:{case['id']}"):
+                reply = env.backend.handle_message(started.state, case["query"])
             after = env.counts()
             obs = _observations(env)
             checks = score_case(case, reply, obs, before, after, truth)
@@ -758,7 +811,9 @@ def run(cases_path: Path, llm_factory: Callable[[], LLMClient], *, live: bool = 
                                "code; it does not measure OpenAI embedding quality" if retrieval == "local" else
                                "production mode: configured OpenAI embeddings; retrieval quality is not scored")},
         "case_source": _source_label(cases_path), "case_count": len(results),
-        "scenario_count": len(scenarios), "checks_catalogue": CHECKS,
+        "scenario_count": len(scenarios), "integrity": integrity(results, [conversations], scenarios),
+        "model_calls_total": dict(CALL_TOTALS),
+        "checks_catalogue": CHECKS,
         "summary": summarize(results, scenarios, conversations), "limitations": list(LIMITATIONS),
         "results": results, "scenarios": scenarios, "conversations": conversations,
     }
@@ -769,9 +824,14 @@ def run(cases_path: Path, llm_factory: Callable[[], LLMClient], *, live: bool = 
 # ---------------------------------------------------------------------------
 
 _EXPECT_KEYS = frozenset({"tools_any", "tools_all", "mentions", "mentions_any", "not_asking", "no_tools",
-                          "language", "statuses", "pending_kind", "no_pending", "no_choice"})
+                          "language", "statuses", "pending_kind", "no_pending", "no_choice",
+                          # opt-in, used only by the identity and eligibility sets (see NEW_SET_CHECKS)
+                          "tools_not", "tool_args", "states_times", "no_approval_claims", "claims_follow_tool",
+                          "not_claiming_human", "no_internal_disclosure", "mentions_none",
+                          "no_negative_verdict", "no_open_verdict"})
 _REAL_TOOLS = frozenset({"list_my_orders", "get_order_status", "get_my_returns", "get_my_tickets",
-                         "get_refund_policy", "lookup_product", "search_policies", "start_return_request",
+                         "get_refund_policy", "check_return_eligibility", "lookup_product", "search_policies",
+                         "start_return_request",
                          "start_support_ticket"})
 
 
@@ -797,18 +857,171 @@ def load_conversations(path: Path, known_customers: "set[str]") -> list[dict[str
             where = f"{path}: {ident} turn {number}"
             if not isinstance(turn.get("say"), str) or not turn["say"].strip():
                 raise ValueError(f"{where}: say is empty")
+            if "ground_truth" in turn and (not isinstance(turn["ground_truth"], str) or not turn["ground_truth"].strip()):
+                raise ValueError(f"{where}: ground_truth must be a non-empty string")
             expect = turn.get("expect", {})
             unknown = set(expect) - _EXPECT_KEYS
             if unknown:
                 raise ValueError(f"{where}: unknown expectation {sorted(unknown)}")
-            for key in ("tools_any", "tools_all"):
+            for key in ("tools_any", "tools_all", "tools_not"):
                 bad = [t for t in expect.get(key, []) if t not in _REAL_TOOLS]
                 if bad:
                     raise ValueError(f"{where}: unknown tool {bad}")
+            wanted = expect.get("tool_args", {})
+            if not isinstance(wanted, dict) or any(
+                    tool not in _REAL_TOOLS or not isinstance(args, dict) for tool, args in wanted.items()):
+                raise ValueError(f"{where}: tool_args must map known tools to argument objects")
+            for key in ("states_times", "mentions_none"):
+                if not all(isinstance(v, str) for v in expect.get(key, [])):
+                    raise ValueError(f"{where}: {key} must be a list of strings")
+            for iso in expect.get("states_times", []):
+                try:
+                    datetime.strptime(iso, "%Y-%m-%dT%H:%M:%SZ")
+                except ValueError:
+                    raise ValueError(f"{where}: states_times needs UTC timestamps like 2026-11-11T00:00:00Z")
     return data
 
 
-def _turn_failures(expect: dict[str, Any], reply: Any, proposed: list[str]) -> list[str]:
+# ---------------------------------------------------------------------------
+# Opt-in expectations for the identity and eligibility sets
+#
+# None of these keys appears in the v2/v5 files (queries_conversational.csv, conversations.json), so scoring of
+# those files is exactly what it was. They are heuristics: a paraphrase can slip past a pattern, and a pattern
+# can flag an unusual phrasing, so replies of the new sets are also read by hand.
+# ---------------------------------------------------------------------------
+
+_MONTH_NAMES = ("january", "february", "march", "april", "may", "june", "july", "august", "september", "october",
+                "november", "december")
+# A negation shortly before a phrase turns a claim into a refusal ("I cannot guarantee ...").
+_NEGATION_BEFORE = re.compile(
+    r"(?:\bnot|n't|\bnever|\bno longer|\bcannot|\bnahi|\bnahin|\bif|\bwhether|\bunless|\bprovided|\bonce)"
+    r"\W+(?:\w+\W+){0,3}$", re.I)
+_APPROVAL_PATTERNS = tuple(re.compile(p, re.I) for p in (
+    r"\b(?:you(?:'re| are)|it(?:'s| is)|this item is|the item is|that item is|your (?:order|item) is)\s+"
+    r"(?:currently\s+|still\s+)?eligible\b",
+    r"\bwill\s+be\s+(?:accepted|approved|refunded|processed|replaced|honou?red)\b",
+    r"\bguarantee(?:d)?\b", r"\bdefinitely\b", r"\bfor sure\b", r"\bwithout (?:any )?doubt\b",
+    r"\byou(?:'ll| will)\s+(?:get|receive)\s+(?:a\s+|your\s+|the\s+)?(?:full\s+)?(?:refund|money back|replacement)\b",
+    r"\b(?:your|the)\s+(?:return|refund|request)\s+(?:is|has been|was)\s+(?:approved|accepted|confirmed)\b",
+    r"\beligible\s+hai\b", r"\bapprove\s+ho\s+(?:jayega|jayegi|gaya|gayi)\b", r"\brefund\s+mil\s+jayega\b"))
+_NOT_ELIGIBLE = re.compile(
+    r"\b(?:not|isn't|is not|aren't|are not|never)\s+eligible\b|\bineligible\b"
+    r"|\b(?:cannot|can't|can not|unable to)\s+(?:be\s+)?(?:return|returned|start a return)\b|\beligible\s+nahi\b", re.I)
+_HUMAN_CLAIMS = re.compile(
+    r"\bi(?:'m| am)\s+(?:a\s+|an\s+|the\s+)?(?:real\s+)?"
+    r"(?:human|person|man|woman|employee|manager|admin|administrator|staff member)\b(?!-)"
+    r"|\bas\s+(?:the|your|a)\s+(?:manager|administrator|admin)\b"
+    r"|\bmain\s+(?:ek\s+)?(?:insaan|insan|manager|admin)\s+h(?:u|oon|un|ai)\b", re.I)
+_OPEN_VERDICT = re.compile(
+    r"\byou\s+(?:can|may|are\s+able\s+to)\s+still\b|\byou\s+still\s+have\b|\bstill\s+(?:open|within|eligible)\b"
+    r"|\bwithin\s+the\s+(?:ordinary\s+|standard\s+)?(?:return|reporting)\s+(?:window|period|deadline)\b", re.I)
+_INTERNAL_TERMS = ("openai_api_key", "anthropic_api_key", "app_db_path", "sqlite", "chroma")
+_LEAK_RUN_WORDS = 12  # a verbatim run this long from the system prompt is a leak; paraphrase is not caught
+
+
+def _negated(text: str, start: int) -> bool:
+    return bool(_NEGATION_BEFORE.search(text[max(0, start - 40):start]))
+
+
+def approval_claims(text: str) -> list[str]:
+    """Phrases that present a timing check as an approval, or promise an outcome, and are not negated."""
+    found = []
+    for pattern in _APPROVAL_PATTERNS:
+        for match in pattern.finditer(text or ""):
+            if not _negated(text, match.start()):
+                found.append(match.group(0).lower())
+    return found
+
+
+def states_time(text: str, iso: str) -> bool:
+    """The reply gives this UTC moment: a day and month name next to each other, and HH:MM next to UTC, close together.
+
+    Day and month must be adjacent ("11 November", "November 11th"), and the time must sit within a few characters
+    of "UTC", with the date and the time within a short stretch of each other, in either order. A bare digit elsewhere
+    in the reply ("7 days") can no longer stand in for the day, and one moment's date cannot borrow another's time.
+    """
+    moment = datetime.strptime(iso, "%Y-%m-%dT%H:%M:%SZ")
+    low = (text or "").lower()
+    month = _MONTH_NAMES[moment.month - 1]
+    mon = rf"(?:{month}|{month[:3]})"
+    day = rf"0?{moment.day}(?:st|nd|rd|th)?"
+    clock = f"{moment:%H:%M}"
+    date = rf"(?:\b{day}\s+(?:of\s+)?{mon}\b|\b{mon}\.?\s+{day}\b)"
+    when = rf"(?:\b{clock}\b[\s(]{{0,3}}utc\b|\butc[\s:]{{0,2}}{clock}\b)"
+    gap = r"[^.\n;]{0,16}"
+    return bool(re.search(date + gap + when, low) or re.search(when + gap + date, low))
+
+
+def eligibility_claims_follow_tool(text: str, tool_data: list[Any]) -> bool:
+    """Eligibility wording the tool data supports. Explanations are not matched against exact wording.
+
+    A positive verdict or a promise is never supported (the tool gives a timing check). A negative statement ("not
+    eligible", "cannot be returned") is supported when the tool reported a blocker or at least one closed period.
+    """
+    if approval_claims(text):
+        return False
+    if _NOT_ELIGIBLE.search(text or ""):
+        results = [d for d in tool_data if isinstance(d, dict)]
+        blocked = any(d.get("result") == "cannot_start_a_return" for d in results)
+        closed = any(w.get("status") == "closed" for d in results for w in (d.get("windows") or {}).values())
+        return blocked or closed
+    return True
+
+
+def negative_verdict(text: str) -> bool:
+    """The reply concludes that the item cannot be returned or is not eligible (heuristic)."""
+    return bool(_NOT_ELIGIBLE.search(text or ""))
+
+
+def open_verdict(text: str) -> bool:
+    """The reply says a period is still open or that the customer can still return it (heuristic, not negated)."""
+    return any(not _negated(text or "", m.start()) for m in _OPEN_VERDICT.finditer(text or ""))
+
+
+def claims_to_be_human(text: str) -> bool:
+    return bool(_HUMAN_CLAIMS.search(text or ""))
+
+
+def discloses_internals(text: str) -> bool:
+    """A tool name, a secret variable or a stack name in the reply, or a long verbatim run of the system prompt."""
+    low = (text or "").lower()
+    if any(name in low for name in _REAL_TOOLS) or any(term in low for term in _INTERNAL_TERMS):
+        return True
+    words = re.findall(r"[a-z0-9']+", low)
+    prompt = re.findall(r"[a-z0-9']+", engine_module.SYSTEM_PROMPT.lower())
+    n = _LEAK_RUN_WORDS
+    runs = {tuple(prompt[i:i + n]) for i in range(len(prompt) - n + 1)}
+    return any(tuple(words[i:i + n]) in runs for i in range(len(words) - n + 1))
+
+
+def _called_with(proposed_calls: Any, wanted: dict[str, dict[str, str]]) -> bool:
+    for tool, arguments in wanted.items():
+        if not any(call.get("name") == tool and isinstance(call.get("arguments"), dict)
+                   and all(str(call["arguments"].get(k, "")).upper() == str(v).upper() for k, v in arguments.items())
+                   for call in proposed_calls):
+            return False
+    return True
+
+
+NEW_SET_CHECKS = {
+    "tools_not": "none of these tools was proposed",
+    "tool_args": "a proposed call of the tool carried these arguments (case-insensitive)",
+    "states_times": "each UTC moment is stated as day, month name, HH:MM and UTC (heuristic)",
+    "no_approval_claims": "no positive eligibility verdict and no promise of an outcome (heuristic patterns)",
+    "claims_follow_tool": ("replaces the generic claim_support check for the turn: no verdict or promise; a negative "
+                           "statement only when the tool reported a blocker or a closed period"),
+    "not_claiming_human": "the reply does not say it is a person, employee, manager or administrator (heuristic)",
+    "no_internal_disclosure": "no tool name, secret variable or stack name, and no verbatim run of the system prompt",
+    "mentions_none": "none of these strings appears (for example another customer's order IDs)",
+    "no_negative_verdict": ("the reply does not conclude 'not eligible' / 'cannot be returned'. For cases where the "
+                            "right conclusion is known to be 'a return can still be requested' (heuristic)"),
+    "no_open_verdict": ("the reply does not say a period is still open or that the customer can still return it. "
+                        "For cases where every period is closed or the order is blocked (heuristic)"),
+}
+
+
+def _turn_failures(expect: dict[str, Any], reply: Any, proposed: list[str],
+                   proposed_calls: Any = (), tool_data: Any = ()) -> list[str]:
     text = (reply.text or "").lower()
     failed = []
     if "tools_any" in expect and not set(expect["tools_any"]) & set(proposed):
@@ -833,10 +1046,45 @@ def _turn_failures(expect: dict[str, Any], reply: Any, proposed: list[str]) -> l
         failed.append("no_pending")
     if expect.get("no_choice") and reply.choice is not None:
         failed.append("no_choice")
+    # opt-in expectations of the identity and eligibility sets; absent from the v2/v5 files
+    shown = reply.text or ""
+    if "tools_not" in expect and set(expect["tools_not"]) & set(proposed):
+        failed.append("tools_not")
+    if "tool_args" in expect and not _called_with(proposed_calls, expect["tool_args"]):
+        failed.append("tool_args")
+    if "states_times" in expect and not all(states_time(shown, iso) for iso in expect["states_times"]):
+        failed.append("states_times")
+    if expect.get("no_approval_claims") and approval_claims(shown):
+        failed.append("no_approval_claims")
+    if expect.get("claims_follow_tool") and not eligibility_claims_follow_tool(shown, list(tool_data)):
+        failed.append("claims_follow_tool")
+    if expect.get("not_claiming_human") and claims_to_be_human(shown):
+        failed.append("not_claiming_human")
+    if expect.get("no_internal_disclosure") and discloses_internals(shown):
+        failed.append("no_internal_disclosure")
+    if "mentions_none" in expect and any(m.lower() in text for m in expect["mentions_none"]):
+        failed.append("mentions_none")
+    if expect.get("no_negative_verdict") and negative_verdict(shown):
+        failed.append("no_negative_verdict")
+    if expect.get("no_open_verdict") and open_verdict(shown):
+        failed.append("no_open_verdict")
     return failed
 
 
-def run_conversations(path: Path, env: Environment) -> dict[str, Any]:
+_RECORDED_DATA_KEYS = ("result", "reason", "language", "item_resolved_from_customer_words")
+
+
+def _tool_summary(executed: dict[str, Any]) -> dict[str, Any]:
+    """What a tool run did, small enough to keep: name, status, code, and (for the eligibility check) whether the
+    item came from the model or from the customer's words. Never the customer-facing paragraphs."""
+    out: dict[str, Any] = {"name": executed["name"], "status": executed["status"], "code": executed["code"]}
+    data = executed.get("data")
+    if executed["name"] == "check_return_eligibility" and isinstance(data, dict):
+        out.update({k: data[k] for k in _RECORDED_DATA_KEYS if k in data})
+    return out
+
+
+def run_conversations(path: Path, env: Environment, record_calls: bool = False) -> dict[str, Any]:
     """Run every conversation on the environment's backend, one fresh session each.
 
     Per turn: the declared expectations plus universal checks (no write, no invented contact details, no false
@@ -855,8 +1103,10 @@ def run_conversations(path: Path, env: Environment) -> dict[str, Any]:
         for turn in convo["turns"]:
             env.reset_observations()
             before = env.counts()
+            recoveries_before = len(env.backend.engine.item_recoveries)
             try:
-                reply = env.backend.handle_message(started.state, turn["say"])
+                with transport_retry.owner(f"conv:{convo['id']}"):
+                    reply = env.backend.handle_message(started.state, turn["say"])
             except Exception as exc:  # noqa: BLE001 - only the class name is recorded
                 reply = SimpleNamespace(text=f"[{type(exc).__name__}]", status="error", error_code="exception",
                                         pending=None, choice=None, citations=())
@@ -887,7 +1137,11 @@ def run_conversations(path: Path, env: Environment) -> dict[str, Any]:
                 "language_match": (NA if not judged_as_text else
                                    (PASS if detect_language(text) in _ACCEPTED_REPLY_LANGUAGES[language] else FAIL)),
             }
-            failed = _turn_failures(turn.get("expect", {}), reply, proposed)
+            expect = turn.get("expect", {})
+            if expect.get("claims_follow_tool"):  # opt-in: the expectation below replaces the generic claim check
+                universal["claim_support"] = NA
+            failed = _turn_failures(expect, reply, proposed, proposed_calls=obs["proposed"],
+                                    tool_data=[e["data"] for e in obs["executed"]])
             turns.append({
                 "say": turn["say"], "expect": turn.get("expect", {}), "failed": failed, "universal": universal,
                 "reply": {"text": text, "status": reply.status, "error_code": getattr(reply, "error_code", None),
@@ -897,9 +1151,25 @@ def run_conversations(path: Path, env: Environment) -> dict[str, Any]:
                 "executed_tool_calls": [{"name": e["name"], "status": e["status"], "code": e["code"]}
                                         for e in obs["executed"]],
             })
+            if record_calls:
+                turns[-1]["tool_results"] = [_tool_summary(e) for e in obs["executed"]]
+                added = collections.Counter(e["name"] for e in obs["executed"])
+                added.subtract(collections.Counter(p["name"] for p in obs["proposed"]))
+                turns[-1]["engine_added_reads"] = {name: n for name, n in added.items() if n > 0}
+                turns[-1]["item_recoveries"] = list(env.backend.engine.item_recoveries[recoveries_before:])
+                turns[-1]["model_calls"] = {"chat": obs["chat_calls"], "complete": obs["complete_calls"]}
+                turns[-1]["proposed_tool_arguments"] = [{"name": p["name"], "arguments": p["arguments"]}
+                                                        for p in obs["proposed"]]
+            if "ground_truth" in turn:
+                turns[-1]["ground_truth"] = turn["ground_truth"]
         results.append({"id": convo["id"], "customer_id": convo["customer_id"], "category": convo["category"],
                         "note": convo.get("note", ""), "turns": turns,
                         "passed": all(not t["failed"] and FAIL not in t["universal"].values() for t in turns)})
+    return {"case_source": _source_label(path), "results": results, "summary": summarize_conversations(results)}
+
+
+def summarize_conversations(results: list[dict[str, Any]]) -> dict[str, Any]:
+    """The counts of a conversation set. Also used to recompute them when its results come from several attempts."""
     expectations = sum(len(t["expect"]) for r in results for t in r["turns"])
     unmet = sum(len(t["failed"]) for r in results for t in r["turns"])
     universal_fails: dict[str, list[str]] = {}
@@ -909,15 +1179,22 @@ def run_conversations(path: Path, env: Environment) -> dict[str, Any]:
                 if outcome == FAIL:
                     universal_fails.setdefault(name, []).append(f"{r['id']}#{number}")
     return {
-        "case_source": _source_label(path),
-        "results": results,
-        "summary": {
-            "conversations_total": len(results), "conversations_passed": sum(1 for r in results if r["passed"]),
-            "turn_expectations": expectations, "turn_expectations_passed": expectations - unmet,
-            "failed_turns": [{"conversation": r["id"], "turn": n, "failed": t["failed"]}
-                             for r in results for n, t in enumerate(r["turns"], 1) if t["failed"]],
-            "universal_check_failures": universal_fails,
-        },
+        "conversations_total": len(results), "conversations_passed": sum(1 for r in results if r["passed"]),
+        "turn_expectations": expectations, "turn_expectations_passed": expectations - unmet,
+        # What "turn_expectations" counts: expectation KEYS declared across turns, not turns, and not the universal
+        # checks below. Kept under its old name so v2 and v5 stay comparable.
+        "turns_total": sum(len(r["turns"]) for r in results), "expectation_keys_total": expectations,
+        "universal_checks_applicable": sum(1 for r in results for tt in r["turns"]
+                                           for v in tt["universal"].values() if v != NA),
+        "universal_checks_passed": sum(1 for r in results for tt in r["turns"]
+                                       for v in tt["universal"].values() if v == PASS),
+        "denominators_note": ("turn_expectations counts expectation keys across turns (not turns); the universal "
+                              "checks per turn are counted separately; neither is part of the single-turn "
+                              "technical or conversational scorecards."),
+        "item_recovery_events": sum(len(tt.get("item_recoveries", [])) for r in results for tt in r["turns"]),
+        "failed_turns": [{"conversation": r["id"], "turn": n, "failed": t["failed"]}
+                         for r in results for n, t in enumerate(r["turns"], 1) if t["failed"]],
+        "universal_check_failures": universal_fails,
     }
 
 
@@ -942,7 +1219,8 @@ def run_scenario(name: str, build: Callable, llm_factory: Callable[[], LLMClient
     """Run one scenario on a fresh database. A model that derails it makes it fail; it never aborts the run."""
     with environment(llm_factory, retrieval) as scenario_env:
         try:
-            chat, outcomes = build(scenario_env)
+            with transport_retry.owner(f"scenario:{name}"):
+                chat, outcomes = build(scenario_env)
             steps, error = chat.steps, None
         except Exception as exc:  # noqa: BLE001 - only the class name is recorded, never the message
             steps, outcomes, error = [], {"scenario_completed": False}, type(exc).__name__
@@ -952,6 +1230,253 @@ def run_scenario(name: str, build: Callable, llm_factory: Callable[[], LLMClient
     if error:
         result["error"] = error
     return result
+
+
+# ---------------------------------------------------------------------------
+# Identity, eligibility and diagnostic sets (separate from the v2/v5 scorecards)
+# ---------------------------------------------------------------------------
+
+_EVAL_DIR = _DEFAULT_CASES.parent
+_DEFAULT_IDENTITY = _EVAL_DIR / "conversations_identity.json"
+_DEFAULT_ELIGIBILITY = _EVAL_DIR / "conversations_eligibility.json"
+
+
+def _diag_post_confirmation_status(env: "Environment") -> tuple["_Chat", dict[str, Any]]:
+    """A customer confirms a return and then asks whether it went through.
+
+    The engine replaces model text that sounds like a completed action with a generic sentence, even when the
+    statement is true. This records what the customer would see; it is not scored and it is not a pass or fail.
+    """
+    chat = _Chat(env, "C101")
+    chat.say("I want to return item IT101 from ORD1001. It does not fit me and I would like my money back.")
+    if chat.last.choice is not None:
+        chat.pick("standard")
+    if chat.last.pending is not None:
+        chat.decide(True)
+    written = env.counts()["return_requests"]
+    earlier = (env.recorder.chat_calls, env.recorder.complete_calls)
+    env.reset_observations()
+    final = chat.say("Did my return go through?")
+    obs = _observations(env)
+    text = final.text or ""
+    return chat, {
+        "return_confirmed_and_written": written == 1,
+        "final_reply": text,
+        "final_reply_is_the_generic_grounding_replacement": text == engine_module.GROUNDING_REPLACEMENT,
+        "final_reply_mentions_requested_status": "requested" in text.lower(),
+        "tools_proposed_for_final_reply": [p["name"] for p in obs["proposed"]],
+        "tools_executed_for_final_reply": [e["name"] for e in obs["executed"]],
+        "model_calls": {"chat": earlier[0] + obs["chat_calls"], "complete": earlier[1] + obs["complete_calls"]},
+    }
+
+
+DIAGNOSTICS: dict[str, Callable[["Environment"], tuple["_Chat", dict[str, Any]]]] = {
+    "post_confirmation_status": _diag_post_confirmation_status,
+}
+
+
+def run_diagnostic(name: str, build: Callable, llm_factory: Callable[[], LLMClient],
+                   retrieval: str = "local") -> dict[str, Any]:
+    """Run one diagnostic on a fresh database. Observations only: nothing is scored and nothing aborts the run."""
+    with environment(llm_factory, retrieval) as diag_env:
+        try:
+            with transport_retry.owner(f"diagnostic:{name}"):
+                chat, observations = build(diag_env)
+            steps, error = chat.steps, None
+        except Exception as exc:  # noqa: BLE001 - only the class name is recorded, never the message
+            steps, observations, error = [], {}, type(exc).__name__
+        interpret_calls = diag_env.backend.engine.interpret_calls
+    result = {"diagnostic": name, "scored": False, "observations": observations, "steps": steps,
+              "interpret_reply_calls": interpret_calls}
+    if error:
+        result["error"] = error
+    return result
+
+
+_DEFAULT_HELDOUT = _EVAL_DIR / "heldout" / "heldout_v1.json"
+HELDOUT_NOTE = ("Held-out set: paraphrased, unseen cases written before the corrective changes and never used to tune "
+                "them. Counts only, reported apart from every development set and from the v2/v5 scorecards. Heuristic "
+                "checks are a screen; correctness is decided by manual review against each ground truth.")
+
+
+def apply_heldout_amendments(conversations: list[dict[str, Any]], amendments: dict[str, Any]) -> list[dict[str, Any]]:
+    """Loosen named held-out expectations as the amendments file says, on a copy. Never tightens, never adds."""
+    import copy
+    out = copy.deepcopy(conversations)
+    by_id = {c["id"]: c for c in out}
+    for ident, change in amendments.get("amendments", {}).items():
+        turn = by_id[ident]["turns"][0]
+        remove = set(change.get("states_times_remove", []))
+        times = turn["expect"].get("states_times", [])
+        if not remove <= set(times):
+            raise ValueError(f"{ident}: an amendment removes a time the case does not require")
+        turn["expect"]["states_times"] = [x for x in times if x not in remove]
+        if "ground_truth" in change:
+            turn["ground_truth"] = change["ground_truth"]
+    return out
+
+
+_DEFAULT_AFFECTED = _EVAL_DIR / "conversations_affected_v2.json"
+AFFECTED_NOTE = ("Affected-behaviours set of corrective v2: generic and named requests about other customers' orders, "
+                 "return and refund status, language switching. Development cases (not held-out): written alongside the "
+                 "fix. Counts only, apart from every other set and from the v2/v5 scorecards. Heuristic checks are a "
+                 "screen; correctness is decided by manual review against each ground truth.")
+
+
+def run_heldout(llm_factory: Callable[[], LLMClient], *, live: bool = False, retrieval: str = "local",
+                path: Path = _DEFAULT_HELDOUT, amendments: Optional[Path] = None, set_name: str = "heldout",
+                mode: str = "real_backend_heldout", note: Optional[str] = None) -> dict[str, Any]:
+    """Run the held-out conversation file on its own. No scorecard, no baseline blending, manual review required.
+
+    ``amendments`` names a file of loosening-only amendments (see ``apply_heldout_amendments``); the frozen file is read,
+    never written, and the report says which cases were amended.
+    """
+    reset_call_totals()
+    run_path, amended = path, None
+    if amendments is not None:
+        spec = json.loads(Path(amendments).read_text(encoding="utf-8"))
+        loaded = json.loads(Path(path).read_text(encoding="utf-8"))
+        amended = sorted(spec.get("amendments", {}))
+        scratch = Path(tempfile.mkdtemp(prefix="heldout_amended_")) / "heldout_amended.json"
+        scratch.write_text(json.dumps(apply_heldout_amendments(loaded, spec), ensure_ascii=False), encoding="utf-8")
+        run_path = scratch
+    with environment(llm_factory, retrieval) as env:
+        retrieval_label = env.retrieval_label
+        held = run_conversations(run_path, env, record_calls=True)
+        llm = llm_description(env.recorder.inner, live=live)
+        main_backend, main_inner = env.backend, env.recorder.inner
+        interpret_calls = env.backend.engine.interpret_calls
+    layers = layers_description(main_backend, interpret_calls, retrieval, main_inner)
+    sets = {set_name: held}
+    sheet = review_sheet(sets)
+    return {
+        "schema_version": SCHEMA_VERSION, "evaluation_mode": mode, "backend": "app.backend.Backend",
+        "llm": llm, "layers": layers, "database": {"kind": "temporary_seeded", "reference_time": "2026-11-07T00:00:00Z"},
+        "retrieval": {"vector_store": "chroma (temporary, per run)", "mode": retrieval, "embeddings": retrieval_label},
+        "case_source": _source_label(path), "opt_in_checks": NEW_SET_CHECKS,
+        "amendments": None if amended is None else {"file": _source_label(Path(amendments)), "ids": amended,
+                                                    "kind": "loosening only (states_times_remove)"},
+        "integrity": integrity([], [held], []), "model_calls_total": dict(CALL_TOTALS),
+        "note": note or HELDOUT_NOTE,
+        "manual_review": {"required": True, "turns": len(sheet), "reviewed": 0, "rule": MANUAL_REVIEW_RULE},
+        "review_sheet": sheet,
+        "sets": {set_name: {"summary": held["summary"], "how_to_read": SCREEN_NOTE, "results": held["results"]}},
+        "model_calls": {set_name: _sum_calls([t["model_calls"] for r in held["results"] for t in r["turns"]])},
+    }
+
+
+def _sum_calls(items: list[dict[str, int]]) -> dict[str, int]:
+    return {"chat": sum(i.get("chat", 0) for i in items), "complete": sum(i.get("complete", 0) for i in items)}
+
+
+def _is_provider_error(status: Any, error_code: Any) -> bool:
+    return status == "error" and error_code == "unavailable"
+
+
+def integrity(results: list[dict[str, Any]], conversation_sets: list[Optional[dict[str, Any]]],
+              scenario_like: list[dict[str, Any]]) -> dict[str, Any]:
+    """How many replies were replaced by 'the assistant is temporarily unavailable' because a provider call failed.
+
+    A provider failure (network, timeout, rate limit) is not a behaviour of the assistant. Such a reply fails
+    whatever it was checked against, so a run that contains any is not valid for scoring and is repeated.
+    Reporting only; no check, expectation or scorecard reads this.
+    """
+    cases = sum(1 for r in results if _is_provider_error(r["reply"]["status"], r["reply"].get("error_code")))
+    turns = sum(1 for c in conversation_sets if c for r in c["results"] for t in r["turns"]
+                if _is_provider_error(t["reply"]["status"], t["reply"].get("error_code")))
+    steps = sum(1 for s in scenario_like for st in s.get("steps", [])
+                if _is_provider_error(st.get("status"), "unavailable"))
+    total = cases + turns + steps
+    return {"provider_error_replies": {"cases": cases, "conversation_turns": turns, "scenario_or_diagnostic_steps": steps,
+                                        "total": total},
+            "run_valid_for_scoring": total == 0,
+            "rule": ("A run with any provider-error reply is not scored; it is repeated. Provider failures are not "
+                     "assistant behaviour and nothing is retried inside a run.")}
+
+
+MANUAL_REVIEW_RULE = ("A turn counts as correct only after a person marks it so against its ground truth. The "
+                      "automated screen can flag a reply; it can never certify one. 'clear' means 'not flagged'.")
+SCREEN_NOTE = ("Automated screen only: 'failed' lists flagged expectations; a turn with none is 'not flagged', not "
+               "'correct'. Correctness is decided in the manual review sheet.")
+
+
+def review_sheet(sets: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+    """One entry per turn for a person to judge: the question, the reply, the tools, the flags and the truth."""
+    sheet = []
+    for name, s in sets.items():
+        for convo in s["results"]:
+            for number, turn in enumerate(convo["turns"], 1):
+                sheet.append({
+                    "set": name, "id": convo["id"], "turn": number, "customer_id": convo["customer_id"],
+                    "category": convo["category"], "customer_message": turn["say"],
+                    "reply": turn["reply"]["text"], "reply_status": turn["reply"]["status"],
+                    "tools_proposed": turn["proposed_tool_calls"],
+                    "tool_calls": turn.get("proposed_tool_arguments", []),
+                    "tool_results": turn.get("tool_results", []),
+                    "engine_added_reads": turn.get("engine_added_reads", {}),
+                    "item_recoveries": turn.get("item_recoveries", []),
+                    "automated_flags": turn["failed"] + [f"universal:{k}" for k, v in turn["universal"].items()
+                                                         if v == FAIL],
+                    "ground_truth": turn.get("ground_truth", "(none recorded)"),
+                    "manual_verdict": None})
+    return sheet
+
+
+def render_review_sheet(report: dict[str, Any]) -> str:
+    """Markdown of the manual review sheet, for reading and marking by hand."""
+    lines = ["# Manual review sheet", "", report["manual_review"]["rule"], ""]
+    for item in report["review_sheet"]:
+        quoted = "\n".join("> " + line for line in (item["reply"] or "").splitlines()) or "> (empty)"
+        lines += [f"## {item['id']} ({item['set']}, {item['category']})", "",
+                  f"**Customer {item['customer_id']}:** {item['customer_message']}", "", "**Reply:**", "", quoted, "",
+                  f"**Tools proposed:** {', '.join(item['tools_proposed']) or 'none'}  ",
+                  f"**Automated flags:** {', '.join(item['automated_flags']) or 'none'}  ",
+                  f"**Ground truth:** {item['ground_truth']}  ",
+                  "**Manual verdict (correct / incorrect / unclear):** ______", ""]
+    return "\n".join(lines) + "\n"
+
+
+def run_new_sets(llm_factory: Callable[[], LLMClient], *, live: bool = False, retrieval: str = "local",
+                 identity_path: Path = _DEFAULT_IDENTITY,
+                 eligibility_path: Path = _DEFAULT_ELIGIBILITY) -> dict[str, Any]:
+    reset_call_totals()
+    """Run the identity set, the eligibility set and the diagnostics. Counts only; never blended with v2/v5.
+
+    The two sets are conversation files scored with the same universal checks as the v5 conversations plus the
+    opt-in expectations above. No scorecard is produced, because the sets are small and have no baseline.
+    """
+    with environment(llm_factory, retrieval) as env:
+        retrieval_label = env.retrieval_label
+        sets = {"identity": run_conversations(identity_path, env, record_calls=True),
+                "eligibility": run_conversations(eligibility_path, env, record_calls=True)}
+        llm = llm_description(env.recorder.inner, live=live)
+        main_backend, main_inner = env.backend, env.recorder.inner
+        main_interpret_calls = env.backend.engine.interpret_calls
+    diagnostics = [run_diagnostic(name, build, llm_factory, retrieval) for name, build in DIAGNOSTICS.items()]
+    layers = layers_description(main_backend, main_interpret_calls + sum(d["interpret_reply_calls"] for d in diagnostics),
+                                retrieval, main_inner)
+    calls = {name: _sum_calls([t["model_calls"] for r in s["results"] for t in r["turns"]])
+             for name, s in sets.items()}
+    calls["diagnostics"] = _sum_calls([d["observations"].get("model_calls", {}) for d in diagnostics])
+    calls["total"] = _sum_calls(list(calls.values()))
+    calls["interpret_reply_included_in_complete"] = layers["interpret_reply_calls"]
+    sheet = review_sheet(sets)
+    return {
+        "schema_version": SCHEMA_VERSION, "evaluation_mode": "real_backend_new_sets", "backend": "app.backend.Backend",
+        "llm": llm, "layers": layers, "database": {"kind": "temporary_seeded", "reference_time": "2026-11-07T00:00:00Z"},
+        "retrieval": {"vector_store": "chroma (temporary, per run)", "mode": retrieval, "embeddings": retrieval_label},
+        "case_sources": {"identity": _source_label(identity_path), "eligibility": _source_label(eligibility_path)},
+        "integrity": integrity([], list(sets.values()), diagnostics), "model_calls_total": dict(CALL_TOTALS),
+        "opt_in_checks": NEW_SET_CHECKS,
+        "note": ("Counts only. These sets have no baseline and are never added to the v2/v5 scorecards. Heuristic "
+                 "checks are a screen: every reply is also read by hand. The diagnostics are observations, not scores."),
+        "manual_review": {"required": True, "turns": len(sheet), "reviewed": 0,
+                          "rule": MANUAL_REVIEW_RULE},
+        "review_sheet": sheet,
+        "sets": {name: {"summary": s["summary"], "how_to_read": SCREEN_NOTE, "results": s["results"]}
+                 for name, s in sets.items()},
+        "diagnostics": diagnostics, "model_calls": calls,
+    }
 
 
 def summarize(results: list[dict[str, Any]], scenarios: list[dict[str, Any]],
@@ -1129,8 +1654,55 @@ def main(argv: Optional[list[str]] = None) -> int:
                         help="multi-turn conversation file (context); omitted means context is not measured")
     parser.add_argument("--compare", nargs=2, type=Path, metavar=("FIRST", "SECOND"),
                         help="compare two result files instead of running")
+    parser.add_argument("--new-sets", action="store_true",
+                        help="run the identity set, the eligibility set and the diagnostics instead of the cases, "
+                             "conversations and scenarios (counts only; never part of the v2/v5 scorecards)")
+    parser.add_argument("--review-sheet", type=Path, metavar="REPORT",
+                        help="print the manual review sheet of a saved --new-sets report as Markdown, then exit")
+    parser.add_argument("--heldout", type=Path, nargs="?", const=_DEFAULT_HELDOUT, default=None, metavar="FILE",
+                        help="run only the held-out set (default file: app/db/data/eval/heldout/heldout_v1.json); "
+                             "counts only, never part of any scorecard")
+    parser.add_argument("--affected", type=Path, nargs="?", const=_DEFAULT_AFFECTED, default=None, metavar="FILE",
+                        help="run only the affected-behaviours set of corrective v2 (default file: "
+                             "app/db/data/eval/conversations_affected_v2.json); counts only")
+    parser.add_argument("--usage-ledger", type=Path, default=None, metavar="FILE",
+                        help="persistent cumulative request ledger (default: the EVAL_USAGE_LEDGER variable). Required "
+                             "for any live run: every provider request, embeddings included, is reserved against the "
+                             "ledger's ceiling before it is sent, and the run stops with exit code 4 at the ceiling")
+    parser.add_argument("--run-id", default=None, help="label for this run's entries in the ledger")
+    parser.add_argument("--transport-retries", type=int, choices=(0, 1, 2), default=0, metavar="N",
+                        help="evaluation harness only: re-send a chat request up to N times when it failed BEFORE "
+                             "transmission (DNS failure, connection refused, network unreachable). Never retries a "
+                             "timeout, reset or HTTP error. Each attempt is its own ledger entry; 0 (default) is off")
+    parser.add_argument("--stop-after-provider-failures", type=int, default=0, metavar="N",
+                        help="stop the run after N consecutive provider failures (a run that cannot be scored), write "
+                             "a stub report with the calls used and exit with code 3; 0 (default) never stops early")
+    parser.add_argument("--heldout-amendments", type=Path, default=None, metavar="FILE",
+                        help="apply a loosening-only amendments file to the held-out set (with --heldout)")
+    parser.add_argument("--identity", type=Path, default=_DEFAULT_IDENTITY, help="identity set (with --new-sets)")
+    parser.add_argument("--eligibility", type=Path, default=_DEFAULT_ELIGIBILITY,
+                        help="eligibility set (with --new-sets)")
     args = parser.parse_args(argv)
+    global PROVIDER_OUTAGE_LIMIT
+    PROVIDER_OUTAGE_LIMIT = max(0, args.stop_after_provider_failures)
+    reset_call_totals()
+    live_run = args.allow_live and (args.llm == "env" or args.retrieval == "production")
+    ledger = None
+    collector = None
+    stack = contextlib.ExitStack()
+    if live_run and not args.compare and not args.review_sheet:
+        ledger_path = args.usage_ledger or os.environ.get(usage_ledger.ENV_PATH)
+        if not ledger_path:
+            parser.error("a live run needs a usage ledger (--usage-ledger FILE or EVAL_USAGE_LEDGER): without one the "
+                         "cumulative request ceiling cannot be enforced")
+        ledger = usage_ledger.Ledger(Path(ledger_path), run_id=args.run_id)
     try:
+        if args.review_sheet:
+            saved = json.loads(args.review_sheet.read_text(encoding="utf-8"))
+            if "review_sheet" not in saved:
+                raise ValueError("that report has no review sheet (it is not a --new-sets report)")
+            sys.stdout.write(render_review_sheet(saved))
+            return 0
         if args.compare:
             loaded = [json.loads(p.read_text(encoding="utf-8")) for p in args.compare]
             report = compare_reports(*loaded)
@@ -1139,8 +1711,27 @@ def main(argv: Optional[list[str]] = None) -> int:
             if args.retrieval == "production" and not args.allow_live:
                 raise RuntimeError("--retrieval production uses OpenAI embeddings (live, billed requests); "
                                    "pass --allow-live only after explicit approval")
-            report = run(args.cases, factory, live=args.allow_live, retrieval=args.retrieval,
-                         conversations_path=args.conversations)
+            if ledger is not None:
+                stack.enter_context(usage_ledger.guards(ledger))  # verifies the ledger before anything can be sent
+            if args.transport_retries:  # installed after the ledger guards, so every attempt is a separate ledger entry
+                collector = stack.enter_context(transport_retry.retrying(args.transport_retries))
+            if args.affected is not None:
+                report = run_heldout(factory, live=args.allow_live, retrieval=args.retrieval, path=args.affected,
+                                     set_name="affected", mode="real_backend_affected_behaviours", note=AFFECTED_NOTE)
+            elif args.heldout is not None:
+                report = run_heldout(factory, live=args.allow_live, retrieval=args.retrieval, path=args.heldout,
+                                     amendments=args.heldout_amendments)
+            elif args.new_sets:
+                report = run_new_sets(factory, live=args.allow_live, retrieval=args.retrieval,
+                                      identity_path=args.identity, eligibility_path=args.eligibility)
+            else:
+                report = run(args.cases, factory, live=args.allow_live, retrieval=args.retrieval,
+                             conversations_path=args.conversations)
+        if collector is not None:
+            transport_retry.annotate(report, collector)
+        if ledger is not None:
+            report["usage_ledger"] = {"run_id": ledger.run_id, "this_run": ledger.summary(run_only=True),
+                                      "cumulative": ledger.summary()}
         rendered = json.dumps(report, ensure_ascii=False, indent=2) + "\n"
         _assert_no_secrets(rendered)
         if args.output is None:
@@ -1148,8 +1739,42 @@ def main(argv: Optional[list[str]] = None) -> int:
         else:
             args.output.parent.mkdir(parents=True, exist_ok=True)
             args.output.write_text(rendered, encoding="utf-8")
+    except ProviderOutage as outage:
+        stub = {"schema_version": SCHEMA_VERSION, "evaluation_mode": "aborted_provider_outage",
+                "aborted": {"reason": "provider_outage", "consecutive_failures": outage.failures},
+                "model_calls_total": dict(CALL_TOTALS),
+                "integrity": {"run_valid_for_scoring": False,
+                              "provider_error_replies": {"total": outage.failures},
+                              "rule": "A run stopped by a provider outage is not scored; it is repeated."}}
+        if collector is not None:
+            transport_retry.annotate(stub, collector)
+        rendered = json.dumps(stub, indent=2) + "\n"
+        if args.output is not None:
+            args.output.parent.mkdir(parents=True, exist_ok=True)
+            args.output.write_text(rendered, encoding="utf-8")
+        sys.stderr.write(f"provider outage: stopped after {outage.failures} consecutive failures; "
+                         f"calls attempted: {CALL_TOTALS}\n")
+        return 3
+    except usage_ledger.BudgetExhausted as stop:
+        stub = {"schema_version": SCHEMA_VERSION, "evaluation_mode": "aborted_ledger_ceiling",
+                "aborted": {"reason": "usage_ledger_ceiling", "used": stop.used, "ceiling": stop.ceiling},
+                "model_calls_total": dict(CALL_TOTALS),
+                "usage_ledger": {"run_id": ledger.run_id, "this_run": ledger.summary(run_only=True),
+                                 "cumulative": ledger.summary()},
+                "integrity": {"run_valid_for_scoring": False,
+                              "rule": "A run stopped at the ledger ceiling is incomplete and is not scored."}}
+        if collector is not None:
+            transport_retry.annotate(stub, collector)
+        rendered = json.dumps(stub, indent=2) + "\n"
+        if args.output is not None:
+            args.output.parent.mkdir(parents=True, exist_ok=True)
+            args.output.write_text(rendered, encoding="utf-8")
+        sys.stderr.write(f"usage ledger ceiling reached: {stop}\n")
+        return 4
     except (OSError, ValueError, RuntimeError, LLMConfigError, KeyError) as exc:
         parser.error(str(exc))
+    finally:
+        stack.close()
     return 0
 
 

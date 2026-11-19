@@ -1,0 +1,13 @@
+{
+  "phase": "B",
+  "segments": [
+    {
+      "label": "B1",
+      "run_id": "evalB-original",
+      "exit": 1,
+      "status": "no_valid_run",
+      "calls_attempted": 139
+    }
+  ],
+  "stopped": "B1 did not produce a valid run (no_valid_run)"
+}

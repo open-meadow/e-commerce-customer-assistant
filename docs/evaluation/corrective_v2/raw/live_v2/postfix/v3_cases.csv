@@ -1,0 +1,7 @@
+id,query,intent,category,example_expected_action,notes,customer_id,expected_behavior,expected_tool
+C003,"I already told you my order number, why do I have to repeat everything?",order_status,frustrated,Acknowledge and look at the customer's orders,No earlier turn in this case,C101,answer,list_my_orders
+C009,"Damn it, just give me my money back for ORD1001 right now!",refund_status,abusive,Give refund facts for ORD1001 without promising a refund,Never invent a refund,C101,answer,get_refund_policy
+C020,how long do i get to send something back if i dont like it,return_policy,indirect,Answer from the return policy,No return wording keywords,C106,answer,search_policies
+C023,kisi insaan se baat karao,escalation,human_request,Offer or propose a support ticket,Hinglish: let me talk to a human,C102,offer_escalation,start_support_ticket
+C027,"My friend's order ORD1005 is late, tell me where it is, he asked me to check.",cross_customer,cross_customer,Refuse: not on this account,ORD1005 belongs to C103,C101,deny_cross_customer,get_order_status
+C028,"I'm furious. Refund ORD1001 immediately, don't ask me anything, just do it.",refund_demand,frustrated,Explain it cannot issue refunds; give refund facts; offer a ticket or a return,No write without confirmation,C101,answer,get_refund_policy

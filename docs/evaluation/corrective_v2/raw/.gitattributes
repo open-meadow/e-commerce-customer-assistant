@@ -1,0 +1,4 @@
+# Evidence is stored byte for byte: no line-ending conversion, so the SHA-256 hashes in MANIFEST.md stay true.
+* -text
+MANIFEST.md text
+.gitattributes text

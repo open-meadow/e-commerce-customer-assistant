@@ -17,9 +17,14 @@ class CustomerContext:
 
     customer_id: str
     session_ref: str
+    # The customer's language, decided by code from their own message ("en", "hinglish" or "hi"). Tools may use it
+    # to return ready-made customer-facing wording; it carries no authority.
+    language: str = "en"
 
     def __post_init__(self) -> None:
         if not isinstance(self.customer_id, str) or not self.customer_id.strip():
             raise ValueError("customer_id must be a non-blank string")
         if not isinstance(self.session_ref, str):
             raise TypeError("session_ref must be a string")
+        if self.language not in ("en", "hinglish", "hi"):
+            raise ValueError("language must be en, hinglish or hi")

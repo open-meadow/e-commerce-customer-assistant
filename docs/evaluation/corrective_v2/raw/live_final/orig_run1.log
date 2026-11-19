@@ -1,0 +1,8 @@
+LLM provider call failed: provider=openai model=gpt-4o-mini category=network status=- error_type=- error_code=- error_param=-
+LLM provider call failed: provider=openai model=gpt-4o-mini category=network status=- error_type=- error_code=- error_param=-
+LLM provider call failed: provider=openai model=gpt-4o-mini category=timeout status=- error_type=- error_code=- error_param=-
+LLM provider call failed: provider=openai model=gpt-4o-mini category=timeout status=- error_type=- error_code=- error_param=-
+LLM provider call failed: provider=openai model=gpt-4o-mini category=timeout status=- error_type=- error_code=- error_param=-
+LLM provider call failed: provider=openai model=gpt-4o-mini category=timeout status=- error_type=- error_code=- error_param=-
+LLM provider call failed: provider=openai model=gpt-4o-mini category=network status=- error_type=- error_code=- error_param=-
+LLM provider call failed: provider=openai model=gpt-4o-mini category=timeout status=- error_type=- error_code=- error_param=-

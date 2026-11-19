@@ -1,0 +1,10 @@
+{
+  "preflight": "ok",
+  "budget": 150,
+  "segments": [],
+  "stopped": "provider outage after 3 consecutive failures in 'affected pass 1'",
+  "calls_total": {
+    "chat": 12,
+    "complete": 0
+  }
+}

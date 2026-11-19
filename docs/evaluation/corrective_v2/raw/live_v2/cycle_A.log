@@ -1,0 +1,11 @@
+{"label": "A1", "status": "valid", "calls_attempted": 27, "budget": null, "backoff_seconds": [30.0, 90.0]}
+A1 valid 27
+{"label": "A2", "status": "valid", "calls_attempted": 27, "budget": null, "backoff_seconds": [30.0, 90.0]}
+A2 valid 27
+{"label": "A3", "status": "valid", "calls_attempted": 12, "budget": null, "backoff_seconds": [30.0, 90.0]}
+A3 valid 12
+{"label": "A4", "status": "valid", "calls_attempted": 16, "budget": null, "backoff_seconds": [30.0, 90.0]}
+A4 valid 16
+{"label": "A5", "status": "valid", "calls_attempted": 15, "budget": null, "backoff_seconds": [30.0, 90.0]}
+A5 valid 15
+phase A stopped: None

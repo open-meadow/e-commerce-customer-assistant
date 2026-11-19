@@ -1,0 +1,669 @@
+{
+  "V0 current (e47501e)": [
+    {
+      "id": "E01_r1",
+      "language": "en",
+      "status": "ok",
+      "mentions_damage_sentence": false,
+      "reply": "You can still return your Wireless Earbuds from order ORD1001. The ordinary return period (7 days from delivery) is open until **11 November 2026, 00:00 UTC** (about 4 days left). \n\nHowever, I cannot check whether the product can be returned at all, its condition, or its packaging and accessories. If you want to proceed with the return, please let me know!",
+      "tools": [
+        "get_order_status",
+        "check_return_eligibility"
+      ]
+    },
+    {
+      "id": "E01_r2",
+      "language": "en",
+      "status": "ok",
+      "mentions_damage_sentence": false,
+      "reply": "You can still return your Wireless Earbuds from order ORD1001. The ordinary return period is open until **11 November 2026, 00:00 UTC** (about 4 days left). \n\nHowever, I cannot check whether the product can be returned at all, its condition, or its packaging and accessories. If you're ready to proceed with the return, please let me know!",
+      "tools": [
+        "get_order_status",
+        "check_return_eligibility"
+      ]
+    },
+    {
+      "id": "E01_r3",
+      "language": "hinglish",
+      "status": "ok",
+      "mentions_damage_sentence": true,
+      "reply": "Aap apne earbuds ko return kar sakte hain. Ordinary return period (7 din delivery ke baad) 11 November 2026, 00:00 UTC tak khula hai (abhi lagbhag 4 din bache hain). \n\nLekin, agar aap keh rahe hain ki item damaged ya wrong hai, toh uski reporting ki deadline 6 November 2026, 00:00 UTC ko band ho gayi hai. \n\nAgar aapko return request shuru karni hai, toh mujhe batayein.",
+      "tools": [
+        "get_order_status",
+        "check_return_eligibility"
+      ]
+    },
+    {
+      "id": "E01_r4",
+      "language": "hinglish",
+      "status": "ok",
+      "mentions_damage_sentence": true,
+      "reply": "Aap apne Wireless Earbuds ko return kar sakte hain. Ordinary return period (7 din delivery ke baad) 11 November 2026, 00:00 UTC tak khula hai (abhi tak 4 din bache hain). \n\nLekin, agar aap keh rahe hain ki item damaged ya wrong hai, toh uski reporting ki deadline 6 November 2026, 00:00 UTC ko band ho gayi hai. \n\nAgar aap return request shuru karna chahte hain, toh mujhe batayein.",
+      "tools": [
+        "get_order_status",
+        "check_return_eligibility"
+      ]
+    },
+    {
+      "id": "E01_r5",
+      "language": "hinglish",
+      "status": "ok",
+      "mentions_damage_sentence": true,
+      "reply": "Aap apne Wireless Earbuds ko return kar sakte hain kyunki ordinary return period (delivery ke 7 din) 11 November 2026, 00:00 UTC tak khula hai (abhi tak lagbhag 4 din bache hain). \n\nLekin, agar aap keh rahe hain ki item damaged ya wrong hai, toh uski reporting ka deadline 6 November 2026, 00:00 UTC ko band ho gaya hai. \n\nAgar aap return request karna chahte hain, toh main aapki madad kar sakta hoon. Kya aap return request shuru karna chahenge?",
+      "tools": [
+        "get_order_status",
+        "check_return_eligibility"
+      ]
+    },
+    {
+      "id": "E01_r6",
+      "language": "hinglish",
+      "status": "ok",
+      "mentions_damage_sentence": true,
+      "reply": "Aap apne Wireless Earbuds ko return karne ke liye abhi tak eligible hain. Ordinary return period (delivery ke 7 din ke andar) 11 November 2026, 00:00 UTC tak khula hai (abhi lagbhag 4 din bache hain). \n\nLekin, agar aapka item damaged ya wrong hai, toh uski reporting ka deadline 6 November 2026, 00:00 UTC ko close ho gaya hai. \n\nAgar aap return request shuru karna chahte hain, toh mujhe bataiye!",
+      "tools": [
+        "get_order_status",
+        "check_return_eligibility"
+      ]
+    },
+    {
+      "id": "E03_r1",
+      "language": "en",
+      "status": "ok",
+      "mentions_damage_sentence": true,
+      "reply": "The ordinary return period (7 days from delivery) closed on **4 November 2026, 00:00 UTC**. The deadline to report a damaged or wrong item and start a return (48 hours from delivery) closed on **30 October 2026, 00:00 UTC**. \n\nI cannot check whether this product can be returned at all, the item's condition, or its packaging and accessories. If you believe the item is damaged or wrong, I can raise a support ticket for you. Would you like to do that?",
+      "tools": [
+        "get_order_status",
+        "check_return_eligibility"
+      ]
+    },
+    {
+      "id": "E03_r2",
+      "language": "hinglish",
+      "status": "ok",
+      "mentions_damage_sentence": true,
+      "reply": "Aap item ko return nahi kar sakte hain. Ordinary return period (7 din delivery ke baad) 4 November 2026, 00:00 UTC ko band ho gaya. Agar aapka item damaged ya wrong hai, toh uski reporting ka deadline (48 ghante delivery ke baad) 30 October 2026, 00:00 UTC ko band ho gaya. \n\nAgar aapko koi aur madad chahiye, toh main support ticket raise kar sakta hoon.",
+      "tools": [
+        "get_order_status",
+        "check_return_eligibility"
+      ]
+    },
+    {
+      "id": "E03_r3",
+      "language": "en",
+      "status": "ok",
+      "mentions_damage_sentence": true,
+      "reply": "The ordinary return period (7 days from delivery) closed on **4 November 2026, 00:00 UTC**. The deadline to report a damaged or wrong item and start a return (48 hours from delivery) closed on **30 October 2026, 00:00 UTC**. \n\nI cannot check whether the product can be returned at all, the item's condition, or its packaging and accessories. If you believe the item is damaged or wrong, I can raise a support ticket for you. Would you like me to do that?",
+      "tools": [
+        "get_order_status",
+        "check_return_eligibility"
+      ]
+    },
+    {
+      "id": "E03_r4",
+      "language": "en",
+      "status": "ok",
+      "mentions_damage_sentence": true,
+      "reply": "The ordinary return period (7 days from delivery) closed on **4 November 2026, 00:00 UTC**. The deadline to report a damaged or wrong item and start a return (48 hours from delivery) closed on **30 October 2026, 00:00 UTC**. \n\nI cannot check whether this product can be returned at all, the item's condition, or its packaging and accessories. If you need further assistance, I can raise a support ticket for you. Would you like me to do that?",
+      "tools": [
+        "get_order_status",
+        "check_return_eligibility"
+      ]
+    },
+    {
+      "id": "E03_r5",
+      "language": "en",
+      "status": "ok",
+      "mentions_damage_sentence": true,
+      "reply": "The ordinary return period (7 days from delivery) closed on **4 November 2026, 00:00 UTC**. The deadline to report a damaged or wrong item and start a return (48 hours from delivery) closed on **30 October 2026, 00:00 UTC**. \n\nI can only check the delivery timing; I cannot check whether this product can be returned at all, the item's condition, or its packaging and accessories. If you need further assistance, I can raise a support ticket for you. Would you like me to do that?",
+      "tools": [
+        "get_order_status",
+        "check_return_eligibility"
+      ]
+    },
+    {
+      "id": "E03_r6",
+      "language": "hinglish",
+      "status": "ok",
+      "mentions_damage_sentence": true,
+      "reply": "Aap item ko return nahi kar sakte. Ordinary return period (7 din delivery ke baad) 4 November 2026, 00:00 UTC ko close ho gaya. Agar aapko item damaged ya wrong mila hai, toh uski reporting ka deadline (48 ghante delivery ke baad) 30 October 2026, 00:00 UTC ko close ho gaya. \n\nAgar aapko koi issue hai, toh main ek support ticket raise kar sakta hoon. Kya aap chahenge?",
+      "tools": [
+        "get_order_status",
+        "check_return_eligibility"
+      ]
+    }
+  ],
+  "V1 older photo wording": [
+    {
+      "id": "E01_r1",
+      "language": "en",
+      "status": "ok",
+      "mentions_damage_sentence": false,
+      "reply": "You can still return your Wireless Earbuds from order ORD1001. The ordinary return period is open until **11 November 2026, 00:00 UTC** (about 4 days left). \n\nHowever, I cannot check whether the product can be returned at all, its condition, or its packaging and accessories. If you're ready to proceed with the return, please let me know!",
+      "tools": [
+        "get_order_status",
+        "check_return_eligibility"
+      ]
+    },
+    {
+      "id": "E01_r2",
+      "language": "en",
+      "status": "error",
+      "mentions_damage_sentence": false,
+      "reply": "The assistant is temporarily unavailable. Please try again in a moment.",
+      "tools": []
+    },
+    {
+      "id": "E01_r3",
+      "language": "en",
+      "status": "ok",
+      "mentions_damage_sentence": false,
+      "reply": "You can still return your Wireless Earbuds from order ORD1001. The ordinary return period is open until **11 November 2026, 00:00 UTC** (about 4 days left). \n\nHowever, I cannot check whether the product can be returned at all, its condition, or its packaging and accessories. If you want to proceed with the return, please confirm, and I can start the return request for you.",
+      "tools": [
+        "get_order_status",
+        "check_return_eligibility"
+      ]
+    },
+    {
+      "id": "E01_r4",
+      "language": "en",
+      "status": "ok",
+      "mentions_damage_sentence": false,
+      "reply": "You can still return your Wireless Earbuds from order ORD1001. The ordinary return period is open until **11 November 2026, 00:00 UTC** (about 4 days left). \n\nPlease note that I cannot check the item's condition, packaging, or whether it can be returned at all. If you're ready to proceed with the return, let me know!",
+      "tools": [
+        "get_order_status",
+        "check_return_eligibility"
+      ]
+    },
+    {
+      "id": "E01_r5",
+      "language": "en",
+      "status": "ok",
+      "mentions_damage_sentence": false,
+      "reply": "You can still return your Wireless Earbuds from order ORD1001. The ordinary return period is open until **11 November 2026, 00:00 UTC** (about 4 days left). \n\nPlease note that I cannot check the item's condition or packaging. If you're ready to start the return request, let me know!",
+      "tools": [
+        "get_order_status",
+        "check_return_eligibility"
+      ]
+    },
+    {
+      "id": "E01_r6",
+      "language": "en",
+      "status": "ok",
+      "mentions_damage_sentence": false,
+      "reply": "You can still return your Wireless Earbuds from order ORD1001. The ordinary return period is open until **11 November 2026, 00:00 UTC** (about 4 days left). \n\nHowever, I cannot check if the product can be returned at all, its condition, or its packaging and accessories. If you want to proceed with the return, please confirm, and I can start the return request for you.",
+      "tools": [
+        "get_order_status",
+        "check_return_eligibility"
+      ]
+    },
+    {
+      "id": "E03_r1",
+      "language": "en",
+      "status": "ok",
+      "mentions_damage_sentence": true,
+      "reply": "The ordinary return period (7 days from delivery) closed on 4 November 2026, 00:00 UTC. The deadline to report a damaged or wrong item and start a return (48 hours from delivery) closed on 30 October 2026, 00:00 UTC. I can only check the delivery timing; I cannot check whether this product can be returned at all, the item's condition, or its packaging and accessories.\n\nIf you need further assistance, I can help you raise a support ticket.",
+      "tools": [
+        "get_order_status",
+        "check_return_eligibility"
+      ]
+    },
+    {
+      "id": "E03_r2",
+      "language": "en",
+      "status": "ok",
+      "mentions_damage_sentence": true,
+      "reply": "The ordinary return period (7 days from delivery) closed on **4 November 2026, 00:00 UTC**. The deadline to report a damaged or wrong item and start a return (48 hours from delivery) closed on **30 October 2026, 00:00 UTC**. I can only check the delivery timing; I cannot check whether this product can be returned at all, the item's condition, or its packaging and accessories.\n\nIf you need further assistance, I can help raise a support ticket.",
+      "tools": [
+        "get_order_status",
+        "check_return_eligibility"
+      ]
+    },
+    {
+      "id": "E03_r3",
+      "language": "en",
+      "status": "ok",
+      "mentions_damage_sentence": true,
+      "reply": "The ordinary return period (7 days from delivery) closed on **4 November 2026, 00:00 UTC**. The deadline to report a damaged or wrong item and start a return (48 hours from delivery) closed on **30 October 2026, 00:00 UTC**. \n\nI cannot check whether this product can be returned at all, the item's condition, or its packaging and accessories. If you need further assistance, I can help raise a support ticket.",
+      "tools": [
+        "get_order_status",
+        "check_return_eligibility"
+      ]
+    },
+    {
+      "id": "E03_r4",
+      "language": "en",
+      "status": "ok",
+      "mentions_damage_sentence": true,
+      "reply": "The ordinary return period (7 days from delivery) closed on 4 November 2026, 00:00 UTC. The deadline to report a damaged or wrong item and start a return (48 hours from delivery) closed on 30 October 2026, 00:00 UTC. I can only check the delivery timing; I cannot check whether this product can be returned at all, the item's condition, or its packaging and accessories.\n\nIf you need further assistance, I can help raise a support ticket. Would you like me to do that?",
+      "tools": [
+        "get_order_status",
+        "check_return_eligibility"
+      ]
+    },
+    {
+      "id": "E03_r5",
+      "language": "en",
+      "status": "ok",
+      "mentions_damage_sentence": true,
+      "reply": "The ordinary return period (7 days from delivery) closed on **4 November 2026, 00:00 UTC**. The deadline to report a damaged or wrong item and start a return (48 hours from delivery) closed on **30 October 2026, 00:00 UTC**. \n\nI cannot check whether this product can be returned at all, the item's condition, or its packaging and accessories. If you need further assistance, I can help you raise a support ticket. Would you like me to do that?",
+      "tools": [
+        "get_order_status",
+        "check_return_eligibility"
+      ]
+    },
+    {
+      "id": "E03_r6",
+      "language": "en",
+      "status": "ok",
+      "mentions_damage_sentence": true,
+      "reply": "The ordinary return period (7 days from delivery) closed on **4 November 2026, 00:00 UTC**. The deadline to report a damaged or wrong item and start a return (48 hours from delivery) closed on **30 October 2026, 00:00 UTC**. I can only check the delivery timing; I cannot check whether this product can be returned at all, the item's condition, or its packaging and accessories.\n\nIf you need further assistance, I can help raise a support ticket.",
+      "tools": [
+        "get_order_status",
+        "check_return_eligibility"
+      ]
+    }
+  ],
+  "V2 note without 'in the customer's language'": [
+    {
+      "id": "E01_r1",
+      "language": "en",
+      "status": "ok",
+      "mentions_damage_sentence": false,
+      "reply": "You can still return your Wireless Earbuds from order ORD1001. The ordinary return period is open until **11 November 2026, 00:00 UTC** (about 4 days left). \n\nHowever, I cannot check whether the product can be returned at all, its condition, or its packaging and accessories. If you'd like to proceed with the return, please let me know!",
+      "tools": [
+        "get_order_status",
+        "check_return_eligibility"
+      ]
+    },
+    {
+      "id": "E01_r2",
+      "language": "en",
+      "status": "ok",
+      "mentions_damage_sentence": false,
+      "reply": "You can still return your Wireless Earbuds from order **ORD1001**. The ordinary return period is open until **11 November 2026, 00:00 UTC** (about 4 days left). \n\nHowever, I cannot check whether the product can be returned at all, its condition, or if it includes original packaging and accessories. \n\nWould you like to start a return request for the earbuds?",
+      "tools": [
+        "get_order_status",
+        "check_return_eligibility"
+      ]
+    },
+    {
+      "id": "E01_r3",
+      "language": "en",
+      "status": "ok",
+      "mentions_damage_sentence": false,
+      "reply": "You can still return your Wireless Earbuds from order **ORD1001**. The ordinary return period is open until **11 November 2026, 00:00 UTC** (about 4 days left). \n\nHowever, I cannot check the item's condition or whether it meets return criteria. If you're ready to proceed with the return, please confirm, and I can start the return request for you.",
+      "tools": [
+        "get_order_status",
+        "check_return_eligibility"
+      ]
+    },
+    {
+      "id": "E01_r4",
+      "language": "en",
+      "status": "ok",
+      "mentions_damage_sentence": false,
+      "reply": "You can still return your Wireless Earbuds from order ORD1001. The ordinary return period is open until **11 November 2026, 00:00 UTC** (about 4 days left). \n\nHowever, I cannot check the condition of the item or its packaging. If you're ready to start the return request, please confirm, and I'll assist you with that!",
+      "tools": [
+        "get_order_status",
+        "check_return_eligibility"
+      ]
+    },
+    {
+      "id": "E01_r5",
+      "language": "en",
+      "status": "ok",
+      "mentions_damage_sentence": false,
+      "reply": "You can still return your Wireless Earbuds from order **ORD1001**. The ordinary return period is open until **11 November 2026, 00:00 UTC** (about 4 days left). \n\nHowever, I cannot check the item's condition, packaging, or whether it can be returned at all. If you're ready to proceed with the return, please let me know!",
+      "tools": [
+        "get_order_status",
+        "check_return_eligibility"
+      ]
+    },
+    {
+      "id": "E01_r6",
+      "language": "en",
+      "status": "ok",
+      "mentions_damage_sentence": false,
+      "reply": "You can still return your Wireless Earbuds from order ORD1001. The ordinary return period is open until **11 November 2026, 00:00 UTC** (about 4 days left). \n\nHowever, I cannot check if the product can be returned at all, its condition, or its original packaging and accessories. Would you like to start a return request?",
+      "tools": [
+        "get_order_status",
+        "check_return_eligibility"
+      ]
+    },
+    {
+      "id": "E03_r1",
+      "language": "en",
+      "status": "ok",
+      "mentions_damage_sentence": true,
+      "reply": "The ordinary return period for your item from order **ORD1003** closed on **4 November 2026, 00:00 UTC**. Additionally, the deadline to report a damaged or wrong item closed on **30 October 2026, 00:00 UTC**. \n\nI cannot check whether this product can be returned at all, the item's condition, or its packaging and accessories. If you believe the item is damaged or wrong, I can raise a support ticket for you. Would you like me to do that?",
+      "tools": [
+        "get_order_status",
+        "check_return_eligibility"
+      ]
+    },
+    {
+      "id": "E03_r2",
+      "language": "en",
+      "status": "ok",
+      "mentions_damage_sentence": true,
+      "reply": "The ordinary return period for your item from order **ORD1003** closed on **4 November 2026, 00:00 UTC**. Additionally, the deadline to report a damaged or wrong item closed on **30 October 2026, 00:00 UTC**. \n\nI cannot check the condition of the item or whether it can be returned for any specific reason. If you believe the item is damaged or wrong, I can raise a support ticket for you. Would you like me to do that?",
+      "tools": [
+        "get_order_status",
+        "check_return_eligibility"
+      ]
+    },
+    {
+      "id": "E03_r3",
+      "language": "en",
+      "status": "ok",
+      "mentions_damage_sentence": true,
+      "reply": "The ordinary return period for your item from order **ORD1003** closed on **4 November 2026, 00:00 UTC**. Additionally, the deadline to report a damaged or wrong item closed on **30 October 2026, 00:00 UTC**. \n\nI cannot check whether the product can be returned at all, its condition, or if it has its original packaging and accessories. If you believe the item is damaged or wrong, I can raise a support ticket for you. Would you like me to do that?",
+      "tools": [
+        "get_order_status",
+        "check_return_eligibility"
+      ]
+    },
+    {
+      "id": "E03_r4",
+      "language": "en",
+      "status": "ok",
+      "mentions_damage_sentence": true,
+      "reply": "The ordinary return period for your item from order **ORD1003** closed on **4 November 2026, 00:00 UTC**. Additionally, the deadline to report a damaged or wrong item closed on **30 October 2026, 00:00 UTC**. \n\nI cannot check the condition of the item or whether it can be returned for any other reason. If you believe the item is damaged or wrong, I can raise a support ticket for you. Would you like me to do that?",
+      "tools": [
+        "get_order_status",
+        "check_return_eligibility"
+      ]
+    },
+    {
+      "id": "E03_r5",
+      "language": "en",
+      "status": "ok",
+      "mentions_damage_sentence": true,
+      "reply": "The ordinary return period for your item from order **ORD1003** closed on **4 November 2026, 00:00 UTC**. Additionally, the deadline to report a damaged or wrong item closed on **30 October 2026, 00:00 UTC**. \n\nI cannot check whether the product can be returned at all, the item's condition, or its original packaging and accessories. If you believe the item is damaged or wrong, I can raise a support ticket for you. Would you like me to do that?",
+      "tools": [
+        "get_order_status",
+        "check_return_eligibility"
+      ]
+    },
+    {
+      "id": "E03_r6",
+      "language": "en",
+      "status": "ok",
+      "mentions_damage_sentence": true,
+      "reply": "The ordinary return period for your item from order **ORD1003** closed on **4 November 2026, 00:00 UTC**. Additionally, the deadline to report a damaged or wrong item closed on **30 October 2026, 00:00 UTC**. \n\nI cannot check whether the product can be returned at all, its condition, or its original packaging and accessories. If you believe the item is damaged or wrong, I can raise a support ticket for you. Would you like me to do that?",
+      "tools": [
+        "get_order_status",
+        "check_return_eligibility"
+      ]
+    }
+  ],
+  "V3 prompt without the paraphrase sentence": [
+    {
+      "id": "E01_r1",
+      "language": "en",
+      "status": "ok",
+      "mentions_damage_sentence": false,
+      "reply": "The ordinary return period (7 days from delivery) is open until **11 November 2026, 00:00 UTC** (about 4 days left). I cannot check whether this product can be returned at all, the item's condition, or its packaging and accessories. \n\nIf you want to proceed with a return request, please let me know!",
+      "tools": [
+        "get_order_status",
+        "check_return_eligibility"
+      ]
+    },
+    {
+      "id": "E01_r2",
+      "language": "en",
+      "status": "ok",
+      "mentions_damage_sentence": false,
+      "reply": "You can still return your Wireless Earbuds from order ORD1001. The ordinary return period (7 days from delivery) is open until **11 November 2026, 00:00 UTC** (about 4 days left). \n\nI cannot check whether this product can be returned at all, the item's condition, or its packaging and accessories. Would you like to start a return request?",
+      "tools": [
+        "get_order_status",
+        "check_return_eligibility"
+      ]
+    },
+    {
+      "id": "E01_r3",
+      "language": "en",
+      "status": "ok",
+      "mentions_damage_sentence": false,
+      "reply": "You can still return your Wireless Earbuds from order ORD1001. The ordinary return period (7 days from delivery) is open until **11 November 2026, 00:00 UTC** (about 4 days left). \n\nI cannot check whether this product can be returned at all, the item's condition, or its packaging and accessories. If you want to proceed with the return, please confirm, and I can start the return request for you.",
+      "tools": [
+        "get_order_status",
+        "check_return_eligibility"
+      ]
+    },
+    {
+      "id": "E01_r4",
+      "language": "en",
+      "status": "ok",
+      "mentions_damage_sentence": false,
+      "reply": "The ordinary return period (7 days from delivery) is open until **11 November 2026, 00:00 UTC** (about 4 days left). I cannot check whether this product can be returned at all, the item's condition, or its packaging and accessories. If you want to proceed with a return, please let me know!",
+      "tools": [
+        "get_order_status",
+        "check_return_eligibility"
+      ]
+    },
+    {
+      "id": "E01_r5",
+      "language": "en",
+      "status": "ok",
+      "mentions_damage_sentence": false,
+      "reply": "You can still return your Wireless Earbuds from order ORD1001. The ordinary return period (7 days from delivery) is open until **11 November 2026, 00:00 UTC** (about 4 days left). \n\nHowever, I cannot check whether this product can be returned at all, the item's condition, or its packaging and accessories. If you want to proceed with the return, please let me know!",
+      "tools": [
+        "get_order_status",
+        "check_return_eligibility"
+      ]
+    },
+    {
+      "id": "E01_r6",
+      "language": "en",
+      "status": "ok",
+      "mentions_damage_sentence": false,
+      "reply": "You can still return your Wireless Earbuds from order ORD1001. The ordinary return period (7 days from delivery) is open until **11 November 2026, 00:00 UTC** (about 4 days left). \n\nHowever, I cannot check whether this product can be returned at all, the item's condition, or its packaging and accessories. Would you like to start a return request?",
+      "tools": [
+        "get_order_status",
+        "check_return_eligibility"
+      ]
+    },
+    {
+      "id": "E03_r1",
+      "language": "en",
+      "status": "ok",
+      "mentions_damage_sentence": true,
+      "reply": "The ordinary return period (7 days from delivery) closed on 4 November 2026, 00:00 UTC. The deadline to report a damaged or wrong item and start a return (48 hours from delivery) closed on 30 October 2026, 00:00 UTC. I can only check the delivery timing; I cannot check whether this product can be returned at all, the item's condition, or its packaging and accessories.\n\nIf you believe the item is damaged or wrong, I can raise a support ticket for you. Would you like to do that?",
+      "tools": [
+        "get_order_status",
+        "check_return_eligibility"
+      ]
+    },
+    {
+      "id": "E03_r2",
+      "language": "en",
+      "status": "ok",
+      "mentions_damage_sentence": true,
+      "reply": "The ordinary return period (7 days from delivery) closed on 4 November 2026, 00:00 UTC. The deadline to report a damaged or wrong item and start a return (48 hours from delivery) closed on 30 October 2026, 00:00 UTC. I cannot check whether this product can be returned at all, the item's condition, or its packaging and accessories.\n\nIf you believe the item is damaged or wrong, I can raise a support ticket for you. Would you like me to do that?",
+      "tools": [
+        "get_order_status",
+        "check_return_eligibility"
+      ]
+    },
+    {
+      "id": "E03_r3",
+      "language": "en",
+      "status": "ok",
+      "mentions_damage_sentence": true,
+      "reply": "The ordinary return period (7 days from delivery) closed on **4 November 2026, 00:00 UTC**. The deadline to report a damaged or wrong item and start a return (48 hours from delivery) closed on **30 October 2026, 00:00 UTC**. \n\nI cannot check whether this product can be returned at all, the item's condition, or its packaging and accessories. If you need further assistance, I can raise a support ticket for you.",
+      "tools": [
+        "get_order_status",
+        "check_return_eligibility"
+      ]
+    },
+    {
+      "id": "E03_r4",
+      "language": "en",
+      "status": "ok",
+      "mentions_damage_sentence": true,
+      "reply": "The ordinary return period (7 days from delivery) closed on 4 November 2026, 00:00 UTC. The deadline to report a damaged or wrong item and start a return (48 hours from delivery) closed on 30 October 2026, 00:00 UTC. I can only check the delivery timing; I cannot check whether this product can be returned at all, the item's condition, or its packaging and accessories. \n\nIf you believe the item is damaged or wrong, I can raise a support ticket for you. Would you like me to do that?",
+      "tools": [
+        "get_order_status",
+        "check_return_eligibility"
+      ]
+    },
+    {
+      "id": "E03_r5",
+      "language": "en",
+      "status": "ok",
+      "mentions_damage_sentence": true,
+      "reply": "The ordinary return period (7 days from delivery) closed on 4 November 2026, 00:00 UTC. The deadline to report a damaged or wrong item and start a return (48 hours from delivery) closed on 30 October 2026, 00:00 UTC. I can only check the delivery timing; I cannot check whether this product can be returned at all, the item's condition, or its packaging and accessories.\n\nIf you believe the item is damaged or wrong, I can raise a support ticket for you. Would you like me to do that?",
+      "tools": [
+        "get_order_status",
+        "check_return_eligibility"
+      ]
+    },
+    {
+      "id": "E03_r6",
+      "language": "en",
+      "status": "ok",
+      "mentions_damage_sentence": true,
+      "reply": "The ordinary return period (7 days from delivery) closed on **4 November 2026, 00:00 UTC**. The deadline to report a damaged or wrong item and start a return (48 hours from delivery) closed on **30 October 2026, 00:00 UTC**. \n\nI cannot check whether this product can be returned at all, the item's condition, or its packaging and accessories. If you need further assistance, I can raise a support ticket for you. Would you like me to do that?",
+      "tools": [
+        "get_order_status",
+        "check_return_eligibility"
+      ]
+    }
+  ],
+  "V4 all three removed": [
+    {
+      "id": "E01_r1",
+      "language": "en",
+      "status": "ok",
+      "mentions_damage_sentence": false,
+      "reply": "The ordinary return period (7 days from delivery) is open until **11 November 2026, 00:00 UTC** (about 4 days left). I cannot check whether this product can be returned at all, the item's condition, or its packaging and accessories.\n\nIf you would like to proceed with a return, please let me know!",
+      "tools": [
+        "get_order_status",
+        "check_return_eligibility"
+      ]
+    },
+    {
+      "id": "E01_r2",
+      "language": "en",
+      "status": "ok",
+      "mentions_damage_sentence": false,
+      "reply": "You can still return your Wireless Earbuds from order ORD1001. The ordinary return period (7 days from delivery) is open until **11 November 2026, 00:00 UTC** (about 4 days left). \n\nHowever, I cannot check whether this product can be returned at all, the item's condition, or its packaging and accessories. If you're ready to proceed with the return, please confirm, and I can start the return request for you.",
+      "tools": [
+        "get_order_status",
+        "check_return_eligibility"
+      ]
+    },
+    {
+      "id": "E01_r3",
+      "language": "en",
+      "status": "ok",
+      "mentions_damage_sentence": false,
+      "reply": "You can still return your Wireless Earbuds from order ORD1001. The ordinary return period is open until **11 November 2026, 00:00 UTC** (about 4 days left). \n\nHowever, I cannot check whether this product can be returned at all, the item's condition, or its packaging and accessories. Would you like to start a return request?",
+      "tools": [
+        "get_order_status",
+        "check_return_eligibility"
+      ]
+    },
+    {
+      "id": "E01_r4",
+      "language": "en",
+      "status": "ok",
+      "mentions_damage_sentence": false,
+      "reply": "The ordinary return period (7 days from delivery) is open until **11 November 2026, 00:00 UTC** (about 4 days left). I cannot check whether this product can be returned at all, the item's condition, or its packaging and accessories. \n\nIf you'd like to proceed with a return request, please let me know!",
+      "tools": [
+        "get_order_status",
+        "check_return_eligibility"
+      ]
+    },
+    {
+      "id": "E01_r5",
+      "language": "en",
+      "status": "ok",
+      "mentions_damage_sentence": false,
+      "reply": "You can still return your Wireless Earbuds from order ORD1001. The ordinary return period (7 days from delivery) is open until **11 November 2026, 00:00 UTC** (about 4 days left). \n\nI cannot check whether this product can be returned at all, the item's condition, or its packaging and accessories. Would you like me to start a return request for you?",
+      "tools": [
+        "get_order_status",
+        "check_return_eligibility"
+      ]
+    },
+    {
+      "id": "E01_r6",
+      "language": "en",
+      "status": "ok",
+      "mentions_damage_sentence": false,
+      "reply": "You can still return your Wireless Earbuds from order ORD1001. The ordinary return period (7 days from delivery) is open until **11 November 2026, 00:00 UTC** (about 4 days left). \n\nHowever, I cannot check whether this product can be returned at all, its condition, or its packaging and accessories. Would you like to start a return request?",
+      "tools": [
+        "get_order_status",
+        "check_return_eligibility"
+      ]
+    },
+    {
+      "id": "E03_r1",
+      "language": "en",
+      "status": "ok",
+      "mentions_damage_sentence": true,
+      "reply": "The ordinary return period (7 days from delivery) closed on **4 November 2026, 00:00 UTC**. The deadline to report a damaged or wrong item and start a return (48 hours from delivery) closed on **30 October 2026, 00:00 UTC**. \n\nI cannot check whether this product can be returned at all, the item's condition, or its packaging and accessories. If you need further assistance, I can raise a support ticket for you. Would you like me to do that?",
+      "tools": [
+        "get_order_status",
+        "check_return_eligibility"
+      ]
+    },
+    {
+      "id": "E03_r2",
+      "language": "en",
+      "status": "ok",
+      "mentions_damage_sentence": true,
+      "reply": "The ordinary return period (7 days from delivery) closed on 4 November 2026, 00:00 UTC. The deadline to report a damaged or wrong item and start a return (48 hours from delivery) closed on 30 October 2026, 00:00 UTC. I can only check the delivery timing; I cannot check whether this product can be returned at all, the item's condition, or its packaging and accessories. \n\nIf you need further assistance, I can raise a support ticket for you.",
+      "tools": [
+        "get_order_status",
+        "check_return_eligibility"
+      ]
+    },
+    {
+      "id": "E03_r3",
+      "language": "en",
+      "status": "ok",
+      "mentions_damage_sentence": true,
+      "reply": "The ordinary return period (7 days from delivery) closed on 4 November 2026, 00:00 UTC. The deadline to report a damaged or wrong item and start a return (48 hours from delivery) closed on 30 October 2026, 00:00 UTC. \n\nI cannot check whether this product can be returned at all, the item's condition, or its packaging and accessories. If you need further assistance, I can raise a support ticket for you. Would you like me to do that?",
+      "tools": [
+        "get_order_status",
+        "check_return_eligibility"
+      ]
+    },
+    {
+      "id": "E03_r4",
+      "language": "en",
+      "status": "ok",
+      "mentions_damage_sentence": true,
+      "reply": "The ordinary return period (7 days from delivery) closed on 4 November 2026, 00:00 UTC. The deadline to report a damaged or wrong item and start a return (48 hours from delivery) closed on 30 October 2026, 00:00 UTC. I can only check the delivery timing; I cannot check whether this product can be returned at all, the item's condition, or its packaging and accessories.\n\nIf you need further assistance, I can help you raise a support ticket. Would you like to do that?",
+      "tools": [
+        "get_order_status",
+        "check_return_eligibility"
+      ]
+    },
+    {
+      "id": "E03_r5",
+      "language": "en",
+      "status": "ok",
+      "mentions_damage_sentence": true,
+      "reply": "The ordinary return period (7 days from delivery) closed on **4 November 2026, 00:00 UTC**. The deadline to report a damaged or wrong item and start a return (48 hours from delivery) closed on **30 October 2026, 00:00 UTC**. \n\nI cannot check whether this product can be returned at all, the item's condition, or its packaging and accessories. If you need further assistance, I can help you raise a support ticket. Would you like to do that?",
+      "tools": [
+        "get_order_status",
+        "check_return_eligibility"
+      ]
+    },
+    {
+      "id": "E03_r6",
+      "language": "en",
+      "status": "ok",
+      "mentions_damage_sentence": true,
+      "reply": "The ordinary return period (7 days from delivery) closed on 4 November 2026, 00:00 UTC. The deadline to report a damaged or wrong item and start a return (48 hours from delivery) closed on 30 October 2026, 00:00 UTC. I cannot check whether this product can be returned at all, the item's condition, or its packaging and accessories.\n\nIf you need further assistance, I can raise a support ticket for you. Would you like me to do that?",
+      "tools": [
+        "get_order_status",
+        "check_return_eligibility"
+      ]
+    }
+  ]
+}

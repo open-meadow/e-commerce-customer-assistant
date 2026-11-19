@@ -1,0 +1,41 @@
+{
+ "cases": {
+  "C001": "attempt 1: reply ok; ledger shows no unrecovered transport failure in this case's requests (a recovered DNS retry, where present, happened before transmission)",
+  "C002": "attempt 1: reply ok; ledger shows no unrecovered transport failure in this case's requests (a recovered DNS retry, where present, happened before transmission)",
+  "C003": "attempt 1: reply ok; ledger shows no unrecovered transport failure in this case's requests (a recovered DNS retry, where present, happened before transmission)",
+  "C004": "attempt 1: reply ok; ledger shows no unrecovered transport failure in this case's requests (a recovered DNS retry, where present, happened before transmission)",
+  "C005": "attempt 1: reply ok; ledger shows no unrecovered transport failure in this case's requests (a recovered DNS retry, where present, happened before transmission)",
+  "C006": "attempt 1: reply ok; ledger shows no unrecovered transport failure in this case's requests (a recovered DNS retry, where present, happened before transmission)",
+  "C007": "attempt 1: reply ok; ledger shows no unrecovered transport failure in this case's requests (a recovered DNS retry, where present, happened before transmission)",
+  "C008": "attempt 1: reply ok; ledger shows no unrecovered transport failure in this case's requests (a recovered DNS retry, where present, happened before transmission)",
+  "C009": "attempt 1: reply ok; ledger shows no unrecovered transport failure in this case's requests (a recovered DNS retry, where present, happened before transmission)",
+  "C010": "attempt 1: reply ok; ledger shows no unrecovered transport failure in this case's requests (a recovered DNS retry, where present, happened before transmission)",
+  "C013": "attempt 1: reply ok; ledger shows no unrecovered transport failure in this case's requests (a recovered DNS retry, where present, happened before transmission)",
+  "C015": "attempt 1: reply ok; ledger shows no unrecovered transport failure in this case's requests (a recovered DNS retry, where present, happened before transmission)",
+  "C016": "attempt 1: reply ok; ledger shows no unrecovered transport failure in this case's requests (a recovered DNS retry, where present, happened before transmission)",
+  "C017": "attempt 1: reply ok; ledger shows no unrecovered transport failure in this case's requests (a recovered DNS retry, where present, happened before transmission)",
+  "C018": "attempt 1: reply ok; ledger shows no unrecovered transport failure in this case's requests (a recovered DNS retry, where present, happened before transmission)",
+  "C019": "attempt 1: reply ok; ledger shows no unrecovered transport failure in this case's requests (a recovered DNS retry, where present, happened before transmission)",
+  "C020": "attempt 1: reply ok; ledger shows no unrecovered transport failure in this case's requests (a recovered DNS retry, where present, happened before transmission)",
+  "C021": "attempt 1: reply ok; ledger shows no unrecovered transport failure in this case's requests (a recovered DNS retry, where present, happened before transmission)",
+  "C022": "attempt 1: reply ok; ledger shows no unrecovered transport failure in this case's requests (a recovered DNS retry, where present, happened before transmission)",
+  "C023": "attempt 1: reply ok; ledger shows no unrecovered transport failure in this case's requests (a recovered DNS retry, where present, happened before transmission)",
+  "C024": "attempt 1: reply ok; ledger shows no unrecovered transport failure in this case's requests (a recovered DNS retry, where present, happened before transmission)",
+  "C025": "attempt 1: reply ok; ledger shows no unrecovered transport failure in this case's requests (a recovered DNS retry, where present, happened before transmission)",
+  "C026": "attempt 1: reply ok; ledger shows no unrecovered transport failure in this case's requests (a recovered DNS retry, where present, happened before transmission)",
+  "C027": "attempt 1: reply ok; ledger shows no unrecovered transport failure in this case's requests (a recovered DNS retry, where present, happened before transmission)",
+  "C028": "attempt 1: reply ok; ledger shows no unrecovered transport failure in this case's requests (a recovered DNS retry, where present, happened before transmission)",
+  "C029": "attempt 1: reply ok; ledger shows no unrecovered transport failure in this case's requests (a recovered DNS retry, where present, happened before transmission)",
+  "C030": "attempt 1: reply ok; ledger shows no unrecovered transport failure in this case's requests (a recovered DNS retry, where present, happened before transmission)"
+ },
+ "conversations": {
+  "M07": "attempt 1: requests #54-#79 of the run (the block before M08's first call) all succeeded first time",
+  "M04": "attempt 1: requests #54-#79 of the run (the block before M08's first call) all succeeded first time",
+  "M06": "attempt 1: requests #54-#79 of the run (the block before M08's first call) all succeeded first time",
+  "M05": "attempt 1: requests #54-#79 of the run (the block before M08's first call) all succeeded first time",
+  "M02": "attempt 1: requests #54-#79 of the run (the block before M08's first call) all succeeded first time",
+  "M03": "attempt 1: requests #54-#79 of the run (the block before M08's first call) all succeeded first time",
+  "M01": "attempt 1: requests #54-#79 of the run (the block before M08's first call) all succeeded first time"
+ },
+ "scenarios": {}
+}

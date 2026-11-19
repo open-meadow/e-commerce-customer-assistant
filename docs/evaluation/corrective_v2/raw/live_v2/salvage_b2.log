@@ -1,0 +1,10 @@
+round 1 missing {'conversations': ['E04', 'E05', 'E06', 'E09', 'E10'], 'diagnostics': []}
+LLM provider call failed: provider=openai model=gpt-4o-mini category=timeout status=- error_type=- error_code=- error_param=-
+LLM provider call failed: provider=openai model=gpt-4o-mini category=network status=- error_type=- error_code=- error_param=-
+replay exit 0
+unclean in B2_replay_r1.json {'cases': [], 'conversations': ['E04', 'E05'], 'scenarios': [], 'diagnostics': []}
+round 2 missing {'conversations': ['E04', 'E05'], 'diagnostics': []}
+replay exit 0
+unclean in B2_replay_r2.json {'cases': [], 'conversations': [], 'scenarios': [], 'diagnostics': []}
+round 3 missing {'conversations': [], 'diagnostics': []}
+FINAL complete: True {'conversations': [], 'diagnostics': []}

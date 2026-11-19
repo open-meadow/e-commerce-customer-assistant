@@ -16,8 +16,13 @@ _ORDER_RE = re.compile(r"\bORD\d+\b", re.I)
 _ITEM_RE = re.compile(r"\bIT\d+\b", re.I)
 _WORD_RE = re.compile(r"[a-z0-9']+")
 
-_GREETING = re.compile(r"^\s*(hi|hello|hey|hii+|good (morning|afternoon|evening)|namaste)\b[\s!.,?]*$", re.I)
-_THANKS = re.compile(r"^\s*(thanks|thank you|thx|ok thanks|okay thanks|bye|goodbye)\b[\s!.,?a-z]*$", re.I)
+_GREETING = re.compile(
+    r"^\s*(?:(?:hi|hello|hey|hii+|good (?:morning|afternoon|evening)|namaste|namaskar)\b|"
+    r"\u0928\u092e\u0938\u094d\u0924\u0947|\u0928\u092e\u0938\u094d\u0915\u093e\u0930)[\s!.,?]*$", re.I)
+_THANKS = re.compile(
+    r"^\s*(?:(?:thanks|thank you|thx|ok thanks|okay thanks|bye|goodbye|shukriya|dhanyavaad|dhanyawad|dhanyavad)\b"
+    r"[\s!.,?a-z]*|(?:\u0936\u0941\u0915\u094d\u0930\u093f\u092f\u093e|\u0927\u0928\u094d\u092f\u0935\u093e\u0926)"
+    r"[\s!.,?]*)$", re.I)
 
 IN_SCOPE_WORDS = frozenset("""order orders return returns refund refunds ticket tickets payment paid
 delivery delivered shipping shipped product products price stock item items earbuds earbud headphones
@@ -27,7 +32,9 @@ agent damaged broken wrong missing late delay invoice account""".split())
 _OUT_OF_SCOPE_CUES = ("weather", "joke", "poem", "recipe", "capital of", "president", "prime minister",
                       "write code", "python script", "javascript", "movie", "song", "lyrics", "football",
                       "cricket score", "translate", "horoscope", "bitcoin", "stock market", "homework",
-                      "story about")
+                      "story about", "mausam", "chutkula", "kavita", "gaana", "rashifal", "\u092e\u094c\u0938\u092e",
+                      "\u091a\u0941\u091f\u0915\u0941\u0932\u093e", "\u0915\u0935\u093f\u0924\u093e",
+                      "\u0917\u093e\u0928\u093e", "\u0930\u093e\u0936\u093f\u092b\u0932")
 
 _UNSUPPORTED = (
     (re.compile(r"\b(cancel|cancell?ing)\b.*\border\b|\border\b.*\bcancel", re.I), "cancel an order"),
@@ -63,8 +70,9 @@ _QUESTION_START = re.compile(
 
 SCOPE_REDIRECT = ("I can only help with your orders, returns, refunds, products and support tickets. "
                   "Is there something like that I can help with?")
-GREETING_REPLY = ("Hello! I can check order status, answer refund and policy questions, look up products, "
-                  "start return requests and raise support tickets. What can I help you with?")
+GREETING_REPLY = ("Hello! I'm the store's automated support assistant. I can check order status, answer refund "
+                  "and policy questions, look up products, start return requests and raise support tickets. "
+                  "What can I help you with?")
 THANKS_REPLY = "You're welcome! Let me know if there's anything else I can help with."
 
 
@@ -219,6 +227,13 @@ def resolve_item_by_name(text: str, items: list[dict]) -> Optional[str]:
         return None
     (only_id,) = per_item
     return only_id if not ((message & _singular_forms(sorted(PRODUCT_WORDS))) - per_item[only_id]) else None
+
+
+def names_product(text: str, product_name: str) -> bool:
+    """The customer's own words name this product (any distinctive word of its catalogue name, plural or singular)."""
+    message = _singular_forms(_word_tokens(_ID_TOKEN.sub(" ", text or "")))
+    words = {w for w in _singular_forms(_word_tokens(product_name or "")) if len(w) > 2 and w not in _RESOLVE_IGNORED}
+    return bool(words & message)
 
 
 def has_explanation(text: str, ignore_words: frozenset[str] = frozenset()) -> bool:
@@ -422,3 +437,226 @@ def looks_unrelated_to_a_reason(text: str, order_id: str, item_id: str) -> bool:
     if _hindi_off_topic(text):
         return True
     return text.strip().endswith("?") or _QUESTIONISH.match(text) is not None
+
+
+# ---------------------------------------------------------------------------
+# Phase 0 (context retention): do not make the customer repeat what they already said
+# ---------------------------------------------------------------------------
+
+_REPEAT_COMPLAINT = re.compile(
+    r"\balready\s+(?:told|gave|given|said|shared|provided|mentioned|sent|explained|wrote)\b"
+    r"|\b(?:told|gave|sent)\s+you\s+(?:my|the|this|that|already)\b"
+    r"|\bwhy\s+(?:do|should|must|would)\s+i\s+(?:have\s+to\s+|need\s+to\s+)?(?:repeat|say|tell|give|explain|send)\b"
+    r"|\brepeat(?:ing)?\s+(?:myself|everything|it|this|that)\b"
+    r"|\b(?:again\s+and\s+again|over\s+and\s+over)\b"
+    r"|\bpehle\s+(?:hi\s+)?(?:bata|bol|de)\b|\bmaine\s+(?:pehle|already)\b",
+    re.I)
+_ASKS_FOR_ORDER_ID = re.compile(
+    r"\b(?:provide|share|give|send|tell|confirm|enter|resend|repeat|type|check)\b[^.?!\n]{0,60}"
+    r"\border\s*(?:id|number|no\.?|#)"
+    r"|\border\s*(?:id|number)\b[^.?!\n]{0,40}\b(?:again|please)\b"
+    r"|\bwhat(?:'s|\s+is)\s+(?:your|the)\s+order\s*(?:id|number)\b", re.I)
+
+# The customer also asks for their own orders in the same message (so a "not found" for someone else's order must not
+# stop the listing they asked for).
+_OWN_ORDERS = re.compile(
+    r"\b(?:my|our)\s+(?:recent\s+|other\s+|own\s+)?orders\b|\b(?:meri|mere|apne)\s+orders?\b|"
+    r"\ball\s+(?:the\s+)?orders\b", re.I)
+
+
+def asks_for_own_orders(text: str) -> bool:
+    return isinstance(text, str) and bool(_OWN_ORDERS.search(text))
+
+
+_ORDER_ID_FORMS = re.compile(r"\bORD(?:(\d+)|[-_ ](\d{3,}))\b", re.I)
+
+
+def order_ids_in(text: str) -> list[str]:
+    """Order IDs written in the text, normalised to ``ORD<digits>``, each once, in order. The data's own format is
+    ``ORD`` plus four digits (ORD1001 to ORD1015); ``ORD-1010``, ``ord 1010`` and ``ORD_1010`` are read as ORD1010."""
+    found: list[str] = []
+    for match in _ORDER_ID_FORMS.finditer(text or ""):
+        order_id = "ORD" + (match.group(1) or match.group(2))
+        if order_id not in found:
+            found.append(order_id)
+    return found
+
+
+# A duration in a reply (English or Hinglish unit) and in a tool result (English unit). Only the NUMBER is compared, so a
+# Hinglish "3-7 business din" is supported by the policy text "3-7 business days" and an invented "24 hours" is not.
+_NUMBER_WORDS = {"a": "1", "an": "1", "one": "1", "two": "2", "three": "3", "four": "4", "five": "5", "six": "6",
+                 "seven": "7", "eight": "8", "nine": "9", "ten": "10", "twelve": "12"}
+_WORD = "|".join(_NUMBER_WORDS)
+_REPLY_DURATION = re.compile(
+    rf"((?:\d+|\b(?:{_WORD})\b)(?:\s*(?:[-\u2013]|to|or)\s*(?:\d+|\b(?:{_WORD})\b))?)\s*"
+    r"(?:business\s+|working\s+)?"
+    r"(?:(?:days?|hours?|weeks?|months?|din|ghante|ghanta|hafte|hafta|mahine)\b|"
+    r"\u0926\u093f\u0928|\u0918\u0902\u091f\u0947|\u0918\u0902\u091f\u093e|\u0938\u092a\u094d\u0924\u093e\u0939|"
+    r"\u0939\u092b\u094d\u0924\u0947|\u092e\u0939\u0940\u0928\u0947)", re.I)
+_SOURCE_DURATION = re.compile(
+    r"(\d+(?:\s*[-\u2013]\s*\d+)?)[\s-]*(?:business\s+|working\s+)?(?:days?|hours?|weeks?|months?)\b", re.I)
+
+
+def _duration_key(number: str) -> str:
+    """``3 - 7``, ``3\u20137`` and ``three to seven`` all become ``3-7``; ``a``/``one`` become ``1``."""
+    words = re.sub(r"\s*(?:[-\u2013]|to|or)\s*", "-", number.strip().lower())
+    return "-".join(_NUMBER_WORDS.get(part, part) for part in words.split("-"))
+
+
+def duration_keys(texts: list[str]) -> set[str]:
+    """The durations (numbers only) stated in tool results or policy text. Only verified sources go in here: never a
+    customer's message, and never the assistant's own earlier prose."""
+    return {_duration_key(m.group(1)) for t in texts if isinstance(t, str) for m in _SOURCE_DURATION.finditer(t)}
+
+
+def strip_unsupported_durations(text: str, supported: set[str]) -> str:
+    """Drop the sentences of a reply that state a duration the policy or a tool result did not give. A timeline is only
+    ever stated when verified information supports it; what a customer says cannot establish one. ``supported`` comes from
+    ``duration_keys``. Returns the text unchanged when every duration is supported; an empty string when nothing
+    supported is left."""
+    parts = re.split(r"(?<=[.!?\u0964])(\s+)", text or "")
+    kept: list[str] = []
+    dropped = False
+    for index in range(0, len(parts), 2):
+        sentence = parts[index]
+        separator = parts[index + 1] if index + 1 < len(parts) else ""
+        if all(_duration_key(m.group(1)) in supported for m in _REPLY_DURATION.finditer(sentence)):
+            kept.append(sentence + separator)
+        else:
+            dropped = True
+    return "".join(kept).strip() if dropped else text
+
+
+# What a reply may say about a refund. The refund_status in the data is one of Not Applicable, Pending, Processed, Failed.
+# Pending: recorded, not paid, no promise of an outcome or a date. Processed: the store has processed it; when it shows in
+# the customer's account depends on the bank, so "received" or "completed" is not known. Failed: it did not go through.
+# (Completed is a status of a RETURN REQUEST in this system, never of a refund.)
+_REFUND_WORDS = re.compile(r"refund|money|reimburs|paisa|paise|amount|\u20b9|\brs\b|rupee|\u0930\u093f\u092b\u0902\u0921|\u092a\u0948\u0938\u0947|"
+                           r"\u092a\u0948\u0938\u093e", re.I)
+_REFUND_FUTURE = re.compile(
+    r"(?:\b(?:will|'ll|going to|gonna|should|expect(?:ed)? to|set to|due to)\s+(?:be\s+)?"
+    r"(?:receiv\w*|get(?:ting)?|credit\w*|refund\w*|paid|sent|reflect\w*|arriv\w*|deposit\w*|returned)\b"
+    r"|\bmilne\s+wal[ai]\b|\bmil\s*(?:jaa?y?eg[ai]|jayega|jayegi)\b|\bmileg[ai]\b|\bwapas\s+mil(?:ega|egi|ne)\b"
+    r"|\bcredit\s+ho\s+(?:jaa?y?eg[ai]|jayega|jayegi|jaega)\b|\baaye?g[ai]\b"
+    r"|\u0915\u094d\u0930\u0947\u0921\u093f\u091f\s+\u0939\u094b\s+\u091c\u093e\u090f\u0917\u093e"
+    r"|\u092e\u093f\u0932(?:\u0947\u0917\u093e|\u0947\u0917\u0940|\u0928\u0947 \u0935\u093e\u0932\u093e|"
+    r"\u0928\u0947 \u0935\u093e\u0932\u0940|\u091c\u093e\u090f\u0917\u093e|\u091c\u093e\u090f\u0917\u0940)|"
+    r"\u0906\u090f\u0917\u093e)", re.I)
+_REFUND_DONE = re.compile(
+    r"(?:\b(?:has|have|had|was|were|is|are)\s+(?:been\s+)?(?:credited|refunded|completed|received|deposited|"
+    r"transferred|reflected)\b|\balready\s+(?:refunded|credited|paid|received)\b|\bin your (?:bank )?account\b"
+    r"|\brefund\s+(?:is\s+)?complete[d]?\b|\bcredit\s+ho\s+gaya\b|\bmil\s+gaya\b|\bwapas\s+mil\s+gaya\b|\baa\s+gaya\b"
+    r"|\u092e\u093f\u0932 \u0917\u092f\u093e|\u0915\u094d\u0930\u0947\u0921\u093f\u091f \u0939\u094b \u0917\u092f\u093e|"
+    r"\u092a\u0942\u0930\u093e \u0939\u094b \u0917\u092f\u093e)", re.I)
+
+
+def reword_refund_claims(text: str, replacement: Optional[str], *, future: bool) -> str:
+    """Replace each sentence that talks about a refund and promises it (``future``) or says it is done or received. The
+    first such sentence becomes ``replacement`` (the status said plainly, by code); the others are dropped. Unchanged when
+    no sentence does either."""
+    parts = re.split(r"(?<=[.!?\u0964])(\s+)", text or "")
+    out: list[str] = []
+    changed = used = False
+    for index in range(0, len(parts), 2):
+        sentence = parts[index]
+        separator = parts[index + 1] if index + 1 < len(parts) else ""
+        hit = _REFUND_WORDS.search(sentence) and ((future and _REFUND_FUTURE.search(sentence))
+                                                  or _REFUND_DONE.search(sentence))
+        if hit:
+            changed = True
+            if replacement and not used:
+                out.append(replacement + separator)
+                used = True
+            continue
+        out.append(sentence + separator)
+    return "".join(out).strip() if changed else text
+
+
+REPEAT_REMINDER = (
+    "Reminder from the system: the customer says they already gave this information, so do not ask them to "
+    "repeat it. Look for it earlier in this conversation. If an order ID appears there, call get_order_status "
+    "for it. Otherwise call list_my_orders now and work from the customer's own orders. Acknowledge the "
+    "repetition in one short sentence.")
+
+
+def is_repeat_complaint(text: str) -> bool:
+    """The customer's message complains that they are being asked to repeat themselves."""
+    return isinstance(text, str) and bool(_REPEAT_COMPLAINT.search(text))
+
+
+def asks_for_order_id(reply: str) -> bool:
+    """The model's reply asks the customer to supply an order ID or number."""
+    return isinstance(reply, str) and bool(_ASKS_FOR_ORDER_ID.search(reply))
+
+
+# ---------------------------------------------------------------------------
+# The customer's language, decided by code (no model call)
+# ---------------------------------------------------------------------------
+
+LANGUAGES = ("en", "hinglish", "hi")
+_DEVANAGARI = re.compile(r"[\u0900-\u097F]")
+_LATIN_WORDS = re.compile(r"[a-z]+")
+_LATIN_WORDS_2 = re.compile(r"[a-z]{2,}")
+# The same detector the evaluation harness uses to judge reply language (tests keep the two in step).
+_HINGLISH_WORDS = frozenset("""mera meri mere mujhe mujhko hai hain nahi nahin kya kab kaha kahan kaise kyun kyu bhai
+yaar aap aapka aapki aapke aapko tum tumhara tumhari tumhe mein hoon karna karo karu kare chahiye wapas abhi tak aaya
+aayega aata aati batao bata dijiye kijiye sakta sakte sakti raha rahi rahe gaya gayi hua hui kitne kitna din ye yeh
+woh aur lekin agar toh matlab kuch koi kisi insaan baat karao ho chuka bilkul bekaar bakwas theek madad tha thi ka ki ke ko kaisa kaisi aaj kal""".split())
+# Words that, two or more in one message and with at most one Hinglish word, make it clearly English.
+_ENGLISH_FUNCTION_WORDS = frozenset("""the is are was were can could would should do does did have has i you your my we
+it this that what where when how why which who please from with for about still not and any there will been be an
+want need get give send take make tell show check know like just also now
+sorry meant mean actually thanks thank""".split())
+
+
+def detect_language(text: str) -> str:
+    """``hi`` (three or more Devanagari letters), ``hinglish`` (two or more Hinglish words) or ``en``."""
+    if len(_DEVANAGARI.findall(text or "")) >= 3:
+        return "hi"
+    words = set(_LATIN_WORDS.findall((text or "").lower()))
+    return "hinglish" if len(words & _HINGLISH_WORDS) >= 2 else "en"
+
+
+_HINDI_COURTESY = frozenset({"namaste", "namaskar", "shukriya", "dhanyavaad", "dhanyawad", "dhanyavad"})
+_COURTESY_FILLER = frozenset({"ji", "bhai", "aapka", "bahut", "bohot", "hai", "aur"})
+
+
+def decisive_language(text: str) -> Optional[str]:
+    """The language the message itself settles, or None when it is ambiguous ("ok", "ji haan", "mera order", an ID alone).
+
+    Devanagari or two Hinglish words mean Hindi or Hinglish. A message that is clearly English (two or more common
+    English function words and at most one Hinglish word, or four or more words and none of them Hinglish) is English.
+    """
+    found = detect_language(text)
+    if found != "en":
+        return found
+    lowered = (text or "").lower()
+    words = set(_LATIN_WORDS.findall(lowered))
+    hinglish_hits = len(words & _HINGLISH_WORDS)
+    if len(words & _ENGLISH_FUNCTION_WORDS) >= 2 and hinglish_hits <= 1:
+        return "en"
+    if hinglish_hits == 0 and len(_LATIN_WORDS_2.findall(lowered)) >= 4:  # four or more words, none of them Hinglish
+        return "en"
+    if words & _HINDI_COURTESY and words <= _HINDI_COURTESY | _COURTESY_FILLER:
+        return "hinglish"  # "namaste", "shukriya ji": a lone Hindi courtesy word settles the language
+    return None
+
+
+def customer_language(text: str, previous: str = "en") -> str:
+    """The language to answer in: the latest message decides whenever it can, whatever the session used before. Only a
+    genuinely ambiguous message keeps the previous language."""
+    decided = decisive_language(text)
+    if decided is not None:
+        return decided
+    return previous if previous in LANGUAGES else "en"
+
+
+_DAMAGE = re.compile(
+    r"\b(?:damag\w*|broken|defect\w*|faulty|cracked|dead|not working|stopped working|doesn'?t work|isn'?t working"
+    r"|wrong (?:item|product|one)|kharab|kharaab|toota|tuta|tooti|galat (?:item|product|saman|samaan))\b"
+    r"|\u0916\u0930\u093e\u092c|\u091f\u0942\u091f|\u0917\u0932\u0924 (?:\u0938\u093e\u092e\u093e\u0928|\u092a\u094d\u0930\u094b\u0921\u0915\u094d\u091f)", re.I)
+
+
+def reports_damage(text: str) -> bool:
+    """The customer says the item arrived damaged, faulty or wrong (English, Hinglish or Hindi cue words)."""
+    return bool(_DAMAGE.search(text or ""))

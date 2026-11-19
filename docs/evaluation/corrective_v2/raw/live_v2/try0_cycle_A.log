@@ -1,0 +1,7 @@
+LLM provider call failed: provider=openai model=gpt-4o-mini category=timeout status=- error_type=- error_code=- error_param=-
+LLM provider call failed: provider=openai model=gpt-4o-mini category=network status=- error_type=- error_code=- error_param=-
+LLM provider call failed: provider=openai model=gpt-4o-mini category=dns status=- error_type=- error_code=- error_param=-
+provider outage: stopped after 3 consecutive failures; calls attempted: {'chat': 7, 'complete': 0}
+{"label": "A1", "status": "no_valid_run", "calls_attempted": 7, "budget": null, "backoff_seconds": [30.0, 90.0]}
+A1 no_valid_run 7
+phase A stopped: A1 did not produce a valid run (no_valid_run)

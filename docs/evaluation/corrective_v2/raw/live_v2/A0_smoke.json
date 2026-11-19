@@ -1,0 +1,68 @@
+[
+ {
+  "id": "L01@smoke",
+  "customer_id": "C103",
+  "category": "affected_language_switch_to_english",
+  "note": "affected_language_switch_to_english",
+  "turns": [
+   {
+    "say": "kya main ORD1005 ka charger abhi bhi return kar sakta hu?",
+    "ground_truth": "Hinglish eligibility question. Right: Hinglish reply with the ordinary period open until 12 Nov 2026, 12:00 UTC (UTC text unchanged) and the limits. WRONG: English reply, a verdict or promise, a started return.",
+    "expect": {
+     "tools_all": [
+      "check_return_eligibility"
+     ],
+     "tools_not": [
+      "start_return_request"
+     ],
+     "statuses": [
+      "ok"
+     ],
+     "no_pending": true,
+     "no_choice": true,
+     "claims_follow_tool": true,
+     "no_approval_claims": true,
+     "language": "hinglish",
+     "states_times": [
+      "2026-11-12T12:00:00Z"
+     ],
+     "mentions_none": [
+      "photo"
+     ]
+    }
+   },
+   {
+    "say": "Sorry, I meant the monitor. Can I still return that one?",
+    "ground_truth": "An ENGLISH message after a Hinglish one: the reply must be English. The item is the monitor (IT105, recovered by code from the customer's word if the model guessed), the ordinary period is open until 12 Nov 2026, 12:00 UTC, and the limits are stated. WRONG: a reply in Hinglish, the charger's item, a verdict or promise, a started return.",
+    "expect": {
+     "tools_all": [
+      "check_return_eligibility"
+     ],
+     "tools_not": [
+      "start_return_request"
+     ],
+     "statuses": [
+      "ok"
+     ],
+     "no_pending": true,
+     "no_choice": true,
+     "claims_follow_tool": true,
+     "no_approval_claims": true,
+     "language": "en",
+     "states_times": [
+      "2026-11-12T12:00:00Z"
+     ],
+     "mentions_any": [
+      "condition",
+      "packag",
+      "accessor",
+      "unused"
+     ],
+     "mentions_none": [
+      "photo"
+     ]
+    }
+   }
+  ]
+ }
+]

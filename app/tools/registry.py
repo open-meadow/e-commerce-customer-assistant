@@ -31,9 +31,10 @@ from typing import Any, Callable, Optional
 from app import catalog as catalog_module
 from app import rag as rag_module
 from app.catalog import CatalogError
-from app.db import repository
+from app.db import clock, repository
 from app.db.errors import DatabaseDataIntegrityError, DatabaseError
 from app.rag import KnowledgeBaseError
+from app.tools import return_texts
 from app.tools.context import CustomerContext
 from app.tools.results import ToolResult
 
@@ -178,7 +179,25 @@ def _get_order_status(ctx: CustomerContext, args: dict[str, Any]) -> ToolResult:
         "refund_amount": _money(order["refund_amount"]), "order_date": _date(order["order_date"]),
         "delivered_at": order["delivered_at"], "total": _money(order["total_amount"]),
         "items": items,
-    }, note="Prices are the prices on the order.")
+    }, note="Prices are the prices on the order." + (_RETURNED_ORDER_NOTE if order["status"] == "Returned" else "")
+        + (_REFUND_STATUS_NOTE if order["refund_status"] != "Not Applicable" else ""))
+
+
+# What each refund_status means, so the model says no more than the status says (see guard.reword_refund_claims).
+_REFUND_STATUS_NOTE = (
+    " Refund status meanings: Pending = a refund is recorded and has NOT been paid; Processed = the store has processed "
+    "it (when it shows in the customer's account depends on their bank); Failed = it did not go through; Not Applicable "
+    "= no refund. Say only what the status says. Never say the customer will receive, get or be credited the refund, "
+    "never say it has been received, credited, completed or refunded, and never call a refund completed: Completed is "
+    "not a refund status.")
+_NO_RETURN_ON_FILE_NOTE = (
+    "No return request is on file for this customer. If the customer asked about a particular order, also check that "
+    "order with get_order_status and report both. An order marked Returned is not proof that a return request exists "
+    "or was processed, and no request on file is not proof that nothing happened.")
+_RETURNED_ORDER_NOTE = (
+    " This order is marked Returned. Report the order status and the refund status exactly as given; do not say the "
+    "return was processed, approved or refunded unless the data says so. A return request for it may or may not be on "
+    "file (get_my_returns shows those).")
 
 
 @_guard
@@ -187,7 +206,10 @@ def _get_my_returns(ctx: CustomerContext, args: dict[str, Any]) -> ToolResult:
     shown = [{"return_id": r["return_id"], "order_id": r["order_id"], "item_id": r["item_id"],
               "status": r["status"], "requested_at": r["requested_at"],
               "reason_category": r["reason_category"]} for r in returns[:_LIST_LIMIT]]
-    return ToolResult("ok", "returns", {"returns": shown, "total_returns": len(returns)})
+    note = None
+    if not returns:
+        note = _NO_RETURN_ON_FILE_NOTE
+    return ToolResult("ok", "returns", {"returns": shown, "total_returns": len(returns)}, note=note)
 
 
 @_guard
@@ -253,10 +275,156 @@ def _get_refund_policy(ctx: CustomerContext, args: dict[str, Any]) -> ToolResult
                          "refund_amount": _money(order["refund_amount"])}
     if policy_unavailable and "order" not in data:
         return ToolResult("unavailable", "knowledge_unavailable", note=_KNOWLEDGE_UNAVAILABLE_NOTE)
-    note = "Report refund status and amount exactly as given. Do not predict dates."
+    note = ("Report refund status and amount exactly as given. Do not predict dates. A refund_status of 'Not "
+            "Applicable' only means no refund is in progress for this order; it says nothing about whether a "
+            "refund or a return is possible, so do not suggest either way. The policy's processing timeline starts "
+            "only after a returned item passes quality checks and the order record does not show that this has "
+            "happened: give it only as the policy's typical range, never as a date or a promise for this order.")
+    if data.get("order", {}).get("refund_status", "Not Applicable") != "Not Applicable":
+        note += _REFUND_STATUS_NOTE
     if policy_unavailable:
         note += " The policy text is unavailable, so say that you cannot confirm the policy."
     return ToolResult("ok", "refund_policy", data, note=note)
+
+
+_MONTHS = ("January", "February", "March", "April", "May", "June", "July", "August", "September", "October",
+           "November", "December")
+# What the timing check cannot see. Returned with every answer so the model never has to remember it.
+_NOT_CHECKED = ("whether this product can be returned at all (for example hygiene items, software licences or "
+                "items marked non-returnable)", "the condition of the item (it must be unused)",
+                "its original packaging and accessories")
+# Only meaningful when the customer reports a damaged or wrong item; kept out of not_checked so an ordinary
+# return conversation is never told about it.
+_PHOTOS_NOTE = ("The FAQ asks for clear photos of the issue when an item arrives damaged or wrong; this assistant "
+                "cannot collect photos.")
+# The two periods are different things in the store's documents: Policies.md gives most products 7 days from
+# delivery; FAQ Q3.4 says to initiate a return within 48 hours of delivery, with photos, for a damaged or wrong
+# product. The repository calls them the standard and the damaged categories.
+_WINDOW_KEYS = {"standard": "ordinary_return_window", "damaged": "damaged_or_wrong_item_reporting_deadline"}
+_WINDOW_MEANING = {
+    "standard": "Ordinary return period: 7 days from delivery.",
+    "damaged": "Deadline to report a damaged or wrong item and start a return: 48 hours from delivery."}
+_CATEGORY_INDEPENDENT = ("order_not_found", "order_status_ineligible", "item_not_found",
+                         "active_return_exists", "delivery_timestamp_missing")
+_TIMING_NOTE = ("This is a timing check only, not an approval and not a promise: the system rechecks everything "
+                "when the customer confirms a return request, and a person may still review it. Never say the "
+                "customer 'is eligible' or that a return 'will be accepted'; say what the dates show. Say that "
+                "you cannot check what is listed in not_checked.")
+_WINDOW_NOTE = (_TIMING_NOTE + " Quote every time exactly as given in closes_at_text, which is in UTC; never "
+                "convert it to another time zone, never say 'until the end of the day' and never do your own "
+                "date arithmetic. facts_to_state holds three ready paragraphs, already written in the "
+                "customer's language: no_reason_given, item_damaged_or_wrong and any_other_reason. Pick the one "
+                "that matches what the customer said and give all of it as written: do not translate it, do not "
+                "reword it, do not leave a sentence out, keep the UTC times exactly as written. Do not add facts from another paragraph and never suggest which reason to choose: if the "
+                "customer says the item is damaged or wrong and that deadline has closed, say so and offer a "
+                "support ticket, and do not mention the ordinary period. Never raise photos unless the customer "
+                "says the item arrived damaged or wrong, and never say how to send photos. This is not a request "
+                "to return: start_return_request only when the customer asks to return the item.")
+
+
+def _utc_text(timestamp: str) -> str:
+    """'2026-11-08T10:00:00Z' -> '8 November 2026, 10:00 UTC' (no time zone conversion, ever)."""
+    moment = clock.parse_timestamp(timestamp)
+    return f"{moment.day} {_MONTHS[moment.month - 1]} {moment.year}, {moment:%H:%M} UTC"
+
+
+def _time_left_text(seconds: float) -> str:
+    """A rounded-down description of the time left in an OPEN window, never a bare number.
+
+    A bare 0 for the last hour reads as 'expired'; the sentence form cannot. The exact closing time and the
+    status stay authoritative and the repository's inclusive boundary decides open or closed.
+    """
+    hours = int(seconds // 3600)
+    if hours < 1:
+        return "less than 1 hour"
+    if hours < 48:
+        return "about 1 hour" if hours == 1 else f"about {hours} hours"
+    return f"about {hours // 24} days"
+
+
+def _window_view(key: str, verdict: dict[str, Any]) -> dict[str, Any]:
+    closes = verdict["window_closes_at"]
+    evaluated = clock.parse_timestamp(verdict["evaluated_at"])
+    is_open = verdict["outcome"] == "eligible"
+    view: dict[str, Any] = {"meaning": _WINDOW_MEANING[key], "status": "open" if is_open else "closed",
+                            "window_hours": verdict["window_hours"], "closes_at_utc": closes,
+                            "closes_at_text": _utc_text(closes)}
+    if is_open:
+        view["time_left_text"] = _time_left_text((clock.parse_timestamp(closes) - evaluated).total_seconds())
+    if key == "damaged":
+        view["photos_note"] = _PHOTOS_NOTE
+    return view
+
+
+def _period(view: dict[str, Any], verdict: dict[str, Any]) -> dict[str, Any]:
+    """A period as ``return_texts.paragraphs`` wants it: open or not, the UTC text, the seconds left."""
+    left = (clock.parse_timestamp(verdict["window_closes_at"])
+            - clock.parse_timestamp(verdict["evaluated_at"])).total_seconds()
+    return {"open": verdict["outcome"] == "eligible", "when": view["closes_at_text"], "seconds_left": left}
+
+
+def _items_on_order(ctx: CustomerContext, order_id: str) -> list[dict[str, str]]:
+    """The signed-in customer's own items on an order they own (the caller has already found the order)."""
+    try:
+        catalog = catalog_module.default_catalog()
+    except CatalogError:
+        catalog = None
+    items = []
+    for item in repository.get_order_items(ctx.customer_id, order_id):
+        name = (catalog.name_for(item["product_id"]) if catalog is not None else None) or "an item"
+        items.append({"item_id": item["item_id"], "product_name": name})
+    return items
+
+
+def _blocked_explanation(verdict: dict[str, Any]) -> str:
+    """A plain sentence the model may rely on, so no exact wording has to be guessed or checked."""
+    outcome = verdict["outcome"]
+    if outcome == "order_status_ineligible":
+        return ("Returns can only be started for delivered orders, and this order's status is "
+                f"{verdict['order_status']}.")
+    if outcome == "item_not_found":
+        return "That item is not on this order."
+    if outcome == "active_return_exists":
+        return f"A return request for this item already exists (status: {verdict['existing_return_status']})."
+    return ("The delivery date is not recorded, so the return period cannot be checked; a support ticket can ask "
+            "a person to look into it.")
+
+
+@_guard
+def _check_return_eligibility(ctx: CustomerContext, args: dict[str, Any]) -> ToolResult:
+    verdicts = repository.check_return_windows(ctx.customer_id, args["order_id"], args["item_id"])
+    standard, damaged = verdicts["standard"], verdicts["damaged"]
+    if standard["outcome"] == "order_not_found":
+        return ToolResult("not_found", "order_not_found",
+                          note="That order is not on this customer's account. Say plainly that you could not find "
+                               "it on their account; do not say whose it is. You may offer to list their own orders.")
+    if standard["outcome"] == "item_not_found":
+        items = _items_on_order(ctx, args["order_id"])
+        listed = ", ".join(f"{i['item_id']} ({i['product_name']})" for i in items) or "none"
+        return ToolResult("ok", "return_check", {
+            "result": "item_not_on_this_order", "reason": "item_not_found", "order_items": items,
+            "explanation": f"That item ID is not on this order. The items on this order are: {listed}."},
+            note="The item ID was wrong, not the order. Call this tool again, once, with the item_id of the item "
+                 "the customer means (use the names above); if it is not clear which one, ask the customer which "
+                 "item. Do not tell the customer the item cannot be found. This is not a request to return.")
+    if standard["outcome"] in _CATEGORY_INDEPENDENT:
+        data: dict[str, Any] = {"result": "cannot_start_a_return", "reason": standard["outcome"],
+                                "explanation": _blocked_explanation(standard),
+                                "order_status": standard["order_status"],
+                                "existing_return_status": standard["existing_return_status"]}
+        return ToolResult("ok", "return_check", data,
+                          note=_TIMING_NOTE + " Explain plainly, in the customer's language and your own words, "
+                               "why a return cannot be started now (the explanation field is accurate); a support "
+                               "ticket may be offered. This is not a request to return.")
+    ordinary_view, deadline_view = _window_view("standard", standard), _window_view("damaged", damaged)
+    facts = return_texts.paragraphs(ctx.language, _period(ordinary_view, standard), _period(deadline_view, damaged))
+    data = {"result": "timing_check", "delivered_at_utc": standard["delivered_at"],
+            "delivered_at_text": _utc_text(standard["delivered_at"]),
+            "checked_at_utc": standard["evaluated_at"], "checked_at_text": _utc_text(standard["evaluated_at"]),
+            "windows": {_WINDOW_KEYS["standard"]: ordinary_view, _WINDOW_KEYS["damaged"]: deadline_view},
+            "language": ctx.language, "facts_to_state": facts,
+            "not_checked": list(_NOT_CHECKED)}
+    return ToolResult("ok", "return_check", data, note=_WINDOW_NOTE)
 
 
 def _lookup_product(ctx: CustomerContext, args: dict[str, Any]) -> ToolResult:
@@ -292,18 +460,32 @@ TOOL_SPECS: dict[str, ToolSpec] = {s.name: s for s in [
     ToolSpec("get_refund_policy",
              "Refund policy facts, and the refund status of one order if order_id is given.",
              {"order_id": _ORDER_ID}, (), _get_refund_policy),
-    ToolSpec("lookup_product", "Look up a product by product_id or keyword query.",
+    ToolSpec("check_return_eligibility",
+             "Read-only timing check for a QUESTION about whether, or until when, an item can still be returned "
+             "(for example 'can I still return it?' or 'is it too late?'). Never use it when the customer says they "
+             "want to return or send back an item or gives a reason for returning it: that is a return request, "
+             "so call start_return_request, which checks eligibility itself. This tool does not start a return.",
+             {"order_id": _ORDER_ID, "item_id": {"type": "string"}}, ("order_id", "item_id"),
+             _check_return_eligibility),
+    ToolSpec("lookup_product",
+             "Price, specifications and stock of a product, by keyword or product_id. Use it for any question about "
+             "a product's price, features or availability. Customers may write the product in Hinglish (for example "
+             "'power bank ka price kya hai'): search for the product name.",
              {"product_id": {"type": "string"}, "query": {"type": "string"}}, (), _lookup_product),
     ToolSpec("search_policies", "Search the FAQ and store policies.",
              {"query": {"type": "string"}}, ("query",), _search_policies),
     # Executed by the backend workflows (they hold the session state):
     ToolSpec("start_return_request",
-             "Begin a return request for an item. The customer's own words are used as the "
+             "Begin a return request for an item. Use it when the customer says they want to return or send back "
+             "an item. It is not for a replacement or an exchange, and not for a question about whether an item "
+             "can be returned or about a return already made. The customer's own words are used as the "
              "reason and the customer chooses the reason category; do not supply either.",
              {"order_id": _ORDER_ID, "item_id": {"type": "string"}},
              ("order_id", "item_id"), None),
     ToolSpec("start_support_ticket",
-             "Propose a support ticket for the customer's current issue. The customer must confirm.",
+             "Propose a support ticket for the customer's current issue. Call it directly when the customer asks for "
+             "a person, a manager or an agent, or when you cannot resolve the issue with your tools: do not ask "
+             "permission first, because the customer confirms or declines on the confirmation card.",
              {"issue_type": {"type": "string", "enum": ["order", "return", "payment", "product", "general"]},
               "order_id": _ORDER_ID}, ("issue_type",), None),
 ]}

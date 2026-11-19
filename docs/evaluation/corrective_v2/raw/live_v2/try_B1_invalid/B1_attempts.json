@@ -1,0 +1,32 @@
+{
+  "label": "B1",
+  "status": "no_valid_run",
+  "calls_attempted": 139,
+  "budget": null,
+  "backoff_seconds": [
+    30.0,
+    90.0
+  ],
+  "attempts": [
+    {
+      "attempt": 1,
+      "preflight": "ok",
+      "ran": true,
+      "exit_code": 0,
+      "report": "B1_attempt1.json",
+      "valid": false,
+      "provider_error_replies": 4,
+      "calls": 109
+    },
+    {
+      "attempt": 2,
+      "preflight": "ok",
+      "ran": true,
+      "exit_code": 3,
+      "report": "B1_attempt2.json",
+      "valid": false,
+      "provider_error_replies": 3,
+      "calls": 30
+    }
+  ]
+}

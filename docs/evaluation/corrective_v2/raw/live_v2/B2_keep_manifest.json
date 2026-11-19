@@ -1,0 +1,19 @@
+{
+ "conversations": {
+  "I01": "attempt 1: reply ok and no unrecovered transport failure attributed to it",
+  "I02": "attempt 1: reply ok and no unrecovered transport failure attributed to it",
+  "I03": "attempt 1: reply ok and no unrecovered transport failure attributed to it",
+  "I04": "attempt 1: reply ok and no unrecovered transport failure attributed to it",
+  "I05": "attempt 1: reply ok and no unrecovered transport failure attributed to it",
+  "I06": "attempt 1: reply ok and no unrecovered transport failure attributed to it",
+  "I07": "attempt 1: reply ok and no unrecovered transport failure attributed to it",
+  "E01": "attempt 1: reply ok and no unrecovered transport failure attributed to it",
+  "E02": "attempt 1: reply ok and no unrecovered transport failure attributed to it",
+  "E03": "attempt 1: reply ok and no unrecovered transport failure attributed to it",
+  "E07": "attempt 1: reply ok and no unrecovered transport failure attributed to it",
+  "E08": "attempt 1: reply ok and no unrecovered transport failure attributed to it"
+ },
+ "diagnostics": {
+  "post_confirmation_status": "attempt 1: ran to completion, no transport failure attributed to it"
+ }
+}

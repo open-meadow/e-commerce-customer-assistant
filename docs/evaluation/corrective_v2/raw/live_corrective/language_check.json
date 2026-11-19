@@ -1,0 +1,707 @@
+[
+  {
+    "id": "E01_r1",
+    "language": "en",
+    "status": "ok",
+    "failed": [],
+    "tools": [
+      "get_order_status",
+      "check_return_eligibility"
+    ],
+    "calls": {
+      "chat": 3,
+      "complete": 0
+    },
+    "args": [
+      {
+        "name": "get_order_status",
+        "arguments": {
+          "order_id": "ORD1001"
+        }
+      },
+      {
+        "name": "check_return_eligibility",
+        "arguments": {
+          "order_id": "ORD1001",
+          "item_id": "IT101"
+        }
+      }
+    ],
+    "reply": "The ordinary return period (7 days from delivery) is open until **11 November 2026, 00:00 UTC** (about 4 days left). I can only check the delivery timing: I cannot check whether this product can be returned at all, the item's condition, or its packaging and accessories. \n\nIf you would like to proceed with a return, please let me know!"
+  },
+  {
+    "id": "E01_r2",
+    "language": "en",
+    "status": "ok",
+    "failed": [],
+    "tools": [
+      "get_order_status",
+      "check_return_eligibility"
+    ],
+    "calls": {
+      "chat": 3,
+      "complete": 0
+    },
+    "args": [
+      {
+        "name": "get_order_status",
+        "arguments": {
+          "order_id": "ORD1001"
+        }
+      },
+      {
+        "name": "check_return_eligibility",
+        "arguments": {
+          "order_id": "ORD1001",
+          "item_id": "IT101"
+        }
+      }
+    ],
+    "reply": "The ordinary return period (7 days from delivery) is open until **11 November 2026, 00:00 UTC** (about 4 days left). I can only check the delivery timing: I cannot check whether this product can be returned at all, the item's condition, or its packaging and accessories. \n\nIf you would like to proceed with a return, please let me know!"
+  },
+  {
+    "id": "E01_r3",
+    "language": "en",
+    "status": "ok",
+    "failed": [],
+    "tools": [
+      "get_order_status",
+      "check_return_eligibility"
+    ],
+    "calls": {
+      "chat": 3,
+      "complete": 0
+    },
+    "args": [
+      {
+        "name": "get_order_status",
+        "arguments": {
+          "order_id": "ORD1001"
+        }
+      },
+      {
+        "name": "check_return_eligibility",
+        "arguments": {
+          "order_id": "ORD1001",
+          "item_id": "IT101"
+        }
+      }
+    ],
+    "reply": "The ordinary return period (7 days from delivery) is open until 11 November 2026, 00:00 UTC (about 4 days left). I can only check the delivery timing: I cannot check whether this product can be returned at all, the item's condition, or its packaging and accessories. \n\nWould you like to proceed with a return request for your earbuds?"
+  },
+  {
+    "id": "E01_r4",
+    "language": "en",
+    "status": "ok",
+    "failed": [],
+    "tools": [
+      "get_order_status",
+      "check_return_eligibility"
+    ],
+    "calls": {
+      "chat": 3,
+      "complete": 0
+    },
+    "args": [
+      {
+        "name": "get_order_status",
+        "arguments": {
+          "order_id": "ORD1001"
+        }
+      },
+      {
+        "name": "check_return_eligibility",
+        "arguments": {
+          "order_id": "ORD1001",
+          "item_id": "IT101"
+        }
+      }
+    ],
+    "reply": "The ordinary return period (7 days from delivery) is open until **11 November 2026, 00:00 UTC** (about 4 days left). I can only check the delivery timing: I cannot check whether this product can be returned at all, the item's condition, or its packaging and accessories. \n\nIf you want to proceed with a return, please let me know!"
+  },
+  {
+    "id": "E01_r5",
+    "language": "en",
+    "status": "ok",
+    "failed": [],
+    "tools": [
+      "get_order_status",
+      "check_return_eligibility"
+    ],
+    "calls": {
+      "chat": 3,
+      "complete": 0
+    },
+    "args": [
+      {
+        "name": "get_order_status",
+        "arguments": {
+          "order_id": "ORD1001"
+        }
+      },
+      {
+        "name": "check_return_eligibility",
+        "arguments": {
+          "order_id": "ORD1001",
+          "item_id": "IT101"
+        }
+      }
+    ],
+    "reply": "The ordinary return period (7 days from delivery) is open until **11 November 2026, 00:00 UTC** (about 4 days left). I can only check the delivery timing: I cannot check whether this product can be returned at all, the item's condition, or its packaging and accessories. \n\nIf you would like to proceed with a return, please let me know!"
+  },
+  {
+    "id": "E01_r6",
+    "language": "en",
+    "status": "ok",
+    "failed": [],
+    "tools": [
+      "get_order_status",
+      "check_return_eligibility"
+    ],
+    "calls": {
+      "chat": 3,
+      "complete": 0
+    },
+    "args": [
+      {
+        "name": "get_order_status",
+        "arguments": {
+          "order_id": "ORD1001"
+        }
+      },
+      {
+        "name": "check_return_eligibility",
+        "arguments": {
+          "order_id": "ORD1001",
+          "item_id": "IT101"
+        }
+      }
+    ],
+    "reply": "The ordinary return period (7 days from delivery) is open until **11 November 2026, 00:00 UTC** (about 4 days left). I can only check the delivery timing: I cannot check whether this product can be returned at all, the item's condition, or its packaging and accessories. \n\nIf you would like to proceed with a return request, please let me know!"
+  },
+  {
+    "id": "E02_r1",
+    "language": "en",
+    "status": "ok",
+    "failed": [],
+    "tools": [
+      "get_order_status",
+      "check_return_eligibility"
+    ],
+    "calls": {
+      "chat": 3,
+      "complete": 0
+    },
+    "args": [
+      {
+        "name": "get_order_status",
+        "arguments": {
+          "order_id": "ORD1005"
+        }
+      },
+      {
+        "name": "check_return_eligibility",
+        "arguments": {
+          "order_id": "ORD1005",
+          "item_id": "IT106"
+        }
+      }
+    ],
+    "reply": "The ordinary return period (7 days from delivery) is open until 12 November 2026, 12:00 UTC (about 5 days left). I can only check the delivery timing: I cannot check whether this product can be returned at all, the item's condition, or its packaging and accessories. \n\nIf you would like to proceed with a return, please let me know!\n\nIf you'd like, I can raise a support ticket for this issue."
+  },
+  {
+    "id": "E02_r2",
+    "language": "en",
+    "status": "ok",
+    "failed": [],
+    "tools": [
+      "get_order_status",
+      "check_return_eligibility"
+    ],
+    "calls": {
+      "chat": 3,
+      "complete": 0
+    },
+    "args": [
+      {
+        "name": "get_order_status",
+        "arguments": {
+          "order_id": "ORD1005"
+        }
+      },
+      {
+        "name": "check_return_eligibility",
+        "arguments": {
+          "order_id": "ORD1005",
+          "item_id": "IT106"
+        }
+      }
+    ],
+    "reply": "The ordinary return period (7 days from delivery) is open until 12 November 2026, 12:00 UTC (about 5 days left). I can only check the delivery timing: I cannot check whether this product can be returned at all, the item's condition, or its packaging and accessories.\n\nIf you want to proceed with a return, please let me know!\n\nIf you'd like, I can raise a support ticket for this issue."
+  },
+  {
+    "id": "E02_r3",
+    "language": "en",
+    "status": "ok",
+    "failed": [],
+    "tools": [
+      "get_order_status",
+      "check_return_eligibility"
+    ],
+    "calls": {
+      "chat": 3,
+      "complete": 0
+    },
+    "args": [
+      {
+        "name": "get_order_status",
+        "arguments": {
+          "order_id": "ORD1005"
+        }
+      },
+      {
+        "name": "check_return_eligibility",
+        "arguments": {
+          "order_id": "ORD1005",
+          "item_id": "IT106"
+        }
+      }
+    ],
+    "reply": "The ordinary return period (7 days from delivery) is open until 12 November 2026, 12:00 UTC (about 5 days left). I can only check the delivery timing: I cannot check whether this product can be returned at all, the item's condition, or its packaging and accessories.\n\nIf you'd like, I can raise a support ticket for this issue."
+  },
+  {
+    "id": "E02_r4",
+    "language": "en",
+    "status": "ok",
+    "failed": [],
+    "tools": [
+      "get_order_status",
+      "check_return_eligibility"
+    ],
+    "calls": {
+      "chat": 3,
+      "complete": 0
+    },
+    "args": [
+      {
+        "name": "get_order_status",
+        "arguments": {
+          "order_id": "ORD1005"
+        }
+      },
+      {
+        "name": "check_return_eligibility",
+        "arguments": {
+          "order_id": "ORD1005",
+          "item_id": "IT106"
+        }
+      }
+    ],
+    "reply": "The ordinary return period (7 days from delivery) is open until **12 November 2026, 12:00 UTC** (about 5 days left). I can only check the delivery timing: I cannot check whether this product can be returned at all, the item's condition, or its packaging and accessories.\n\nIf you'd like, I can raise a support ticket for this issue."
+  },
+  {
+    "id": "E02_r5",
+    "language": "en",
+    "status": "ok",
+    "failed": [],
+    "tools": [
+      "get_order_status",
+      "check_return_eligibility"
+    ],
+    "calls": {
+      "chat": 3,
+      "complete": 0
+    },
+    "args": [
+      {
+        "name": "get_order_status",
+        "arguments": {
+          "order_id": "ORD1005"
+        }
+      },
+      {
+        "name": "check_return_eligibility",
+        "arguments": {
+          "order_id": "ORD1005",
+          "item_id": "IT106"
+        }
+      }
+    ],
+    "reply": "The ordinary return period (7 days from delivery) is open until **12 November 2026, 12:00 UTC** (about 5 days left). I can only check the delivery timing: I cannot check whether this product can be returned at all, the item's condition, or its packaging and accessories.\n\nIf you'd like, I can raise a support ticket for this issue."
+  },
+  {
+    "id": "E02_r6",
+    "language": "en",
+    "status": "ok",
+    "failed": [],
+    "tools": [
+      "get_order_status",
+      "check_return_eligibility"
+    ],
+    "calls": {
+      "chat": 3,
+      "complete": 0
+    },
+    "args": [
+      {
+        "name": "get_order_status",
+        "arguments": {
+          "order_id": "ORD1005"
+        }
+      },
+      {
+        "name": "check_return_eligibility",
+        "arguments": {
+          "order_id": "ORD1005",
+          "item_id": "IT106"
+        }
+      }
+    ],
+    "reply": "The ordinary return period (7 days from delivery) is open until **12 November 2026, 12:00 UTC** (about 5 days left). I can only check the delivery timing: I cannot check whether this product can be returned at all, the item's condition, or its packaging and accessories. \n\nIf you want to proceed with the return, please let me know!\n\nIf you'd like, I can raise a support ticket for this issue."
+  },
+  {
+    "id": "E03_r1",
+    "language": "en",
+    "status": "ok",
+    "failed": [],
+    "tools": [
+      "get_order_status",
+      "check_return_eligibility"
+    ],
+    "calls": {
+      "chat": 3,
+      "complete": 0
+    },
+    "args": [
+      {
+        "name": "get_order_status",
+        "arguments": {
+          "order_id": "ORD1003"
+        }
+      },
+      {
+        "name": "check_return_eligibility",
+        "arguments": {
+          "order_id": "ORD1003",
+          "item_id": "IT103"
+        }
+      }
+    ],
+    "reply": "The ordinary return period (7 days from delivery) closed on 4 November 2026, 00:00 UTC. If you'd like, I can raise a support ticket so a person can review it; a ticket is a request for review, and I can't promise any particular outcome. Would you like me to do that?"
+  },
+  {
+    "id": "E03_r2",
+    "language": "en",
+    "status": "ok",
+    "failed": [],
+    "tools": [
+      "get_order_status",
+      "check_return_eligibility"
+    ],
+    "calls": {
+      "chat": 3,
+      "complete": 0
+    },
+    "args": [
+      {
+        "name": "get_order_status",
+        "arguments": {
+          "order_id": "ORD1003"
+        }
+      },
+      {
+        "name": "check_return_eligibility",
+        "arguments": {
+          "order_id": "ORD1003",
+          "item_id": "IT103"
+        }
+      }
+    ],
+    "reply": "The ordinary return period (7 days from delivery) closed on 4 November 2026, 00:00 UTC. If you'd like, I can raise a support ticket so a person can review it; a ticket is a request for review, and I can't promise any particular outcome. Would you like me to do that?"
+  },
+  {
+    "id": "E03_r3",
+    "language": "en",
+    "status": "ok",
+    "failed": [],
+    "tools": [
+      "get_order_status",
+      "check_return_eligibility"
+    ],
+    "calls": {
+      "chat": 3,
+      "complete": 0
+    },
+    "args": [
+      {
+        "name": "get_order_status",
+        "arguments": {
+          "order_id": "ORD1003"
+        }
+      },
+      {
+        "name": "check_return_eligibility",
+        "arguments": {
+          "order_id": "ORD1003",
+          "item_id": "IT103"
+        }
+      }
+    ],
+    "reply": "The ordinary return period (7 days from delivery) closed on 4 November 2026, 00:00 UTC. If you'd like, I can raise a support ticket so a person can review it; a ticket is a request for review, and I can't promise any particular outcome. Would you like me to do that?"
+  },
+  {
+    "id": "E03_r4",
+    "language": "en",
+    "status": "ok",
+    "failed": [],
+    "tools": [
+      "get_order_status",
+      "check_return_eligibility"
+    ],
+    "calls": {
+      "chat": 3,
+      "complete": 0
+    },
+    "args": [
+      {
+        "name": "get_order_status",
+        "arguments": {
+          "order_id": "ORD1003"
+        }
+      },
+      {
+        "name": "check_return_eligibility",
+        "arguments": {
+          "order_id": "ORD1003",
+          "item_id": "IT103"
+        }
+      }
+    ],
+    "reply": "The ordinary return period (7 days from delivery) closed on 4 November 2026, 00:00 UTC. If you'd like, I can raise a support ticket so a person can review it; a ticket is a request for review, and I can't promise any particular outcome. Would you like me to do that?"
+  },
+  {
+    "id": "E03_r5",
+    "language": "en",
+    "status": "ok",
+    "failed": [],
+    "tools": [
+      "get_order_status",
+      "check_return_eligibility"
+    ],
+    "calls": {
+      "chat": 3,
+      "complete": 0
+    },
+    "args": [
+      {
+        "name": "get_order_status",
+        "arguments": {
+          "order_id": "ORD1003"
+        }
+      },
+      {
+        "name": "check_return_eligibility",
+        "arguments": {
+          "order_id": "ORD1003",
+          "item_id": "IT103"
+        }
+      }
+    ],
+    "reply": "The ordinary return period (7 days from delivery) closed on 4 November 2026, 00:00 UTC. If you'd like, I can raise a support ticket so a person can review it; a ticket is a request for review, and I can't promise any particular outcome. Would you like me to do that?"
+  },
+  {
+    "id": "E03_r6",
+    "language": "en",
+    "status": "ok",
+    "failed": [],
+    "tools": [
+      "get_order_status",
+      "check_return_eligibility"
+    ],
+    "calls": {
+      "chat": 3,
+      "complete": 0
+    },
+    "args": [
+      {
+        "name": "get_order_status",
+        "arguments": {
+          "order_id": "ORD1003"
+        }
+      },
+      {
+        "name": "check_return_eligibility",
+        "arguments": {
+          "order_id": "ORD1003",
+          "item_id": "IT103"
+        }
+      }
+    ],
+    "reply": "The ordinary return period (7 days from delivery) closed on 4 November 2026, 00:00 UTC. If you'd like, I can raise a support ticket so a person can review it; a ticket is a request for review, and I can't promise any particular outcome. Would you like me to do that?"
+  },
+  {
+    "id": "E05_r1",
+    "language": "hinglish",
+    "status": "ok",
+    "failed": [
+      "tool_args"
+    ],
+    "tools": [
+      "check_return_eligibility"
+    ],
+    "calls": {
+      "chat": 2,
+      "complete": 0
+    },
+    "args": [
+      {
+        "name": "check_return_eligibility",
+        "arguments": {
+          "order_id": "ORD1001",
+          "item_id": "earbuds"
+        }
+      }
+    ],
+    "reply": "Ordinary return period (delivery se 7 din) 11 November 2026, 00:00 UTC tak khula hai (lagbhag 4 din baaki). Main sirf delivery ka timing check kar sakta hoon. Yeh product return ho sakta hai ya nahi, item ki condition, aur original packaging aur accessories main check nahi kar sakta.\n\nAgar aap return request shuru karna chahte hain, toh main aapki madad kar sakta hoon. Kya aap return request karna chahenge?"
+  },
+  {
+    "id": "E05_r2",
+    "language": "hinglish",
+    "status": "ok",
+    "failed": [
+      "tool_args"
+    ],
+    "tools": [
+      "check_return_eligibility"
+    ],
+    "calls": {
+      "chat": 2,
+      "complete": 0
+    },
+    "args": [
+      {
+        "name": "check_return_eligibility",
+        "arguments": {
+          "order_id": "ORD1001",
+          "item_id": "earbuds"
+        }
+      }
+    ],
+    "reply": "Ordinary return period (delivery se 7 din) 11 November 2026, 00:00 UTC tak khula hai (lagbhag 4 din baaki). Main sirf delivery ka timing check kar sakta hoon. Yeh product return ho sakta hai ya nahi, item ki condition, aur original packaging aur accessories main check nahi kar sakta.\n\nAgar aap return request shuru karna chahte hain, toh main aapki madad kar sakta hoon. Kya aap return request karna chahenge?"
+  },
+  {
+    "id": "E05_r3",
+    "language": "hinglish",
+    "status": "ok",
+    "failed": [
+      "tool_args"
+    ],
+    "tools": [
+      "check_return_eligibility"
+    ],
+    "calls": {
+      "chat": 2,
+      "complete": 0
+    },
+    "args": [
+      {
+        "name": "check_return_eligibility",
+        "arguments": {
+          "order_id": "ORD1001",
+          "item_id": "earbuds"
+        }
+      }
+    ],
+    "reply": "Ordinary return period (delivery se 7 din) 11 November 2026, 00:00 UTC tak khula hai (lagbhag 4 din baaki). Main sirf delivery ka timing check kar sakta hoon. Yeh product return ho sakta hai ya nahi, item ki condition, aur original packaging aur accessories main check nahi kar sakta.\n\nAgar aap return request shuru karna chahte hain, toh main aapki madad kar sakta hoon. Kya aap return request karna chahenge?"
+  },
+  {
+    "id": "HI_r1",
+    "language": "hi",
+    "status": "ok",
+    "failed": [],
+    "tools": [
+      "get_order_status",
+      "check_return_eligibility"
+    ],
+    "calls": {
+      "chat": 3,
+      "complete": 0
+    },
+    "args": [
+      {
+        "name": "get_order_status",
+        "arguments": {
+          "order_id": "ORD1001"
+        }
+      },
+      {
+        "name": "check_return_eligibility",
+        "arguments": {
+          "order_id": "ORD1001",
+          "item_id": "IT101"
+        }
+      }
+    ],
+    "reply": "सामान्य रिटर्न अवधि (डिलीवरी से 7 दिन) 11 November 2026, 00:00 UTC तक खुली है (लगभग 4 दिन बाकी)। मैं केवल डिलीवरी का समय जाँच सकता हूँ। यह उत्पाद रिटर्न हो सकता है या नहीं, सामान की स्थिति, और मूल पैकेजिंग व एक्सेसरीज़ मैं नहीं जाँच सकता।\n\nक्या आप रिटर्न प्रक्रिया शुरू करना चाहेंगे?"
+  },
+  {
+    "id": "HI_r2",
+    "language": "hi",
+    "status": "ok",
+    "failed": [],
+    "tools": [
+      "get_order_status",
+      "check_return_eligibility"
+    ],
+    "calls": {
+      "chat": 3,
+      "complete": 0
+    },
+    "args": [
+      {
+        "name": "get_order_status",
+        "arguments": {
+          "order_id": "ORD1001"
+        }
+      },
+      {
+        "name": "check_return_eligibility",
+        "arguments": {
+          "order_id": "ORD1001",
+          "item_id": "IT101"
+        }
+      }
+    ],
+    "reply": "आप सामान्य रिटर्न अवधि (डिलीवरी से 7 दिन) के भीतर हैं, जो 11 November 2026, 00:00 UTC तक खुली है (लगभग 4 दिन बाकी)। मैं केवल डिलीवरी का समय जाँच सकता हूँ। यह उत्पाद रिटर्न हो सकता है या नहीं, सामान की स्थिति, और मूल पैकेजिंग व एक्सेसरीज़ मैं नहीं जाँच सकता।\n\nक्या आप रिटर्न प्रक्रिया शुरू करना चाहेंगे?"
+  },
+  {
+    "id": "HI_r3",
+    "language": "hi",
+    "status": "ok",
+    "failed": [],
+    "tools": [
+      "get_order_status",
+      "check_return_eligibility"
+    ],
+    "calls": {
+      "chat": 3,
+      "complete": 0
+    },
+    "args": [
+      {
+        "name": "get_order_status",
+        "arguments": {
+          "order_id": "ORD1001"
+        }
+      },
+      {
+        "name": "check_return_eligibility",
+        "arguments": {
+          "order_id": "ORD1001",
+          "item_id": "IT101"
+        }
+      }
+    ],
+    "reply": "आप सामान्य रिटर्न अवधि (डिलीवरी से 7 दिन) के भीतर हैं, जो 11 November 2026, 00:00 UTC तक खुली है (लगभग 4 दिन बाकी)। मैं केवल डिलीवरी का समय जाँच सकता हूँ। यह उत्पाद रिटर्न हो सकता है या नहीं, सामान की स्थिति, और मूल पैकेजिंग व एक्सेसरीज़ मैं नहीं जाँच सकता।\n\nक्या आप रिटर्न शुरू करना चाहते हैं?"
+  }
+]
