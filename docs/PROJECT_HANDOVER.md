@@ -9,8 +9,8 @@ evaluation evidence see `docs/evaluation/EVALUATION_REPORT.md`; for wording that
 | Category | What it covers | Evidence |
 |---|---|---|
 | **Live-validated** (real `gpt-4o-mini`, replies read by hand) | The behaviour of code `8fafd95` (Evaluations A and B); the first post-fix check of `bccbc12` (language switching, policy routing, refund lookup, N01/N02); the final check of `78f9790` (29 requests, 12 conversations all passed): named orders not on the account (H10, C027, N01, N02, H09, E07), the repeat-complaint order list (C003), Hinglish ticket question (C023), S02 and S03 | `docs/evaluation/EVALUATION_REPORT.md` sections 3 to 8 |
-| **Offline-tested only** (3079 tests; NOT validated against the live model) | Everything added after `78f9790`: refund-status wording replacement; the whole localised return journey; the ambiguity guards (returns, eligibility, tickets in `41c1c9c`; status, refund and listing, and the "ask before any tool runs" rule in `4462cb5`); issue-management, greeting, thanks and scope localisation; Hindi and Hinglish courtesy detection; order IDs written `ORD-1010`; number-word and Hindi-unit durations | `tests/test_final_cycle.py`, `tests/test_handover_cycle.py` and the older files; offline tests show the code does what it says, not that the model behaves |
-| **Human-review pending** | All 104 Hinglish and Hindi sentences, drafts written by the assistant; **13 are High priority and are awaiting fluent human review** (`lead_limit`, `created`, `not_on_account`, `which_order`, `grounding`, `reason_notice`, `return_card_lead`, `return_card_summary`, `return_submitted`, `ticket_offer_review`, `refund_pending`, `refund_processed`, `refund_failed`). Also every manual verdict in the evaluation report | `docs/localization_review_hinglish_hindi.md` and `.csv` |
+| **Offline-tested only** (3137 tests; NOT validated against the live model) | Everything added after `78f9790`: refund-status wording replacement; the whole localised return journey; the ambiguity guards (returns, eligibility, tickets in `41c1c9c`; status, refund and listing, and the "ask before any tool runs" rule in `4462cb5`); issue-management, greeting, thanks and scope localisation; Hindi and Hinglish courtesy detection; order IDs written `ORD-1010`; number-word and Hindi-unit durations | `tests/test_final_cycle.py`, `tests/test_handover_cycle.py` and the older files; offline tests show the code does what it says, not that the model behaves |
+| **Human-review pending** | All 105 Hinglish and Hindi sentences, drafts written by the assistant; **13 are High priority and are awaiting fluent human review** (`lead_limit`, `created`, `not_on_account`, `which_order`, `grounding`, `reason_notice`, `return_card_lead`, `return_card_summary`, `return_submitted`, `ticket_offer_review`, `refund_pending`, `refund_processed`, `refund_failed`). Also every manual verdict in the evaluation report | `docs/localization_review_hinglish_hindi.md` and `.csv` |
 | **Remaining known limitations** | Section 5 below | |
 
 ## 1. What this is
@@ -71,9 +71,9 @@ app/db  repository.py (the authorization boundary, SQL filters on the signed-in 
 | Area | Result |
 |---|---|
 | Behaviour | Intent split for returns (request, eligibility question, status question); `check_return_eligibility` timing tool with item recovery; named-order lookup enforced; general policy questions routed to search; angry refund demands looked up first; repeat-complaint clarification; refund-status wording; ambiguity guards |
-| Language | Code-decided language; 104 sentences in one three-language catalogue; Hindi and Hinglish greetings, thanks and off-topic detection |
+| Language | Code-decided language; 105 sentences in one three-language catalogue; Hindi and Hinglish greetings, thanks and off-topic detection |
 | Evaluation engineering | Real-backend harness with denominators kept explicit; persistent usage ledger (every request, embeddings included, fail-closed ceiling); harness-only retry of pre-transmission failures; per-test attribution of transport failures; composition of attempts (first clean result per test, everything disclosed) |
-| Tests | 3079 offline tests, all passing (section 6) |
+| Tests | 3137 offline tests, all passing (section 6) |
 
 ## 4. Evaluation results (details and caveats in `docs/evaluation/EVALUATION_REPORT.md`)
 
@@ -87,7 +87,7 @@ scenarios 5/5, conversations 11/12 (45/46 keys, 133/134 universal), single-turn 
 
 ## 5. Known limitations and what still needs a person
 
-1. **Human review (blocking for production wording)**: all 104 Hinglish and Hindi sentences are drafts; 13 are marked High priority.
+1. **Human review (blocking for production wording)**: all 105 Hinglish and Hindi sentences are drafts; 13 are marked High priority (the 105th, `which_order_to_return` (added after the review sheet's first 104 and not yet seen by a reviewer), is also a draft).
    Every manual verdict in the evaluation report is the assistant's own reading, not a signed review.
 2. **Live validation of the last two cycles** was not run (ledger headroom 18 of 700 at the end). About 20 requests would cover the
    Hinglish refund wording, a Hindi return journey and the which-order question; the ceiling must be discussed first.
@@ -104,10 +104,10 @@ scenarios 5/5, conversations 11/12 (45/46 keys, 133/134 universal), single-turn 
 
 ## 6. Final offline test result
 
-`uv run python -m pytest tests -q -rs`: **3079 passed, 0 failed, 0 skipped**, 1 warning (a Chroma deprecation note), 203 seconds. Growth:
-2639 before the evaluation tooling, 2825 after the second correction round, 2983 after the third, 3079 now.
+`uv run python -m pytest tests -q -rs`: **3137 passed, 0 failed, 0 skipped**, 1 warning (a Chroma deprecation note), 239 seconds. Growth:
+2639 before the evaluation tooling, 2825 after the second correction round, 2983 after the third, 3079 at the handover, 3137 after the return-prose fix (evaluation report, section 13).
 
-What the 3079 tests cover for the order-ambiguity rule: every order-reading tool the model can propose (status lookup, refund lookup, both
+What the 3137 tests cover for the order-ambiguity rule: every order-reading tool the model can propose (status lookup, refund lookup, both
 candidates in one turn, a listing, an eligibility check, a return, a ticket); each way a customer can settle it (nothing typed: ask; typed in the
 message; typed earlier in the conversation; a single matching order; orders that are not delivered; the customer asking for their own orders);
 and account isolation (candidates come only from the signed-in customer's orders, another customer's ID typed after the question is still "not
