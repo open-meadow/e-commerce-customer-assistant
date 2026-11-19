@@ -3,7 +3,7 @@
 > **This is the one authoritative evaluation report.** Earlier results (v2 to v5, e47501e, corrective v1) are summarised in [README.md](README.md) and kept unchanged; the older [technical report](../history/technical_report.md) is historical.
 
 Model: `gpt-4o-mini`, temperature 0.2, OpenAI embeddings for retrieval. Branch `rukum/corrective-v2` (local only, nothing
-pushed). Final code commit `4462cb5` plus this report. **Full offline suite: 3079 passed, 0 failed, 0 skipped.** The project handover is in
+pushed). Final code commit `4462cb5` plus this report. **Full offline suite: 3137 passed, 0 failed, 0 skipped** (3079 at the handover plus 58 for the late fix in section 13). The project handover is in
 `docs/PROJECT_HANDOVER.md`. The original capstone PR branch
 `rukum/capstone-final` is unchanged (`f9883ea`, same as its remote).
 
@@ -20,7 +20,7 @@ code-owned sentence is a draft awaiting a fluent reviewer (`docs/localization_re
 | **Data and sample sizes** | **A:** affected set (14 conversations) twice, generic and named cases four times, held-out H09 to H12 and H22 twice, L01 five times: 97 chat requests, five valid segments. **B:** original set (30 cases, 12 conversations, 5 scenarios), identity set (7), eligibility set (10), one post-confirmation diagnostic. **Validations:** about 70 requests, then 29 requests over 12 conversations. |
 | **Results** | Sections 4 to 8. In short: other-customer requests safe 20/20; named other-person orders never revealed but not looked up until the later fix, then **12 of 12 targeted conversations passed** in the final validation; B original set scenarios 5/5, conversations 11/12, tool selection 22/25, language match 27/28; identity 7/7; eligibility 9/10 (all ten read correct). |
 | **Safety and authorization** | Held throughout: no cross-customer exposure, no unconfirmed write, no false success claim, no invented contact details, correct refusal of role and instruction injection (section 6). |
-| **Regression coverage** | 3,079 offline tests, all passing. Each defect has a named regression class (sections 8 to 10); the order-ambiguity rule is tested for every order-reading tool type, typed and earlier IDs, and account isolation. |
+| **Regression coverage** | 3,137 offline tests, all passing. Each defect has a named regression class (sections 8 to 10); the order-ambiguity rule is tested for every order-reading tool type, typed and earlier IDs, and account isolation. |
 | **Limitations** | Section 11. Small sets, one to five repetitions, written by the team that wrote the prompts; manual verdicts are not independently signed. |
 
 **Evidence.** Raw reports and every attempt, including the failed and interrupted ones, are archived in
@@ -38,7 +38,7 @@ the manifest are evidence of transport failures, not results.
 |---|---|
 | **Live-validated** (real model, read by hand) | Code `8fafd95` in Evaluations A and B; `bccbc12` in the first post-fix check; `78f9790` in the final 12-conversation check (named orders not on the account, the repeat-complaint order list, the Hinglish ticket question, S02, S03) |
 | **Offline-tested only** | Everything after `78f9790`: refund-status wording replacement, the localised return journey, the order-ambiguity guards (including "ask before any tool runs"), issue-management, greeting, thanks and scope localisation, Hindi and Hinglish courtesy detection, `ORD-1010`-style IDs, number-word durations. **Not validated against the live model.** |
-| **Human-review pending** | All 104 Hinglish and Hindi sentences; the 13 High-priority ones are explicitly **awaiting fluent human review**; every manual verdict in this report |
+| **Human-review pending** | All 105 Hinglish and Hindi sentences; the 13 High-priority ones are explicitly **awaiting fluent human review**; every manual verdict in this report |
 | **Remaining limitations** | Section 11 |
 
 ## 1. Implementation summary
@@ -55,7 +55,7 @@ validates everything, owns every state change, and writes only after an explicit
 | Order selection | A repeat complaint with several orders and none named gets a code-owned list of the customer's own order IDs and statuses and a question |
 | Timelines | A sentence stating a duration that no tool result or policy text gave is removed; only verified sources count |
 | Refund wording | A reply that promises a refund, or says it has arrived or is complete, is replaced by the refund status said plainly (Pending, Processed or Failed), in three languages |
-| One catalogue | `app/tools/flow_texts.py` holds all 104 fixed engine sentences in English, Hinglish and Hindi: ticket flow, order lookup, the whole return journey, confirmations, errors, refund status, issue management, greeting, thanks and scope replies |
+| One catalogue | `app/tools/flow_texts.py` holds all 105 fixed engine sentences in English, Hinglish and Hindi (the 105th was added by the late fix in section 13): ticket flow, order lookup, the whole return journey, confirmations, errors, refund status, issue management, greeting, thanks and scope replies |
 | Ambiguity | A return, an eligibility check, a status or refund lookup, a listing or a ticket never rests on an order the model chose among several that hold the same product: the assistant asks which, before any tool runs |
 | Evaluation tooling | Retry runner, usage ledger, harness-only transport retry, per-test attribution of transport failures, composition of attempts |
 
@@ -189,7 +189,7 @@ discarded and reaches neither the model nor the customer.
 | Item | Before | After | Regression evidence |
 |---|---|---|---|
 | Ambiguity, all tools | Looking up all candidates exposed each order's details to the model and possibly the customer | Ask first; nothing read or shown | `TestNothingIsReadOrShownBeforeTheCustomerClarifies` (5 proposals, IDs-and-statuses-only check, own-orders exception, typed ID, other customer's ID, no writes), `TestStatusAndRefundAnswersDoNotPickAmongLookAlikeOrders` |
-| Remaining English | Issue-management prompts, buttons and notices, greeting, thanks, scope redirect, the timed-out notice and the fallback item name | 19 more sentences in the one catalogue (104 in all); `grep` test: no English literal left in a customer-facing turn of the engine | `TestGreetingThanksAndScope`, `TestIssueManagementInTheCustomersLanguage`, `TestTheFallbackItemName`, `TestTheCatalogueIsComplete` |
+| Remaining English | Issue-management prompts, buttons and notices, greeting, thanks, scope redirect, the timed-out notice and the fallback item name | 19 more sentences in the one catalogue (104 in all at that point; a 105th came with section 13); `grep` test: no English literal left in a customer-facing turn of the engine | `TestGreetingThanksAndScope`, `TestIssueManagementInTheCustomersLanguage`, `TestTheFallbackItemName`, `TestTheCatalogueIsComplete` |
 | Hinglish and Hindi courtesy | "namaste", "shukriya", "dhanyavaad" and Devanagari greetings and thanks were English-answered or unrecognised | Recognised, language settled by a lone courtesy word, answered in kind; "aaj mausam kaisa hai" and Devanagari off-topic cues are redirected | `TestCourtesyWordsSettleTheLanguage` |
 | Reviewer formats | A Markdown sheet generated by a scratch script | `scripts/localization_review.py` generates the Markdown sheet and a CSV (English, Hinglish, Hindi, priority, blank reviewer columns); a test fails when a sentence is added without a description or the committed sheets are stale | `tests/test_localization_review.py` |
 
@@ -197,7 +197,7 @@ discarded and reaches neither the model nor the customer.
 
 * **Not validated live**: sections 9 and 10 are offline-validated only (ledger headroom 18 of 700). About 20 requests would cover S02 in Hinglish,
   a Hindi return journey, the which-order question and a Hinglish greeting; the ceiling needs discussing first.
-* **Human review pending**: all 104 Hinglish and Hindi sentences (13 High priority) and every manual verdict in this report.
+* **Human review pending**: all 105 Hinglish and Hindi sentences (13 High priority) and every manual verdict in this report.
 * **Free prose**: the model's own sentences are steered by the per-turn language line, not enforced; model-facing prompts and tool notes are
   English; the offline stand-in's `unsupported_reply` stays English.
 * **Model-chosen orders described without a tool call** are not caught by the ambiguity guards (they act on tool calls).
@@ -214,5 +214,41 @@ discarded and reaches neither the model nor the customer.
 
 ## 12. Test result
 
-`uv run python -m pytest tests -q`: **3079 passed, 0 failed, 0 skipped** (2639 before the evaluation tooling; 2825 after the second correction round;
-2983 after the third; 3079 now; the last increase adds coverage for every order-reading tool type, typed and earlier order IDs, and account isolation). Evaluations A and B, their reports and every earlier attempt are unchanged.
+`uv run python -m pytest tests -q`: **3137 passed, 0 failed, 0 skipped** (2639 before the evaluation tooling; 2825 after the second correction round;
+2983 after the third; 3079 at the handover; 3137 now, the 58 new ones being the return-prose guard's; the last increase adds coverage for every order-reading tool type, typed and earlier order IDs, and account isolation). Evaluations A and B, their reports and every earlier attempt are unchanged.
+
+## 13. Late fix: a return request the model answers in prose (validated OFFLINE only, no live run)
+
+**Report.** A customer (C102) said "i got defected item", then "product is not working as expected i want to return it". The assistant
+answered "Is that the item you want to return? If so, choose the return reason category in the interface", added a generic ticket
+offer, and repeated the instruction when the customer said yes. ORD1003 was delivered 10 days before the seed time, past even the
+7-day standard window, and no category buttons existed.
+
+**Cause.** The engine's eligibility refusal (`_refusal_before_reason`) ran only when the model called `start_return_request`. The model
+answered in prose instead, so the check never ran; the second ticket line was the generic issue offer the engine adds to a reply.
+
+**Fix (code, not prompt).** When the customer's own words explicitly ask to return something and the model did not propose
+`start_return_request`, the engine settles the turn through the same path that tool takes (`_start_return`): a delivered order whose window
+has closed gets the fixed refusal and one ticket offer; an eligible one starts the real flow (reason, then category buttons, then the
+customer's Confirm); look-alike orders get a fixed which-order question and an order with several items a fixed which-item question. The
+order comes only from what the customer typed, the product they named, or their only delivered order, always an order of the signed-in
+customer: the model's reply is never used to pick an order or an item, and no item is assumed (only an active return belongs to an item; the
+status and the window belong to the order). A model reply that claims a return was submitted never reaches the customer: a closed window
+gets the refusal alone, an eligible return begins with the fixed "I can't confirm that anything has been done" sentence. One catalogue
+sentence was added, `which_order_to_return` (the 105th; a draft awaiting fluent review like the rest). Turns where the model did propose
+`start_return_request` are left to the existing path.
+
+**Evidence.** `tests/test_return_prose_guard.py` and `tests/test_return_prose_guard_edges.py` (58 tests): the reported chat, a closed window
+with and without a typed ID, eligible orders, a false success claim on both, several delivered orders in three languages, items,
+ownership of order IDs recovered from earlier turns, and that nothing is written before the customer's Confirm. **Not run against the live
+model.** Whether a real model answers return requests in prose often enough to matter is unmeasured.
+
+**What the evaluation instrument now measures.** The `post_confirmation_status` diagnostic used to show a model that answered "Hello." leaving
+the return unwritten. Now the engine starts the return itself, so the harness's own category pick and Confirm write it; the diagnostic is still
+never scored and never aborts, and the engine writes nothing before that Confirm. The diagnostic, and any case where a model fails to call
+`start_return_request` for an explicit request, therefore no longer isolate the model's own return behaviour: the engine covers for it. Compare
+runs made before and after this fix with that in mind.
+
+**Limits.** A model that proposes `start_return_request` and then answers in prose after item feedback is not covered. Return intent is
+recognised from explicit phrasings in English, Hinglish and Hindi ("I want to return it", "please return this", "return karna hai"), not
+from every way of asking. Hinglish and Hindi wording of the new sentence is a draft.

@@ -298,7 +298,15 @@ class TestEligibilityScoring:
         start = LLMResult(tool_calls=(ToolCall("start_return_request", {"order_id": "ORD1001", "item_id": "IT101"}, "r1"),))
         assert run_case(tmp_path, "E08", Sequence(start))["failed"] == []
         wrong = run_case(tmp_path, "E08", Sequence(ask(), text(GOOD_E01)))
-        assert {"tools_any", "tools_not", "statuses"} <= set(wrong["failed"])
+        failed = set(wrong["failed"])
+        # The model-behaviour checks are unchanged: a model that used the eligibility tool for an explicit return request
+        # and never proposed start_return_request is still flagged on both tool-selection checks.
+        assert {"tools_any", "tools_not"} <= failed
+        # The return-flow status is a different matter. Since the return-prose guard, the APPLICATION starts the return
+        # flow itself when the model answers an explicit request in prose, so the status expectation is now met by
+        # application-level orchestration, not by the model choosing the right tool. It therefore no longer counts against
+        # the model, and the two checks above are what keep separating model behaviour from application behaviour.
+        assert "statuses" not in failed
 
     def test_a_blocked_order_may_be_explained_in_any_accurate_wording(self, tmp_path):
         for said in ("This order is not eligible for a return yet because it is still shipped.",
@@ -568,7 +576,12 @@ class TestDiagnostic:
     def test_a_derailed_model_does_not_abort_the_run(self):
         result = ev.run_diagnostic("post_confirmation_status", ev.DIAGNOSTICS["post_confirmation_status"],
                                    lambda: Sequence(text("Hello.")))
-        assert result["scored"] is False and result["observations"]["return_confirmed_and_written"] is False
+        # The run is never aborted and never scored. Since the return-prose guard, an explicit return request is settled by
+        # code even when the model answers "Hello.", so the harness's own category pick and Confirm now write the return
+        # (that the engine writes nothing before the customer's Confirm is pinned in test_return_prose_guard_edges.py).
+        # The diagnostic therefore no longer isolates the model's own return behaviour; see the evaluation report.
+        assert result["scored"] is False and "error" not in result
+        assert result["observations"]["return_confirmed_and_written"] is True
 
     def test_the_diagnostic_is_not_part_of_the_original_scenarios(self):
         assert "post_confirmation_status" not in ev.SCENARIOS and len(ev.SCENARIOS) == 5

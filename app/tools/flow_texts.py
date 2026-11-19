@@ -126,6 +126,7 @@ TEXTS: dict[str, dict[str, str]] = {
         "notice_on_hold": "I've put your earlier issue on hold and noted this as a separate issue.",
         "item_fallback": "the item",
         "which_order_status": "You have more than one order with {product}: {orders}. Which order do you mean?",
+        "which_order_to_return": "You have more than one delivered order: {orders}. Which one would you like to return?",
     },
     "hinglish": {
         "ticket_limit": "Is session mein support tickets ki limit poori ho gayi hai, isliye main aur ticket nahi bana sakta.",
@@ -232,6 +233,7 @@ TEXTS: dict[str, dict[str, str]] = {
         "notice_on_hold": "Maine aapka pichhla issue hold par rakh diya aur ise alag issue ke roop mein note kiya.",
         "item_fallback": "yeh item",
         "which_order_status": "Aapke paas {product} ke saath ek se zyada orders hain: {orders}. Aap kaun sa order poochh rahe hain?",
+        "which_order_to_return": "Aapke paas ek se zyada delivered orders hain: {orders}. Aap kaun sa return karna chahte hain?",
     },
     "hi": {
         "ticket_limit": "इस सेशन में सपोर्ट टिकट की सीमा पूरी हो चुकी है, इसलिए मैं और टिकट नहीं बना सकता।",
@@ -338,6 +340,7 @@ TEXTS: dict[str, dict[str, str]] = {
         "notice_on_hold": "मैंने आपकी पिछली समस्या को रोक दिया और इसे अलग समस्या के रूप में दर्ज किया।",
         "item_fallback": "यह आइटम",
         "which_order_status": "आपके पास {product} वाले एक से अधिक ऑर्डर हैं: {orders}। आप कौन सा ऑर्डर पूछ रहे हैं?",
+        "which_order_to_return": "आपके पास एक से अधिक डिलीवर हुए ऑर्डर हैं: {orders}। आप कौन सा ऑर्डर रिटर्न करना चाहते हैं?",
     },
 }
 

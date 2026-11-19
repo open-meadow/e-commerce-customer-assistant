@@ -82,7 +82,7 @@ The ten tools: `list_my_orders`, `get_order_status`, `get_my_returns`, `get_my_t
 ### Language detection
 - **What:** the customer's latest message decides the language by code (`guard.decisive_language`, `customer_language`):
   English, Hinglish (Hindi in Latin letters) or Hindi (Devanagari). A one-line per-turn instruction tells the model. Every fixed
-  sentence (104 in one catalogue) is chosen by code from the session language.
+  sentence (105 in one catalogue) is chosen by code from the session language.
 - **Why:** the model tended to follow earlier turns rather than the latest message, and fixed sentences were English for
   Hindi-speaking customers. One catalogue with a test that each key has three languages keeps them in step. The Hinglish and
   Hindi wording is **draft pending human review**; see [localization_review_hinglish_hindi.md](localization_review_hinglish_hindi.md).
