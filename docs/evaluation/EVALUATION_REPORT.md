@@ -23,8 +23,9 @@ code-owned sentence is a draft awaiting a fluent reviewer (`docs/localization_re
 | **Regression coverage** | 3,079 offline tests, all passing. Each defect has a named regression class (sections 8 to 10); the order-ambiguity rule is tested for every order-reading tool type, typed and earlier IDs, and account isolation. |
 | **Limitations** | Section 11. Small sets, one to five repetitions, written by the team that wrote the prompts; manual verdicts are not independently signed. |
 
-**Evidence.** Raw reports and every attempt, including the failed and interrupted ones, are archived byte for byte in
-[`corrective_v2/raw/`](corrective_v2/raw/MANIFEST.md) (143 files, SHA-256 in the manifest). Key files: Evaluation A
+**Evidence.** Raw reports and every attempt, including the failed and interrupted ones, are archived in
+[`corrective_v2/raw/`](corrective_v2/raw/MANIFEST.md) (143 files, SHA-256 in the manifest; byte for byte except 18 files in which a local
+Windows user path was replaced, see [`REDACTIONS.md`](corrective_v2/raw/REDACTIONS.md) for both hashes of each). Key files: Evaluation A
 [`A1_valid.json`](corrective_v2/raw/live_v2/A1_valid.json) and [`A3_valid.json`](corrective_v2/raw/live_v2/A3_valid.json);
 Evaluation B composites [`B1_composite.json`](corrective_v2/raw/live_v2/B1_composite.json) and
 [`B2_composite.json`](corrective_v2/raw/live_v2/B2_composite.json); final validation

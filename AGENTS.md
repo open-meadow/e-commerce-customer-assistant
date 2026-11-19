@@ -19,8 +19,9 @@ documentation.
 5. **Git.** Do not create or switch branches, stage, commit, push, amend, rebase or merge without the user's explicit approval for
    that operation; approval for one does not extend to the next.
 6. **Do not change a frozen checkpoint.** After a development freeze, application code and prompts change only with the owner's approval.
-7. **Do not edit evaluation datasets or archived results.** `docs/evaluation/corrective_v2/raw/` is byte-exact evidence (SHA-256 in
-   its manifest); the held-out set is frozen and pinned by a test.
+7. **Do not edit evaluation datasets or archived results.** `docs/evaluation/corrective_v2/raw/` is archived evidence (SHA-256 in
+   its manifest): byte-exact except 18 files whose local Windows user path was redacted, listed with both hashes in its
+   `REDACTIONS.md`; the held-out set is frozen and pinned by a test.
 8. Localization: Hinglish and Hindi sentences are drafts. Keep `REVIEW_STATUS` as `draft` until a fluent reviewer signs them.
 
 ## Engineering workflow

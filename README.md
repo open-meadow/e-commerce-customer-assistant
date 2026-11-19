@@ -143,7 +143,8 @@ uv run python -m pytest tests -q
 
 Read the full methodology, sample sizes and caveats in the [evaluation report](docs/evaluation/EVALUATION_REPORT.md). Raw evidence
 (143 files with SHA-256 manifest, including failed attempts) is archived under
-[docs/evaluation/corrective_v2/raw/](docs/evaluation/corrective_v2/raw/MANIFEST.md).
+[docs/evaluation/corrective_v2/raw/](docs/evaluation/corrective_v2/raw/MANIFEST.md); 18 of them have a local user path redacted
+([REDACTIONS.md](docs/evaluation/corrective_v2/raw/REDACTIONS.md)), and `verify_archive.py` there rechecks every hash.
 
 ## Known limitations
 

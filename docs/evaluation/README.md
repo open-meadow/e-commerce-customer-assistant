@@ -6,7 +6,7 @@ validations, regression coverage and limitations). This page indexes the files.
 | Path | What it is |
 |---|---|
 | [EVALUATION_REPORT.md](EVALUATION_REPORT.md) | Current evaluation report (corrective v2) |
-| [corrective_v2/raw/](corrective_v2/raw/MANIFEST.md) | Archived raw evidence: 143 files with SHA-256 manifest, including failed and interrupted attempts. For audit; not needed to read the results |
+| [corrective_v2/raw/](corrective_v2/raw/MANIFEST.md) | Archived raw evidence: 143 files with SHA-256 manifest, including failed and interrupted attempts. 18 have a local user path redacted ([REDACTIONS.md](corrective_v2/raw/REDACTIONS.md)). For audit; not needed to read the results |
 | `final_v5.json`, `baseline_v2_run1.json`, `results_summary.json` | The earlier (pre-corrective-v2) live runs described below |
 
 The sections below describe the earlier runs and the evaluation inputs. They are retained unchanged.
