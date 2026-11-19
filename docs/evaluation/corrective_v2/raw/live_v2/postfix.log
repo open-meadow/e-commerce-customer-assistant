@@ -1,0 +1,6 @@
+v1_affected exit 0
+v2_heldout exit 0
+LLM provider call failed: provider=openai model=gpt-4o-mini category=network status=- error_type=- error_code=- error_param=-
+LLM provider call failed: provider=openai model=gpt-4o-mini category=network status=- error_type=- error_code=- error_param=-
+LLM provider call failed: provider=openai model=gpt-4o-mini category=timeout status=- error_type=- error_code=- error_param=-
+v3_original exit 0

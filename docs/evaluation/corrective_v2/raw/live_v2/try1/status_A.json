@@ -1,0 +1,13 @@
+{
+  "phase": "A",
+  "segments": [
+    {
+      "label": "A1",
+      "run_id": "evalA-pass1",
+      "exit": 1,
+      "status": "no_valid_run",
+      "calls_attempted": 22
+    }
+  ],
+  "stopped": "A1 did not produce a valid run (no_valid_run)"
+}

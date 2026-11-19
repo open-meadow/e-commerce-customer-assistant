@@ -1,0 +1,32 @@
+[
+ {
+  "id": "M01",
+  "customer_id": "C101",
+  "category": "context_followup",
+  "note": "A pronoun refers to the order from the previous turn; the customer must not be asked for it again.",
+  "turns": [
+   {
+    "say": "Where is ORD1002?",
+    "expect": {
+     "tools_any": [
+      "get_order_status"
+     ],
+     "mentions": [
+      "ORD1002"
+     ]
+    }
+   },
+   {
+    "say": "when will it arrive?",
+    "expect": {
+     "not_asking": true,
+     "mentions_any": [
+      "ORD1002",
+      "Shipped",
+      "shipped"
+     ]
+    }
+   }
+  ]
+ }
+]

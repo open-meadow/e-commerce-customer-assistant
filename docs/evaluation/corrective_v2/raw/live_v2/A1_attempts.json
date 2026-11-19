@@ -1,0 +1,22 @@
+{
+  "label": "A1",
+  "status": "valid",
+  "calls_attempted": 27,
+  "budget": null,
+  "backoff_seconds": [
+    30.0,
+    90.0
+  ],
+  "attempts": [
+    {
+      "attempt": 1,
+      "preflight": "ok",
+      "ran": true,
+      "exit_code": 0,
+      "report": "A1_attempt1.json",
+      "valid": true,
+      "provider_error_replies": 0,
+      "calls": 27
+    }
+  ]
+}

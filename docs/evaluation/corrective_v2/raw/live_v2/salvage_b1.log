@@ -1,0 +1,9 @@
+round 1 missing: {'cases': ['C011', 'C012', 'C014'], 'conversations': ['M08', 'M09', 'M10', 'M11', 'M12'], 'scenarios': ['ticket_confirmed', 'ticket_declined', 'return_confirmed', 'return_outside_window', 'return_foreign_item']}
+LLM provider call failed: provider=openai model=gpt-4o-mini category=timeout status=- error_type=- error_code=- error_param=-
+replay exit 0
+unclean in B1_replay_r1.json {'cases': [], 'conversations': [], 'scenarios': ['return_confirmed']}
+round 2 missing: {'cases': [], 'conversations': [], 'scenarios': ['return_confirmed']}
+replay exit 0
+unclean in B1_replay_r2.json {'cases': [], 'conversations': [], 'scenarios': []}
+round 3 missing: {'cases': [], 'conversations': [], 'scenarios': []}
+FINAL complete: True missing: {'cases': [], 'conversations': [], 'scenarios': []}

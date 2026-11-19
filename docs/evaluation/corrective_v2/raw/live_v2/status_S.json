@@ -1,0 +1,13 @@
+{
+  "phase": "S",
+  "segments": [
+    {
+      "label": "S0",
+      "run_id": "evalA-smoke",
+      "exit": 0,
+      "status": "valid",
+      "calls_attempted": 4
+    }
+  ],
+  "stopped": null
+}

@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "evaluation_mode": "aborted_provider_outage",
+  "aborted": {
+    "reason": "provider_outage",
+    "consecutive_failures": 3
+  },
+  "model_calls_total": {
+    "chat": 4,
+    "complete": 0
+  },
+  "integrity": {
+    "run_valid_for_scoring": false,
+    "provider_error_replies": {
+      "total": 3
+    },
+    "rule": "A run stopped by a provider outage is not scored; it is repeated."
+  }
+}

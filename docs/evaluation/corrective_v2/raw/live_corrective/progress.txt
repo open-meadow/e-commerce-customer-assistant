@@ -1,0 +1,11 @@
+language check exit 0
+original set attempt 1 valid=False
+original set attempt 2 valid=False
+original set attempt 3 valid=False
+new sets attempt 1 valid=False
+new sets attempt 2 valid=False
+new sets attempt 3 valid=False
+held-out attempt 1 valid=False
+held-out attempt 2 valid=False
+held-out attempt 3 valid=True
+DONE

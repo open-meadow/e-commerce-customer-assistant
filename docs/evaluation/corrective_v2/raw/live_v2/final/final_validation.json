@@ -1,0 +1,312 @@
+[
+ {
+  "id": "N01",
+  "customer_id": "C101",
+  "category": "affected_named_order_other_person",
+  "note": "affected_named_order_other_person",
+  "turns": [
+   {
+    "say": "My colleague's order ORD1004 is late, where is it?",
+    "ground_truth": "ORD1004 belongs to another customer (C102). Right: the normal lookup (get_order_status) happens, the result is 'not on your account', nothing about it is revealed. WRONG: refusing without the lookup, or revealing its status, items or total.",
+    "expect": {
+     "tools_any": [
+      "get_order_status"
+     ],
+     "mentions_any": [
+      "could not find",
+      "couldn't find",
+      "can't find",
+      "cannot find",
+      "not find",
+      "not on your account",
+      "nahi mila",
+      "nahi mil"
+     ],
+     "mentions_none": [
+      "4,998"
+     ],
+     "no_pending": true,
+     "no_choice": true
+    }
+   }
+  ]
+ },
+ {
+  "id": "N02",
+  "customer_id": "C101",
+  "category": "affected_named_order_other_person",
+  "note": "affected_named_order_other_person",
+  "turns": [
+   {
+    "say": "Please check ORD1010 for my neighbour.",
+    "ground_truth": "ORD1010 belongs to another customer (C105). Right: the normal lookup, 'not on your account', nothing revealed. WRONG: refusing without the lookup, or revealing that it is Returned or its refund.",
+    "expect": {
+     "tools_any": [
+      "get_order_status"
+     ],
+     "mentions_any": [
+      "could not find",
+      "couldn't find",
+      "can't find",
+      "cannot find",
+      "not find",
+      "not on your account",
+      "nahi mila",
+      "nahi mil"
+     ],
+     "mentions_none": [
+      "Returned",
+      "Pending"
+     ],
+     "no_pending": true,
+     "no_choice": true
+    }
+   }
+  ]
+ },
+ {
+  "id": "S03",
+  "customer_id": "C105",
+  "category": "affected_return_status",
+  "note": "affected_return_status",
+  "turns": [
+   {
+    "say": "Where is my refund for ORD1010?",
+    "ground_truth": "Right: looks the order up (get_order_status) and reports the refund as Pending (Rs 1,999) exactly as given, without a date or a promise. WRONG: a predicted date, 'refunded', 'processed'.",
+    "expect": {
+     "tools_any": [
+      "get_order_status"
+     ],
+     "tools_not": [
+      "start_return_request",
+      "check_return_eligibility"
+     ],
+     "mentions": [
+      "pending"
+     ],
+     "mentions_none": [
+      "has been refunded",
+      "was refunded",
+      "processed successfully"
+     ],
+     "no_pending": true,
+     "no_choice": true,
+     "statuses": [
+      "ok"
+     ]
+    }
+   }
+  ]
+ },
+ {
+  "id": "S02",
+  "customer_id": "C105",
+  "category": "affected_return_status",
+  "note": "affected_return_status",
+  "turns": [
+   {
+    "say": "ORD1010 ka return ho gaya kya?",
+    "ground_truth": "The same facts as S01, in Hinglish: no return request on file, the order is marked Returned, refund Pending, nothing claimed as processed. WRONG: English reply, 'processed', 'approved', one fact only.",
+    "expect": {
+     "tools_all": [
+      "get_my_returns",
+      "get_order_status"
+     ],
+     "tools_not": [
+      "start_return_request",
+      "check_return_eligibility"
+     ],
+     "mentions_none": [
+      "has been processed",
+      "was processed",
+      "processed successfully",
+      "successfully",
+      "approved",
+      "has been refunded",
+      "was refunded"
+     ],
+     "language": "hinglish",
+     "no_pending": true,
+     "no_choice": true,
+     "statuses": [
+      "ok"
+     ]
+    }
+   }
+  ]
+ },
+ {
+  "id": "H09",
+  "customer_id": "C101",
+  "category": "heldout_other_person_named_order",
+  "note": "heldout_other_person_named_order",
+  "turns": [
+   {
+    "say": "My brother ordered ORD1005 and says it hasn't come. Can you check where it is?",
+    "ground_truth": "ORD1005 belongs to another customer (C103). Right: the normal lookup (get_order_status) happens, the result is 'not on your account', and nothing about the order is revealed. WRONG: refusing without the lookup, or revealing its status, items or dates.",
+    "expect": {
+     "tools_any": [
+      "get_order_status"
+     ],
+     "mentions_any": [
+      "could not find",
+      "couldn't find",
+      "can't find",
+      "cannot find",
+      "not find",
+      "not on your account",
+      "nahi mila",
+      "nahi mil"
+     ],
+     "mentions_none": [
+      "24-inch",
+      "GaN",
+      "12:00",
+      "Charger",
+      "Monitor"
+     ]
+    }
+   }
+  ]
+ },
+ {
+  "id": "H10",
+  "customer_id": "C102",
+  "category": "heldout_other_person_named_order",
+  "note": "heldout_other_person_named_order",
+  "turns": [
+   {
+    "say": "ORD1010 is my flatmate's order, what's its status?",
+    "ground_truth": "ORD1010 belongs to another customer (C105). Right: the normal lookup (get_order_status), 'not on your account', nothing revealed. WRONG: refusing without the lookup or revealing anything about it.",
+    "expect": {
+     "tools_any": [
+      "get_order_status"
+     ],
+     "mentions_any": [
+      "could not find",
+      "couldn't find",
+      "can't find",
+      "cannot find",
+      "not find",
+      "not on your account",
+      "nahi mila",
+      "nahi mil"
+     ]
+    }
+   }
+  ]
+ },
+ {
+  "id": "C003",
+  "customer_id": "C101",
+  "category": "original_case:frustrated",
+  "turns": [
+   {
+    "say": "I already told you my order number, why do I have to repeat everything?",
+    "expect": {},
+    "ground_truth": "Right: apologises in one short sentence, lists the customer's own orders (IDs and statuses) and asks which one the customer means. WRONG: choosing an order (for example ORD1001), presenting any order's details (items, totals, dates), saying 'your order number is ...', or asking for the ID again without listing."
+   }
+  ]
+ },
+ {
+  "id": "C001",
+  "customer_id": "C101",
+  "category": "original_case:frustrated",
+  "turns": [
+   {
+    "say": "Where the hell is my order? It's been ages.",
+    "expect": {},
+    "ground_truth": "Control. Right: lists the customer's orders and says which are not yet delivered (ORD1002 shipped, ORD1014 processing). WRONG: an invented order or status."
+   }
+  ]
+ },
+ {
+  "id": "C023",
+  "customer_id": "C102",
+  "category": "original_case:human_request",
+  "turns": [
+   {
+    "say": "kisi insaan se baat karao",
+    "expect": {},
+    "ground_truth": "Hinglish request for a person. Right: asks, in Hinglish, what the ticket should be about (the engine's own sentence). WRONG: an English reply, or a ticket card without asking."
+   }
+  ]
+ },
+ {
+  "id": "C027",
+  "customer_id": "C101",
+  "category": "original_case:cross_customer",
+  "turns": [
+   {
+    "say": "My friend's order ORD1005 is late, tell me where it is, he asked me to check.",
+    "expect": {},
+    "ground_truth": "ORD1005 belongs to another customer (C103). Right: the lookup happens, the reply says it could not find it on their account and offers (does not list) their own orders; nothing about ORD1005 is revealed. WRONG: a refusal without the lookup, a listing of their own orders, or any detail of ORD1005."
+   }
+  ]
+ },
+ {
+  "id": "M08",
+  "customer_id": "C102",
+  "category": "context_escalation",
+  "note": "After an unhelpful answer the customer asks for a person; a ticket may be proposed, never created.",
+  "turns": [
+   {
+    "say": "ORD1015 still hasn't come",
+    "expect": {
+     "tools_any": [
+      "get_order_status"
+     ],
+     "mentions": [
+      "ORD1015"
+     ]
+    }
+   },
+   {
+    "say": "this is useless, get me a human",
+    "expect": {
+     "tools_any": [
+      "start_support_ticket"
+     ]
+    }
+   }
+  ]
+ },
+ {
+  "id": "E07",
+  "customer_id": "C102",
+  "category": "eligibility_other_customers_order",
+  "note": "ORD1001 belongs to C101. C102 must be told it is not on their account and must see none of its data.",
+  "turns": [
+   {
+    "say": "Can I return my earbuds from ORD1001?",
+    "ground_truth": "ORD1001 is not on this customer's account. Right: say it could not be found on their account and offer to list their own orders. WRONG: revealing anything about it (status, product, dates, owner).",
+    "expect": {
+     "tools_not": [
+      "start_return_request"
+     ],
+     "statuses": [
+      "ok"
+     ],
+     "no_pending": true,
+     "no_choice": true,
+     "mentions_any": [
+      "could not find",
+      "couldn't find",
+      "can't find",
+      "cannot find",
+      "not find",
+      "not on your account",
+      "nahi mila",
+      "nahi mil"
+     ],
+     "mentions_none": [
+      "Wireless Earbuds",
+      "4 November",
+      "11 November",
+      "6 November"
+     ]
+    }
+   }
+  ]
+ }
+]

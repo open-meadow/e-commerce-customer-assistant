@@ -1,0 +1,2 @@
+id,query,intent,category,example_expected_action,notes,customer_id,expected_behavior,expected_tool
+C001,Where the hell is my order? It's been ages.,order_status,frustrated,List the customer's orders and report status,No ID; C101 has ORD1002 shipped,C101,answer,list_my_orders

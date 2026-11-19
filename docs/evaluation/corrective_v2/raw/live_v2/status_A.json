@@ -1,0 +1,41 @@
+{
+  "phase": "A",
+  "segments": [
+    {
+      "label": "A1",
+      "run_id": "evalA-pass1",
+      "exit": 0,
+      "status": "valid",
+      "calls_attempted": 27
+    },
+    {
+      "label": "A2",
+      "run_id": "evalA-pass2",
+      "exit": 0,
+      "status": "valid",
+      "calls_attempted": 27
+    },
+    {
+      "label": "A3",
+      "run_id": "evalA-risky",
+      "exit": 0,
+      "status": "valid",
+      "calls_attempted": 12
+    },
+    {
+      "label": "A4",
+      "run_id": "evalA-heldout",
+      "exit": 0,
+      "status": "valid",
+      "calls_attempted": 16
+    },
+    {
+      "label": "A5",
+      "run_id": "evalA-language",
+      "exit": 0,
+      "status": "valid",
+      "calls_attempted": 15
+    }
+  ],
+  "stopped": null
+}

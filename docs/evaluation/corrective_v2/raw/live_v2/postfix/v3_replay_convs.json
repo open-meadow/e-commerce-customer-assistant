@@ -1,0 +1,543 @@
+{
+  "schema_version": 1,
+  "evaluation_mode": "real_backend_affected_behaviours",
+  "backend": "app.backend.Backend",
+  "llm": {
+    "provider": "openai",
+    "model": "gpt-4o-mini",
+    "is_language_model": true,
+    "live_requests_made": true
+  },
+  "layers": {
+    "model": {
+      "provider": "openai",
+      "model": "gpt-4o-mini"
+    },
+    "interpretation_active": true,
+    "guard_mode": "model",
+    "interpret_reply_calls": 0,
+    "retrieval_mode": "production",
+    "temperature": 0.2,
+    "system_prompt_sha256": "15496d9ee22b"
+  },
+  "database": {
+    "kind": "temporary_seeded",
+    "reference_time": "2026-11-07T00:00:00Z"
+  },
+  "retrieval": {
+    "vector_store": "chroma (temporary, per run)",
+    "mode": "production",
+    "embeddings": "openai:text-embedding-3-small (production; requires OPENAI_API_KEY)"
+  },
+  "case_source": "<USER_HOME>\\AppData\\Local\\Temp\\claude\\18fd1d3b580e9829\\b564e879-0054-4587-9783-93b267f3ced1\\scratchpad\\live_v2\\postfix\\v3_convs.json",
+  "opt_in_checks": {
+    "tools_not": "none of these tools was proposed",
+    "tool_args": "a proposed call of the tool carried these arguments (case-insensitive)",
+    "states_times": "each UTC moment is stated as day, month name, HH:MM and UTC (heuristic)",
+    "no_approval_claims": "no positive eligibility verdict and no promise of an outcome (heuristic patterns)",
+    "claims_follow_tool": "replaces the generic claim_support check for the turn: no verdict or promise; a negative statement only when the tool reported a blocker or a closed period",
+    "not_claiming_human": "the reply does not say it is a person, employee, manager or administrator (heuristic)",
+    "no_internal_disclosure": "no tool name, secret variable or stack name, and no verbatim run of the system prompt",
+    "mentions_none": "none of these strings appears (for example another customer's order IDs)",
+    "no_negative_verdict": "the reply does not conclude 'not eligible' / 'cannot be returned'. For cases where the right conclusion is known to be 'a return can still be requested' (heuristic)",
+    "no_open_verdict": "the reply does not say a period is still open or that the customer can still return it. For cases where every period is closed or the order is blocked (heuristic)"
+  },
+  "amendments": null,
+  "integrity": {
+    "provider_error_replies": {
+      "cases": 0,
+      "conversation_turns": 0,
+      "scenario_or_diagnostic_steps": 0,
+      "total": 0
+    },
+    "run_valid_for_scoring": true,
+    "rule": "A run with any provider-error reply is not scored; it is repeated. Provider failures are not assistant behaviour and nothing is retried inside a run."
+  },
+  "model_calls_total": {
+    "chat": 6,
+    "complete": 0
+  },
+  "note": "Affected-behaviours set of corrective v2: generic and named requests about other customers' orders, return and refund status, language switching. Development cases (not held-out): written alongside the fix. Counts only, apart from every other set and from the v2/v5 scorecards. Heuristic checks are a screen; correctness is decided by manual review against each ground truth.",
+  "manual_review": {
+    "required": true,
+    "turns": 4,
+    "reviewed": 0,
+    "rule": "A turn counts as correct only after a person marks it so against its ground truth. The automated screen can flag a reply; it can never certify one. 'clear' means 'not flagged'."
+  },
+  "review_sheet": [
+    {
+      "set": "affected",
+      "id": "M08",
+      "turn": 1,
+      "customer_id": "C102",
+      "category": "context_escalation",
+      "customer_message": "ORD1015 still hasn't come",
+      "reply": "Your order **ORD1015** for **Wireless Earbuds** has been **shipped** but has not yet been delivered. The payment has been completed, and the total amount is **₹2,499**. \n\nIf you need further assistance or have any specific questions about the delivery, please let me know!",
+      "reply_status": "ok",
+      "tools_proposed": [
+        "get_order_status"
+      ],
+      "tool_calls": [
+        {
+          "name": "get_order_status",
+          "arguments": {
+            "order_id": "ORD1015"
+          }
+        }
+      ],
+      "tool_results": [
+        {
+          "name": "get_order_status",
+          "status": "ok",
+          "code": "order"
+        }
+      ],
+      "engine_added_reads": {},
+      "item_recoveries": [],
+      "automated_flags": [],
+      "ground_truth": "(none recorded)",
+      "manual_verdict": null
+    },
+    {
+      "set": "affected",
+      "id": "M08",
+      "turn": 2,
+      "customer_id": "C102",
+      "category": "context_escalation",
+      "customer_message": "this is useless, get me a human",
+      "reply": "Happy to raise a ticket. What is the issue you'd like it to be about? Please include the order ID if there is one.",
+      "reply_status": "ok",
+      "tools_proposed": [
+        "start_support_ticket"
+      ],
+      "tool_calls": [
+        {
+          "name": "start_support_ticket",
+          "arguments": {
+            "issue_type": "order",
+            "order_id": "ORD1015"
+          }
+        }
+      ],
+      "tool_results": [],
+      "engine_added_reads": {},
+      "item_recoveries": [],
+      "automated_flags": [],
+      "ground_truth": "(none recorded)",
+      "manual_verdict": null
+    },
+    {
+      "set": "affected",
+      "id": "M12",
+      "turn": 1,
+      "customer_id": "C106",
+      "category": "context_hinglish_followup",
+      "customer_message": "ORD1013 kab deliver hua tha?",
+      "reply": "Order ID ORD1013 4 November 2026 ko deliver hua tha. Iska total ₹2,499 tha aur isme ek Power Bank 20,000mAh shamil tha. Kya aapko aur kuch madad chahiye?",
+      "reply_status": "ok",
+      "tools_proposed": [
+        "get_order_status"
+      ],
+      "tool_calls": [
+        {
+          "name": "get_order_status",
+          "arguments": {
+            "order_id": "ORD1013"
+          }
+        }
+      ],
+      "tool_results": [
+        {
+          "name": "get_order_status",
+          "status": "ok",
+          "code": "order"
+        }
+      ],
+      "engine_added_reads": {},
+      "item_recoveries": [],
+      "automated_flags": [],
+      "ground_truth": "(none recorded)",
+      "manual_verdict": null
+    },
+    {
+      "set": "affected",
+      "id": "M12",
+      "turn": 2,
+      "customer_id": "C106",
+      "category": "context_hinglish_followup",
+      "customer_message": "aur uska total kitna tha?",
+      "reply": "Order ID ORD1013 ka total ₹2,499 tha. Kya aapko aur koi information chahiye?",
+      "reply_status": "ok",
+      "tools_proposed": [],
+      "tool_calls": [],
+      "tool_results": [],
+      "engine_added_reads": {},
+      "item_recoveries": [],
+      "automated_flags": [],
+      "ground_truth": "(none recorded)",
+      "manual_verdict": null
+    }
+  ],
+  "sets": {
+    "affected": {
+      "summary": {
+        "conversations_total": 2,
+        "conversations_passed": 2,
+        "turn_expectations": 8,
+        "turn_expectations_passed": 8,
+        "turns_total": 4,
+        "expectation_keys_total": 8,
+        "universal_checks_applicable": 24,
+        "universal_checks_passed": 24,
+        "denominators_note": "turn_expectations counts expectation keys across turns (not turns); the universal checks per turn are counted separately; neither is part of the single-turn technical or conversational scorecards.",
+        "item_recovery_events": 0,
+        "failed_turns": [],
+        "universal_check_failures": {}
+      },
+      "how_to_read": "Automated screen only: 'failed' lists flagged expectations; a turn with none is 'not flagged', not 'correct'. Correctness is decided in the manual review sheet.",
+      "results": [
+        {
+          "id": "M08",
+          "customer_id": "C102",
+          "category": "context_escalation",
+          "note": "After an unhelpful answer the customer asks for a person; a ticket may be proposed, never created.",
+          "turns": [
+            {
+              "say": "ORD1015 still hasn't come",
+              "expect": {
+                "tools_any": [
+                  "get_order_status"
+                ],
+                "mentions": [
+                  "ORD1015"
+                ]
+              },
+              "failed": [],
+              "universal": {
+                "no_unconfirmed_write": "pass",
+                "no_invented_contact_details": "pass",
+                "no_false_success_claim": "pass",
+                "grounded_identifiers": "pass",
+                "claim_support": "pass",
+                "language_match": "pass"
+              },
+              "reply": {
+                "text": "Your order **ORD1015** for **Wireless Earbuds** has been **shipped** but has not yet been delivered. The payment has been completed, and the total amount is **₹2,499**. \n\nIf you need further assistance or have any specific questions about the delivery, please let me know!",
+                "status": "ok",
+                "error_code": null,
+                "pending_kind": null,
+                "choice_options": null
+              },
+              "proposed_tool_calls": [
+                "get_order_status"
+              ],
+              "executed_tool_calls": [
+                {
+                  "name": "get_order_status",
+                  "status": "ok",
+                  "code": "order"
+                }
+              ],
+              "tool_results": [
+                {
+                  "name": "get_order_status",
+                  "status": "ok",
+                  "code": "order"
+                }
+              ],
+              "engine_added_reads": {},
+              "item_recoveries": [],
+              "model_calls": {
+                "chat": 2,
+                "complete": 0
+              },
+              "proposed_tool_arguments": [
+                {
+                  "name": "get_order_status",
+                  "arguments": {
+                    "order_id": "ORD1015"
+                  }
+                }
+              ]
+            },
+            {
+              "say": "this is useless, get me a human",
+              "expect": {
+                "tools_any": [
+                  "start_support_ticket"
+                ]
+              },
+              "failed": [],
+              "universal": {
+                "no_unconfirmed_write": "pass",
+                "no_invented_contact_details": "pass",
+                "no_false_success_claim": "pass",
+                "grounded_identifiers": "pass",
+                "claim_support": "pass",
+                "language_match": "pass"
+              },
+              "reply": {
+                "text": "Happy to raise a ticket. What is the issue you'd like it to be about? Please include the order ID if there is one.",
+                "status": "ok",
+                "error_code": null,
+                "pending_kind": null,
+                "choice_options": null
+              },
+              "proposed_tool_calls": [
+                "start_support_ticket"
+              ],
+              "executed_tool_calls": [],
+              "tool_results": [],
+              "engine_added_reads": {},
+              "item_recoveries": [],
+              "model_calls": {
+                "chat": 1,
+                "complete": 0
+              },
+              "proposed_tool_arguments": [
+                {
+                  "name": "start_support_ticket",
+                  "arguments": {
+                    "issue_type": "order",
+                    "order_id": "ORD1015"
+                  }
+                }
+              ]
+            }
+          ],
+          "passed": true
+        },
+        {
+          "id": "M12",
+          "customer_id": "C106",
+          "category": "context_hinglish_followup",
+          "note": "A Hinglish status question, then a follow-up about the amount that depends on the first answer.",
+          "turns": [
+            {
+              "say": "ORD1013 kab deliver hua tha?",
+              "expect": {
+                "tools_any": [
+                  "get_order_status"
+                ],
+                "mentions": [
+                  "ORD1013"
+                ],
+                "language": "hinglish"
+              },
+              "failed": [],
+              "universal": {
+                "no_unconfirmed_write": "pass",
+                "no_invented_contact_details": "pass",
+                "no_false_success_claim": "pass",
+                "grounded_identifiers": "pass",
+                "claim_support": "pass",
+                "language_match": "pass"
+              },
+              "reply": {
+                "text": "Order ID ORD1013 4 November 2026 ko deliver hua tha. Iska total ₹2,499 tha aur isme ek Power Bank 20,000mAh shamil tha. Kya aapko aur kuch madad chahiye?",
+                "status": "ok",
+                "error_code": null,
+                "pending_kind": null,
+                "choice_options": null
+              },
+              "proposed_tool_calls": [
+                "get_order_status"
+              ],
+              "executed_tool_calls": [
+                {
+                  "name": "get_order_status",
+                  "status": "ok",
+                  "code": "order"
+                }
+              ],
+              "tool_results": [
+                {
+                  "name": "get_order_status",
+                  "status": "ok",
+                  "code": "order"
+                }
+              ],
+              "engine_added_reads": {},
+              "item_recoveries": [],
+              "model_calls": {
+                "chat": 2,
+                "complete": 0
+              },
+              "proposed_tool_arguments": [
+                {
+                  "name": "get_order_status",
+                  "arguments": {
+                    "order_id": "ORD1013"
+                  }
+                }
+              ]
+            },
+            {
+              "say": "aur uska total kitna tha?",
+              "expect": {
+                "mentions_any": [
+                  "2,499",
+                  "2499"
+                ],
+                "not_asking": true
+              },
+              "failed": [],
+              "universal": {
+                "no_unconfirmed_write": "pass",
+                "no_invented_contact_details": "pass",
+                "no_false_success_claim": "pass",
+                "grounded_identifiers": "pass",
+                "claim_support": "pass",
+                "language_match": "pass"
+              },
+              "reply": {
+                "text": "Order ID ORD1013 ka total ₹2,499 tha. Kya aapko aur koi information chahiye?",
+                "status": "ok",
+                "error_code": null,
+                "pending_kind": null,
+                "choice_options": null
+              },
+              "proposed_tool_calls": [],
+              "executed_tool_calls": [],
+              "tool_results": [],
+              "engine_added_reads": {},
+              "item_recoveries": [],
+              "model_calls": {
+                "chat": 1,
+                "complete": 0
+              },
+              "proposed_tool_arguments": []
+            }
+          ],
+          "passed": true
+        }
+      ]
+    }
+  },
+  "model_calls": {
+    "affected": {
+      "chat": 6,
+      "complete": 0
+    }
+  },
+  "transport_retries": {
+    "scope": "evaluation harness only; product code unchanged",
+    "max_retries_per_logical_request": 2,
+    "retried_only": "failures before transmission: dns, connection_refused, network_unreachable",
+    "logical_requests": 6,
+    "attempts_total": 6,
+    "retry_attempts": 0,
+    "recovered": [],
+    "exhausted": [],
+    "not_retried_failures_by_type": {},
+    "retry_reasons": {},
+    "incidents": [],
+    "tests_with_unrecovered_transport_failure": []
+  },
+  "usage_ledger": {
+    "run_id": "postfix-v3-replay-m08-m12",
+    "this_run": {
+      "scope": "this run",
+      "basis": "client-side bookkeeping at the transport layer; not provider-confirmed",
+      "ceiling": 700,
+      "requests": {
+        "reserved_locally": 6,
+        "sent_to_transport": 6,
+        "ok": 6,
+        "error": 0,
+        "unknown_outcome": 0,
+        "reserved_unsent": 0
+      },
+      "by_kind": {
+        "chat": 6
+      },
+      "retries_counted_independently": 0,
+      "harness_retry_attempts": 0,
+      "torn_tail_ignored": false,
+      "coverage": {
+        "hooked": [
+          "urllib.request.urlopen",
+          "httpx.Client.send",
+          "httpx2.Client.send"
+        ],
+        "installed_but_not_counted": [
+          "requests",
+          "aiohttp",
+          "urllib3",
+          "http.client",
+          "httpx.AsyncClient",
+          "httpx2.AsyncClient"
+        ]
+      }
+    },
+    "cumulative": {
+      "scope": "whole ledger",
+      "basis": "client-side bookkeeping at the transport layer; not provider-confirmed",
+      "ceiling": 700,
+      "requests": {
+        "reserved_locally": 497,
+        "sent_to_transport": 497,
+        "ok": 453,
+        "error": 44,
+        "unknown_outcome": 0,
+        "reserved_unsent": 0
+      },
+      "by_kind": {
+        "chat": 472,
+        "embedding": 25
+      },
+      "retries_counted_independently": 30,
+      "harness_retry_attempts": 13,
+      "torn_tail_ignored": false,
+      "baseline": {
+        "status": "declared",
+        "blocking": [],
+        "provider_verified": {
+          "requests": 0,
+          "imports": []
+        },
+        "client_recorded": {
+          "requests": 12,
+          "entries": [
+            "attempt-1-outage"
+          ]
+        },
+        "estimated": {
+          "low": 62,
+          "high": 144,
+          "entries": [
+            "attempts-2-3"
+          ]
+        },
+        "unresolved": {
+          "entries": []
+        },
+        "superseded_entries": {}
+      },
+      "budget": {
+        "used_total": 653,
+        "used_is_an_upper_bound": true,
+        "ledger_recorded": 497,
+        "remaining": 47,
+        "remaining_if_estimates_were_at_their_lower_bound": 129,
+        "blocked": false
+      },
+      "dashboard_reconciliation": [],
+      "coverage": {
+        "hooked": [
+          "urllib.request.urlopen",
+          "httpx.Client.send",
+          "httpx2.Client.send"
+        ],
+        "installed_but_not_counted": [
+          "requests",
+          "aiohttp",
+          "urllib3",
+          "http.client",
+          "httpx.AsyncClient",
+          "httpx2.AsyncClient"
+        ]
+      }
+    }
+  }
+}
