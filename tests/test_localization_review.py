@@ -37,4 +37,7 @@ def test_the_committed_sheets_are_up_to_date(tmp_path):
     md, csv_path = review.render(tmp_path)
     docs = ROOT / "docs"
     assert (docs / "localization_review_hinglish_hindi.md").read_text(encoding="utf-8") == md.read_text(encoding="utf-8")
-    assert (docs / "localization_review_hinglish_hindi.csv").read_bytes() == csv_path.read_bytes()
+    # Compare the content, not the platform's line endings: Git may store the committed CSV with LF and a checkout may
+    # convert it to CRLF, while the generator writes CRLF row endings. Every other byte must be identical.
+    committed = (docs / "localization_review_hinglish_hindi.csv").read_bytes().replace(b"\r\n", b"\n")
+    assert committed == csv_path.read_bytes().replace(b"\r\n", b"\n")
