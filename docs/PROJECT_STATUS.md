@@ -35,7 +35,7 @@ Details: [evaluation/EVALUATION_REPORT.md](evaluation/EVALUATION_REPORT.md) and 
 1. A fluent Hinglish and Hindi reviewer to sign the 104 sentences (13 High priority first).
 2. A small live check (about 20 requests) of the offline-only changes. The evaluation ledger stands at 682 of its 700-request
    guard (a conservative upper bound), so the ceiling has to be agreed first.
-3. Housekeeping: the merged remote branch `integrate/corrective-v2-public` can be deleted (owner's decision); keep `rukum/corrective-v2` and the private evidence backup.
+3. Housekeeping: **done** on 2026-11-19. The remote branch `integrate/corrective-v2-public` was deleted after checking that it was fully merged into `master` (PR #2); the local copy at `aa5c8d9` is retained, as are `rukum/corrective-v2` and the private evidence backup.
 4. Refresh `docs/Capstone_Presentation.pptx` (it predates the corrective-v2 results; see [deck/README.md](deck/README.md)).
 5. Voice (LiveKit) has never been run live, and the Docker `worker` has not been tested. Docker `api` and `app` were verified on 2026-11-19 (see the table above).
 
