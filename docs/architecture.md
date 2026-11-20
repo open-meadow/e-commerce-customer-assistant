@@ -82,13 +82,14 @@ The ten tools: `list_my_orders`, `get_order_status`, `get_my_returns`, `get_my_t
 ### Language detection
 - **What:** the customer's latest message decides the language by code (`guard.decisive_language`, `customer_language`):
   English, Hinglish (Hindi in Latin letters) or Hindi (Devanagari). A one-line per-turn instruction tells the model. Every fixed
-  sentence (107 in one catalogue) is chosen by code from the session language.
+  sentence (110 in one catalogue) is chosen by code from the session language.
 - **Why:** the model tended to follow earlier turns rather than the latest message, and fixed sentences were English for
   Hindi-speaking customers. One catalogue with a test that each key has three languages keeps them in step. The Hinglish and
   Hindi wording is **draft pending human review**; see [localization_review_hinglish_hindi.md](localization_review_hinglish_hindi.md).
 
 ### Ticket scope
 - **What:** before a support-ticket card is built, code checks that the text is about an order, product, delivery, payment, refund or return, or a store service request. Personal, relationship, coaching, general-knowledge and coding requests get a fixed refusal and no card; unclear ones get a fixed clarifying question. The card, Confirm and Cancel, expiry, single-use claim and write validation are unchanged.
+- **Follow-up:** a reply to the clarifying question that names one of the listed categories (order, product, delivery, payment, refund, return) answers it, even without a complaint word; a reply that names nothing (abuse, "ok") is never added to the ticket text and gets a request to describe the problem instead of the same sentence. A request to change an address, phone or email offers a ticket, asks the customer to write the details, and keeps their first message at the start of the description.
 - **Limitation:** The ticket-scope gate (`guard.ticket_scope`) is vocabulary-based: it recognises store complaints from word lists, so unusual wording can be asked a clarifying question instead of getting a card, and it has **not yet passed independent held-out validation** (protocol: `tests/data/ticket_scope_heldout.md`; the 190 regression tests in `tests/test_ticket_scope_gate.py` are the tuning set).
 
 ### Policy controls

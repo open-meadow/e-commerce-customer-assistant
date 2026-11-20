@@ -129,6 +129,9 @@ TEXTS: dict[str, dict[str, str]] = {
         "which_order_to_return": "You have more than one delivered order: {orders}. Which one would you like to return?",
         "ticket_out_of_scope": "I can only raise support tickets about orders, products, deliveries, payments, refunds and returns, so I haven't created one. Is there anything like that I can help with?",
         "ticket_scope_ask": "Before I prepare a ticket, please tell me what went wrong: is it about an order, a product, a delivery, a payment, a refund or a return? Nothing is saved until you confirm.",
+        "ticket_describe_ask": "Please write, in your own words, what went wrong or what you need, for example the order ID, what happened or the new address. I will use exactly what you write for the ticket, and nothing is saved until you confirm.",
+        "ticket_service_ask": "I can't change that myself, but I can raise a support ticket so a human agent can follow up. Would you like me to? If yes, please write the details in your own words (for example the order ID and the new address). Nothing is saved until you confirm.",
+        "ticket_declined": "Okay, I won't raise a ticket. Is there anything else I can help you with?",
     },
     "hinglish": {
         "ticket_limit": "Is session mein support tickets ki limit poori ho gayi hai, isliye main aur ticket nahi bana sakta.",
@@ -238,6 +241,9 @@ TEXTS: dict[str, dict[str, str]] = {
         "which_order_to_return": "Aapke paas ek se zyada delivered orders hain: {orders}. Aap kaun sa return karna chahte hain?",
         "ticket_out_of_scope": "Main sirf orders, products, delivery, payment, refund aur return se jude support tickets bana sakta hoon, isliye maine koi ticket nahi banaya. Kya main inmein se kisi cheez mein madad kar sakta hoon?",
         "ticket_scope_ask": "Ticket banane se pehle bataiye ki kya galat hua: kya yeh order, product, delivery, payment, refund ya return ke baare mein hai? Aapke confirm karne tak kuch save nahi hota.",
+        "ticket_describe_ask": "Kripya apne shabdon mein likhiye ki kya galat hua ya aapko kya chahiye, jaise order ID, kya hua ya naya address. Ticket ke liye main bilkul wahi use karunga jo aap likhenge, aur aapke confirm karne tak kuch save nahi hota.",
+        "ticket_service_ask": "Yeh main khud change nahi kar sakta, lekin main ek support ticket bana sakta hoon taaki human agent follow up kare. Kya aap chahte hain? Agar haan, to kripya details apne shabdon mein likhiye (jaise order ID aur naya address). Aapke confirm karne tak kuch save nahi hota.",
+        "ticket_declined": "Theek hai, main ticket nahi banaunga. Kya main aur kisi cheez mein madad kar sakta hoon?",
     },
     "hi": {
         "ticket_limit": "इस सेशन में सपोर्ट टिकट की सीमा पूरी हो चुकी है, इसलिए मैं और टिकट नहीं बना सकता।",
@@ -347,6 +353,9 @@ TEXTS: dict[str, dict[str, str]] = {
         "which_order_to_return": "आपके पास एक से अधिक डिलीवर हुए ऑर्डर हैं: {orders}। आप कौन सा ऑर्डर रिटर्न करना चाहते हैं?",
         "ticket_out_of_scope": "मैं सिर्फ़ ऑर्डर, प्रोडक्ट, डिलीवरी, भुगतान, रिफंड और रिटर्न से जुड़े सपोर्ट टिकट बना सकता हूँ, इसलिए मैंने कोई टिकट नहीं बनाया। क्या मैं इनमें से किसी चीज़ में मदद कर सकता हूँ?",
         "ticket_scope_ask": "टिकट बनाने से पहले बताइए कि क्या गलत हुआ: क्या यह ऑर्डर, प्रोडक्ट, डिलीवरी, भुगतान, रिफंड या रिटर्न के बारे में है? आपके पुष्टि करने तक कुछ भी सेव नहीं होता।",
+        "ticket_describe_ask": "कृपया अपने शब्दों में लिखिए कि क्या गलत हुआ या आपको क्या चाहिए, जैसे ऑर्डर ID, क्या हुआ या नया पता। टिकट के लिए मैं ठीक वही इस्तेमाल करूँगा जो आप लिखेंगे, और आपके पुष्टि करने तक कुछ भी सेव नहीं होता।",
+        "ticket_service_ask": "यह मैं खुद नहीं बदल सकता, लेकिन मैं एक सपोर्ट टिकट बना सकता हूँ ताकि कोई इंसान एजेंट फॉलो-अप करे। क्या आप चाहते हैं? अगर हाँ, तो कृपया विवरण अपने शब्दों में लिखिए (जैसे ऑर्डर ID और नया पता)। आपके पुष्टि करने तक कुछ भी सेव नहीं होता।",
+        "ticket_declined": "ठीक है, मैं टिकट नहीं बनाऊँगा। क्या मैं किसी और चीज़ में मदद कर सकता हूँ?",
     },
 }
 

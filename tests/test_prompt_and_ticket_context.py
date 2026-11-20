@@ -177,7 +177,8 @@ class TestUnsupportedRequestSentenceBeforeTheCard:
     @pytest.mark.parametrize("message, limit", [
         ("The charger isn't working, and I need a replacement.", "arrange a replacement or exchange"),
         ("Please cancel my order ORD1014", "cancel an order"),
-        ("Change my delivery address to somewhere else for ORD1014", "change account or delivery details"),
+        # A change of address, phone or email now offers a ticket and asks the customer to write the details first:
+        # see tests/test_ticket_clarify_loop.py::TestAddressChange.
     ])
     def test_the_limit_is_stated_before_the_card(self, temp_db, raw, message, limit):
         reply = self.start(temp_db, issue_type="order", order_id="ORD1014").say(message)

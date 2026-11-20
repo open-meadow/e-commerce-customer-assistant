@@ -232,9 +232,21 @@ class Engine:
             return self._record(s, text, Turn(self._with_notices(ctx, flow_texts.text("scope_redirect", s.language))))
 
         if s.want_ticket and s.issues.active is None:
-            s.want_ticket = False
-            self._start_issue(s, text)
-            return self._record(s, text, self._propose_ticket(s, {}, text))
+            held = self._ticket_question_reply(s, text, ctx)
+            if isinstance(held, Turn):
+                return self._record(s, text, held)
+            if held == "describe":  # the customer answered: their words join what was said before
+                service = s.ticket_ask == "service"
+                s.want_ticket = False
+                s.ticket_ask = ""
+                self._start_issue(s, text)
+                return self._record(s, text, self._propose_ticket(s, {}, text, answered=text, service=service))
+            # held == "ordinary": the message is not an answer (a question); the offer is closed, handled below
+
+        if (kind == "unsupported" and s.issues.active is None and not s.want_ticket
+                and guard.unsupported_request(text) == guard.ACCOUNT_CHANGE):
+            # "change my address": the assistant cannot do it; code offers a ticket and asks for the details
+            return self._record(s, text, self._propose_ticket(s, {}, text, ctx))
 
         # The keyword guard answers vague or unsupported requests only for the offline stand-in. A real language
         # model understands them better, so it gets the message (the tools and the prompt still bound it).
@@ -394,6 +406,8 @@ class Engine:
         s.choice = None
         s.draft = None
         s.want_ticket = False
+        s.ticket_ask = ""
+        s.clarification = []
         s.ticket_offer = None
         return Turn(flow_texts.text("cancelled", s.language))
 
@@ -1290,14 +1304,26 @@ class Engine:
     # Ticket workflow
     # ------------------------------------------------------------------
 
-    def _propose_ticket(self, s: Session, arguments: Any, user_text: str, ctx: Optional[_Ctx] = None) -> Turn:
+    def _propose_ticket(self, s: Session, arguments: Any, user_text: str, ctx: Optional[_Ctx] = None, *,
+                        answered: Optional[str] = None, service: bool = False) -> Turn:
         ctx = ctx or _Ctx()
         if self.registry.capacity_left(s, "support_ticket") <= 0:
             return Turn(flow_texts.text("ticket_limit", s.language))
         issue = s.issues.active
+        if (issue is None and user_text and answered is None
+                and guard.unsupported_request(user_text) == guard.ACCOUNT_CHANGE
+                and self._ticket_scope(user_text) != "personal"):
+            # A service request the assistant cannot carry out (a new address, phone or email): offer a ticket and ask
+            # the customer to WRITE the details. Their words stay at the start of the description.
+            s.clarification = [(clock.now(), user_text)]
+            s.want_ticket = True
+            s.ticket_ask = "service"
+            return Turn(self._with_notices(ctx, flow_texts.text("ticket_service_ask", s.language)))
         names_order = bool(user_text) and guard.mentions_order_or_item(user_text)
         bare_request = bool(user_text) and guard.is_ticket_request(user_text) and not names_order  # "I have a complaint"
-        if issue is None and user_text and not bare_request and (guard.has_issue_cue(user_text) or names_order):
+        if (issue is None and user_text and not bare_request and answered is None
+                and (guard.has_issue_cue(user_text) or names_order
+                     or (self._ticket_scope(user_text) == "store" and not guard.is_question(user_text)))):
             issue = self._start_issue(s, user_text)  # the customer already said what it is about: do not ask again
         if issue is None:
             if user_text and self._ticket_scope(user_text) == "personal":
@@ -1305,9 +1331,10 @@ class Engine:
                 s.want_ticket = False
                 return Turn(self._with_notices(ctx, flow_texts.text("ticket_out_of_scope", s.language)))
             s.want_ticket = True
+            s.ticket_ask = ""
             return Turn(self._with_notices(ctx, flow_texts.text("ask_issue", s.language)))
         # The scope gate: only the current issue's own messages decide, never older conversation history.
-        scope = self._ticket_scope(" ".join(issue.messages))
+        scope = self._ticket_scope(" ".join(issue.messages), latest=answered, service=service)
         if scope != "store":
             return self._ticket_scope_refusal(s, issue, scope, ctx)
         args: dict[str, Any] = {}
@@ -1349,7 +1376,7 @@ class Engine:
         return Turn(self._with_notices(ctx, lead), "needs_confirmation", pending=self._pending_view(action))
 
     @staticmethod
-    def _ticket_scope(text: str) -> str:
+    def _ticket_scope(text: str, latest: Optional[str] = None, service: bool = False) -> str:
         """``store``, ``personal`` or ``unclear`` (``guard.ticket_scope``). A catalogue product counts only as the thing
         complained about, never as a complaint by itself. An unavailable catalogue means no product was recognised."""
         try:
@@ -1360,6 +1387,8 @@ class Engine:
         # the product's NAME is written in the message as a whole word.
         written = set(guard.product_words(text))
         product = any(guard.product_words(m.name) - _GENERIC_NAME_WORDS & written for m in matches)
+        if latest is not None:
+            return guard.ticket_scope_answered(latest, text, names_product=product, service=service)
         return guard.ticket_scope(text, names_product=product)
 
     def _ticket_scope_refusal(self, s: Session, issue: Any, scope: str, ctx: _Ctx) -> Turn:
@@ -1372,12 +1401,44 @@ class Engine:
             s.issues.abandon("active")
         if scope == "personal":
             s.want_ticket = False
+            s.ticket_ask = ""
             s.clarification = []
             return Turn(self._with_notices(ctx, flow_texts.text("ticket_out_of_scope", s.language)))
         now = clock.now()
         s.clarification = [(now, m) for m in issue.messages][-self.settings.clarification_max_messages:]
         s.want_ticket = True
+        s.ticket_ask = "scope"
         return Turn(self._with_notices(ctx, flow_texts.text("ticket_scope_ask", s.language)))
+
+    def _end_ticket_question(self, s: Session) -> None:
+        s.want_ticket = False
+        s.ticket_ask = ""
+        s.clarification = []
+
+    def _ticket_question_reply(self, s: Session, text: str, ctx: _Ctx) -> Any:
+        """The customer's message while a ticket question is open (``want_ticket``).
+
+        Returns a ``Turn`` to send, ``"describe"`` when the message is the customer's description (the caller starts the
+        issue; it joins what was said before), or ``"ordinary"`` when it is not an answer at all (a question: the open
+        question is closed and the message is handled normally). Nothing here creates or changes a pending card.
+        A reply that carries no store signal (abuse, "ok", chatter) is never added to the description; it gets a more
+        specific request instead of the same sentence again."""
+        answer = guard.classify_offer_reply(text)
+        if answer == "negative":
+            self._end_ticket_question(s)
+            return Turn(self._with_notices(ctx, flow_texts.text("ticket_declined", s.language)))
+        if answer == "affirmative":
+            return Turn(self._with_notices(ctx, flow_texts.text("ticket_describe_ask", s.language)))
+        if guard.is_question(text):
+            self._end_ticket_question(s)
+            return "ordinary"
+        if guard.ticket_scope(text) == "personal" and not guard.answers_ticket_question(text):
+            self._end_ticket_question(s)
+            return Turn(self._with_notices(ctx, flow_texts.text("ticket_out_of_scope", s.language)))
+        enough = guard.describes_enough(text) if s.ticket_ask == "service" else guard.has_store_signal(text)
+        if not enough:
+            return Turn(self._with_notices(ctx, flow_texts.text("ticket_describe_ask", s.language)))
+        return "describe"
 
     def _offer_ticket(self, s: Session, order_id: str, item_id: str) -> None:
         """Remember that a support ticket was offered in text for this owned item. Nothing is created."""

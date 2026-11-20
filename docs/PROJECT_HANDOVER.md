@@ -71,9 +71,9 @@ app/db  repository.py (the authorization boundary, SQL filters on the signed-in 
 | Area | Result |
 |---|---|
 | Behaviour | Intent split for returns (request, eligibility question, status question); `check_return_eligibility` timing tool with item recovery; named-order lookup enforced; general policy questions routed to search; angry refund demands looked up first; repeat-complaint clarification; refund-status wording; ambiguity guards |
-| Language | Code-decided language; 107 sentences in one three-language catalogue; Hindi and Hinglish greetings, thanks and off-topic detection |
+| Language | Code-decided language; 110 sentences in one three-language catalogue; Hindi and Hinglish greetings, thanks and off-topic detection |
 | Evaluation engineering | Real-backend harness with denominators kept explicit; persistent usage ledger (every request, embeddings included, fail-closed ceiling); harness-only retry of pre-transmission failures; per-test attribution of transport failures; composition of attempts (first clean result per test, everything disclosed) |
-| Tests | 3327 offline tests on the ticket-scope branch (3137 at the original handover), all passing (section 6) |
+| Tests | 3369 offline tests (3137 at the original handover), all passing (section 6) |
 
 ## 4. Evaluation results (details and caveats in `docs/evaluation/EVALUATION_REPORT.md`)
 
@@ -88,7 +88,7 @@ scenarios 5/5, conversations 11/12 (45/46 keys, 133/134 universal), single-turn 
 ## 5. Known limitations and what still needs a person
 
 0. **Ticket-scope gate**: The ticket-scope gate (`guard.ticket_scope`) is vocabulary-based: it recognises store complaints from word lists, so unusual wording can be asked a clarifying question instead of getting a card, and it has **not yet passed independent held-out validation** (protocol: `tests/data/ticket_scope_heldout.md`; the 190 regression tests in `tests/test_ticket_scope_gate.py` are the tuning set).
-1. **Human review (blocking for production wording)**: all 107 Hinglish and Hindi sentences are drafts; 15 are marked High priority (13 original plus the two ticket-scope sentences) (the 105th, `which_order_to_return` (added after the review sheet's first 104 and not yet seen by a reviewer), is also a draft).
+1. **Human review (blocking for production wording)**: all 110 Hinglish and Hindi sentences are drafts; 17 are marked High priority (13 original plus the four ticket-scope sentences) (the 105th, `which_order_to_return` (added after the review sheet's first 104 and not yet seen by a reviewer), is also a draft).
    Every manual verdict in the evaluation report is the assistant's own reading, not a signed review.
 2. **Live validation of the last two cycles** was not run (ledger headroom 18 of 700 at the end). About 20 requests would cover the
    Hinglish refund wording, a Hindi return journey and the which-order question; the ceiling must be discussed first.

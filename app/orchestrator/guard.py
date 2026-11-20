@@ -141,11 +141,13 @@ _COMPLAINT_RE = re.compile(
     r"|not (?:arrived|come|came|received|reached)|not what i (?:expected|ordered)|not as (?:described|shown|advertised)"
     r"|disappointed|(?:poor|bad|cheap) quality|(?:doesn['’]?t|does not|dont) fit|too (?:small|big|tight|loose)"
     r"|uncomfortable|lost|stolen|wet|(?:over|double)[ -]?charged|charged (?:twice|two times|double|extra|more)"
-    r"|deducted|not refunded|refund (?:not|still not|never)|rude)\b"
+    r"|deducted|not refunded|refund (?:not|still not|never)|rude|half|partial(?:ly)?|incomplete|short(?:age)?|less"
+    r"|pending|stuck)\b"
     r"|\b(?:kharab|kharaab|toot\w*|tuta|tuti|tute|kaam nahi\w*|kaam nahin\w*|chal nahi\w*|chalta nahi|band ho gay\w*"
     r"|on nahi ho\w*|nahi aay\w*|nahin aay\w*|nahi aaya|nahi mil\w*|nahin mil\w*|galat|kat gay\w*|kata|kaat liya"
-    r"|gayab|phat gay\w*|jal gay\w*|garam ho\w*)\b"
-    r"|खराब|टूट|काम नहीं"
+    r"|gayab|phat gay\w*|jal gay\w*|garam ho\w*|adha|aadha|adhe|aadhe|kam mila|poora nahi\w*"
+    r"|pura nahi\w*)\b"
+    r"|खराब|टूट|काम नहीं|आधा|आधे|पूरा नहीं"
     r"|नहीं आ(?:या|ई|ए)|नहीं मिल(?:ा|ी|े)"
     r"|गलत|कट ग(?:ए|या|ई)|गायब", re.I)
 # खराब टूट "काम नहीं" "नहीं आया/आई/आए" "नहीं मिला/मिली/मिले" गलत "कट गए/गया/गई" गायब
@@ -201,6 +203,56 @@ def ticket_scope(text: str, *, names_product: bool = False) -> str:
                                        or operation in ("change account or delivery details", "change your account")):
         return "store"
     return "personal" if personal else "unclear"
+
+
+ACCOUNT_CHANGE = "change account or delivery details"
+
+# The categories the clarifying question lists (order, product, delivery, payment, refund, return). A reply that names one of
+# them ANSWERS that question, even without a complaint word ("for refund", "yes for refund").
+_TOPIC_ANSWER_RE = re.compile(
+    r"\b(?:orders?|ordr|oder|products?|prodcut|items?|deliver\w*|delivry|delivary|payments?|pament|refunds?|refnd"
+    r"|returns?|parcels?|packages?|courier|shipment|paisa|paise|mangwaya|kharida|saman)\b"
+    r"|ऑर्डर|प्रोडक्ट|डिलीवरी|भुगतान|पेमेंट|रिफंड|रिफ़ंड|रिटर्न|पार्सल|पैसे|सामान", re.I)
+
+
+def answers_ticket_question(text: str) -> bool:
+    """True if the reply names one of the categories the ticket question listed."""
+    return bool(_TOPIC_ANSWER_RE.search(unicodedata.normalize("NFC", text or "")))
+
+
+def has_store_signal(text: str) -> bool:
+    """True if the message names a store category or states a complaint. Abuse, "ok", "yes" and chatter do not."""
+    text = unicodedata.normalize("NFC", text or "")
+    return bool(_TOPIC_ANSWER_RE.search(text) or _COMPLAINT_RE.search(text) or mentions_order_or_item(text))
+
+
+def describes_enough(text: str) -> bool:
+    """True if a reply to "write the details" is more than a word: three words, or a number or an ID."""
+    return len(_word_tokens(text)) >= 3 or any(ch.isdigit() for ch in text or "")
+
+
+def is_question(text: str) -> bool:
+    """True for a question (it is answered, never taken as the description of a problem)."""
+    return bool(re.search(r"[?]\s*$", text or "") or _QUESTION_START.match(text or "") or _QUESTIONISH.match(text or ""))
+
+
+def ticket_scope_answered(latest: str, combined: str, *, names_product: bool = False, service: bool = False) -> str:
+    """``ticket_scope`` for a ticket text whose LAST message answers a question the assistant asked.
+
+    ``service``: the customer was asked to write the details of a store service request (the first message already said
+    what they want): their details count unless the details are themselves personal.
+    Otherwise a reply that names a listed category settles an ``unclear`` text as ``store`` (and a ``personal`` one only when
+    a transaction word is present); a reply that names none changes nothing.
+    """
+    if service:
+        return "personal" if ticket_scope(latest) == "personal" else "store"
+    base = ticket_scope(combined, names_product=names_product)
+    if base == "store" or not answers_ticket_question(latest):
+        return base
+    transaction = bool(mentions_order_or_item(combined) or _TRANSACTION_RE.search(combined))
+    if base == "unclear" or (base == "personal" and transaction):
+        return "store"
+    return base
 
 
 def is_ticket_request(text: str) -> bool:

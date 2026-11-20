@@ -132,8 +132,8 @@ since the localisation work. Screenshots are not included.
 | Tier | What it covers | Status |
 |---|---|---|
 | **Live-validated** | Real `gpt-4o-mini` runs: Evaluations A and B, then two post-fix checks, last on code `78f9790` (12 targeted conversations passed) | Replies read by hand; not signed by an independent reviewer |
-| **Offline-tested** | 3,327 automated tests, all passing, no network. This includes every change after `78f9790` (the ticket-scope gate and compact prompt, refund-status wording, the localised return journey, the order-ambiguity guards, the guard that settles a return request the model answered in prose) | Shows the code does what it says; **not** verified against the live model |
-| **Awaiting human review** | All 107 Hinglish and Hindi sentences are drafts; 15 high-priority ones (the original 13 plus the two ticket-scope sentences) need a fluent reader | [Review sheets](docs/localization_review_hinglish_hindi.md) |
+| **Offline-tested** | 3,369 automated tests, all passing, no network. This includes every change after `78f9790` (the ticket-scope gate and compact prompt, refund-status wording, the localised return journey, the order-ambiguity guards, the guard that settles a return request the model answered in prose) | Shows the code does what it says; **not** verified against the live model |
+| **Awaiting human review** | All 110 Hinglish and Hindi sentences are drafts; 17 high-priority ones (the original 13 plus four ticket-scope sentences) need a fluent reader | [Review sheets](docs/localization_review_hinglish_hindi.md) |
 
 ```bash
 uv run python -m pytest tests -q

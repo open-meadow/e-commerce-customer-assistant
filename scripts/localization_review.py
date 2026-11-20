@@ -27,6 +27,9 @@ WHEN = {
     "ask_issue": "The customer asks for a ticket or a person but has not said what it is about",
     "ticket_out_of_scope": "A ticket was proposed for a personal or unrelated request: no ticket, says what tickets are for",
     "ticket_scope_ask": "A ticket was proposed but the text does not yet say what went wrong with a store matter",
+    "ticket_describe_ask": "The customer is asked to write, in their own words, what went wrong or what they need (a reply that said nothing about the store, or a yes to the ticket offer)",
+    "ticket_service_ask": "The customer asked for something the assistant cannot do itself (a new address, phone or email): offers a ticket and asks them to write the details",
+    "ticket_declined": "The customer said no to the ticket offer: nothing is created",
     "order_system_down": "The order database cannot be reached",
     "order_not_found_check": "The order named for a ticket is not on the customer's account",
     "order_not_found": "Same, in the ticket-after-refusal path (shorter)",
@@ -151,6 +154,8 @@ HIGH = {  # wording where tone or meaning can change what the customer believes 
     "not_on_account": "must not hint whose the order is",
     "ticket_out_of_scope": "refuses a ticket; must be polite and must not sound like a ticket exists; NEW: DRAFT, awaiting fluent review",
     "ticket_scope_ask": "asks what went wrong; must not imply a ticket was prepared; NEW: DRAFT, awaiting fluent review",
+    "ticket_describe_ask": "asks the customer to write the description; must say their words are used as written and that nothing is saved before Confirm; NEW: DRAFT, awaiting fluent review",
+    "ticket_service_ask": "offers a ticket for something the assistant cannot do; must not promise the change; asks for the details in the customer's words; NEW: DRAFT, awaiting fluent review",
 }
 MEDIUM = {
     "which_order_to_return": "neutral question listing IDs and statuses; NEW, added after the first review sheet: DRAFT, awaiting fluent review",

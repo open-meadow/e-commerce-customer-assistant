@@ -72,6 +72,9 @@ class Session:
     pending_id: Optional[str] = None
     draft: Optional[dict[str, Any]] = None
     want_ticket: bool = False
+    # What the customer was last asked while ``want_ticket`` is set: "" (what is the issue), "scope" (what went wrong)
+    # or "service" (write the details of a service request such as a change of address).
+    ticket_ask: str = ""
     # An offer of a support ticket made in text after a refused return: {"order_id", "item_id",
     # "stage": "offered" | "details", "expires"}. It creates nothing; a ticket still needs its own Confirm.
     ticket_offer: Optional[dict[str, Any]] = None

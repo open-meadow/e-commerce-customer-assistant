@@ -40,7 +40,7 @@ uv run python -m app.db.seed_data --db-path demo/demo.db --reference-time 2026-1
 ```
 
 Settings come from a git-ignored `.env` (template: `.env.example`); real environment variables override it. There is no linter,
-formatter or coverage tool. The full suite (3,327 tests) takes about three minutes and needs no network.
+formatter or coverage tool. The full suite (3,369 tests) takes about three minutes and needs no network.
 
 ## Layout
 
@@ -49,7 +49,7 @@ app/ui            Streamlit chat; client.py picks the backend (UI_BACKEND=real d
 app/backend       public API a front end imports (Backend, sessions, HTTP API)
 app/orchestrator  engine.py (tool loop, every state change), guard.py, issues.py, summarizer.py
 app/llm           OpenAI Responses, Anthropic, offline RuleBasedLLM stand-in
-app/tools         registry.py (10 tools), flow_texts.py (107 sentences x 3 languages), return_texts.py
+app/tools         registry.py (10 tools), flow_texts.py (110 sentences x 3 languages), return_texts.py
 app/rag           Chroma vector index over FAQ.md and Policies.md
 app/db            SQLite layer, repository (authorization boundary), seed, source data and eval data
 app/voice         LiveKit worker (never run live)
