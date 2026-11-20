@@ -92,6 +92,10 @@ The ten tools: `list_my_orders`, `get_order_status`, `get_my_returns`, `get_my_t
 - **Follow-up:** a reply to the clarifying question that names one of the listed categories (order, product, delivery, payment, refund, return) answers it, even without a complaint word; a reply that names nothing (abuse, "ok") is never added to the ticket text and gets a request to describe the problem instead of the same sentence. A request to change an address, phone or email offers a ticket, asks the customer to write the details, and keeps their first message at the start of the description.
 - **Limitation:** The ticket-scope gate (`guard.ticket_scope`) is vocabulary-based: it recognises store complaints from word lists, so unusual wording can be asked a clarifying question instead of getting a card, and it has **not yet passed independent held-out validation** (protocol: `tests/data/ticket_scope_heldout.md`; the 190 regression tests in `tests/test_ticket_scope_gate.py` are the tuning set).
 
+### Session and resource protection
+- **What:** the registry caps active sessions and session creation rates atomically, expires sessions that are idle or too old (a background sweeper plus every create), never removes a session whose turn is running or whose confirmed action is executing, and tells listeners so the HTTP session maps and the LiveKit room are released with it. Requests are limited by body size, per peer address and per session; model calls have a per-session and per-minute budget and are never retried; LiveKit calls are time-bounded; the voice worker has a maximum call length and tells the API when its job ends.
+- **Limitation:** every limit is process-local and the client identity is the TCP peer, not an authenticated user. See [session_resource_protection.md](session_resource_protection.md) for the limits, the configuration and what a multi-instance deployment needs.
+
 ### Policy controls
 - **What:** FAQ and policy answers come from retrieved passages (`search_policies`), not from the model's memory. Return windows
   come from `reason_category`: 48 hours for damaged and wrong-product items, 168 hours for standard returns, inclusive. Retrieval

@@ -46,6 +46,7 @@ from app.llm.rule_based import RuleBasedLLM
 log = logging.getLogger("app.llm")
 
 _DEFAULT_TIMEOUT = 20.0
+_MIN_TIMEOUT, _MAX_TIMEOUT = 1.0, 120.0  # seconds; ``LLM_TIMEOUT_SECONDS`` is clamped to this range
 # The Responses API documents a lower bound on ``max_output_tokens``; smaller
 # budgets are raised to it instead of being sent and rejected.
 _MIN_OUTPUT_TOKENS = 16
@@ -388,6 +389,8 @@ def build_llm_client(env: Optional[Mapping[str, str]] = None) -> LLMClient:
         timeout = float(env.get("LLM_TIMEOUT_SECONDS") or _DEFAULT_TIMEOUT)
     except ValueError as exc:
         raise LLMConfigError("LLM_TIMEOUT_SECONDS is not a number") from exc
+    # A provider call is always bounded: a zero or enormous setting cannot make requests hang or fail instantly.
+    timeout = min(max(timeout, _MIN_TIMEOUT), _MAX_TIMEOUT)
     temperature = _temperature(env)
     model = env.get("LLM_MODEL")
     if provider == "openai":

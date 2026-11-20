@@ -39,7 +39,8 @@ class StartSessionResult:
     ok: bool
     state: Optional[ConversationState]
     greeting: str
-    error_code: Optional[str] = None  # "unknown_customer" or "unavailable"
+    error_code: Optional[str] = None  # "unknown_customer", "unavailable", "capacity" or "rate_limited"
+    retry_after: Optional[int] = None  # seconds to wait, set for "capacity" and "rate_limited"
 
 
 @dataclass(frozen=True)

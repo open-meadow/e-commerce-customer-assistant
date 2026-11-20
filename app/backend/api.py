@@ -15,6 +15,7 @@ from typing import Mapping, Optional
 
 from app.backend import clock
 from app.backend.config import Settings
+from app.backend.limits import BudgetedLLM, ProviderBudget, SessionLimitError
 from app.backend.sessions import SessionRegistry
 from app.backend.types import (BackendHealth, ChatReply, ChoiceSelection, ConfirmationDecision,
                                ConversationState, LoginOption, StartSessionResult)
@@ -30,6 +31,13 @@ log = logging.getLogger("app.backend")
 
 _UNAVAILABLE_TEXT = "The service is temporarily unavailable. Please try again shortly."
 _INVALID_SESSION_TEXT = "Your session has ended or is no longer valid. Please sign in again."
+_CAPACITY_TEXT = "The assistant is busy right now. Please try again in a few minutes."
+_CREATION_RATE_TEXT = "Too many chats were started in a short time. Please wait a moment and try again."
+_BUSY_TEXT = "Your previous request is still being processed. Please wait a moment and try again."
+_REQUEST_LIMIT_TEXT = "You've reached the request limit for this session. Please start a new session."
+_REQUEST_RATE_TEXT = "You're sending requests too quickly. Please wait a moment and try again."
+_SESSION_BUDGET_TEXT = "You've reached the usage limit for this session. Please start a new session."
+_WINDOW_BUDGET_TEXT = "The assistant is receiving too many requests right now. Please try again shortly."
 
 
 class Backend:
@@ -37,10 +45,14 @@ class Backend:
 
     def __init__(self, llm: Optional[LLMClient] = None, settings: Optional[Settings] = None,
                  env: Optional[Mapping[str, str]] = None, interpret_replies: Optional[bool] = None):
-        self.settings = settings or Settings()
-        self.llm = llm if llm is not None else build_llm_client(env if env is not None else os.environ)
+        source = env if env is not None else os.environ
+        self.settings = settings or Settings.from_env(source)
+        self.llm = llm if llm is not None else build_llm_client(source)
         self.registry = SessionRegistry(self.settings)
-        self.engine = Engine(self.registry, self.llm, self.settings, interpret=interpret_replies)
+        # The engine's model calls are charged to the session's budget; ``self.llm`` stays the raw client.
+        self.budget = ProviderBudget(self.settings.provider_calls_per_session, self.settings.provider_calls_per_minute)
+        self.registry.add_drop_listener(lambda session, reason: self.budget.forget(session.session_ref))
+        self.engine = Engine(self.registry, BudgetedLLM(self.llm, self.budget), self.settings, interpret=interpret_replies)
 
     @property
     def interpretation_active(self) -> bool:
@@ -57,7 +69,11 @@ class Backend:
             return []
         return [LoginOption(r["customer_id"], r["name"]) for r in rows]
 
-    def start_session(self, customer_id: str) -> StartSessionResult:
+    def close(self) -> None:
+        """Stop the background sweeper and end every session (the application is shutting down)."""
+        self.registry.shutdown()
+
+    def start_session(self, customer_id: str, client_key: Optional[str] = None) -> StartSessionResult:
         if not isinstance(customer_id, str):
             return StartSessionResult(False, None, "That customer isn't available.", "unknown_customer")
         try:
@@ -67,7 +83,12 @@ class Backend:
         match = next((r for r in rows if r["customer_id"] == customer_id), None)
         if match is None:
             return StartSessionResult(False, None, "That customer isn't available.", "unknown_customer")
-        session = self.registry.create(match["customer_id"], match["name"])
+        try:
+            session = self.registry.create(match["customer_id"], match["name"], client_key=client_key)
+        except SessionLimitError as exc:
+            if exc.reason == "capacity":
+                return StartSessionResult(False, None, _CAPACITY_TEXT, "capacity", exc.retry_after)
+            return StartSessionResult(False, None, _CREATION_RATE_TEXT, "rate_limited", exc.retry_after)
         log.info("session started ref=%s", session.session_ref)
         greeting = (f"Hi {match['name']}! I'm the store's automated support assistant. I can check order "
                     "status, answer refund and policy questions, look up products, start return requests "
@@ -100,7 +121,11 @@ class Backend:
         session = self.registry.get(state._handle)
         if session is None:
             return error("invalid_session", _INVALID_SESSION_TEXT)
-        with session.turn_lock:
+        # A request that cannot get the session's turn lock in time is refused (and says so) instead of holding a worker
+        # thread for as long as another turn runs. The customer's open card is untouched and can be answered again.
+        if not session.turn_lock.acquire(timeout=self.settings.turn_lock_timeout_seconds):
+            return error("rate_limited", _BUSY_TEXT)
+        try:
             if self.registry.get(state._handle) is None:  # ended or expired while waiting
                 return error("invalid_session", _INVALID_SESSION_TEXT)
             try:
@@ -111,19 +136,45 @@ class Backend:
                         return error("message_too_long",
                                      f"That message is too long. Please keep it under "
                                      f"{self.settings.max_message_chars} characters.")
-                    if session.message_count >= self.settings.max_messages_per_session:
-                        return error("rate_limited", "You've reached the message limit for this session. "
-                                                     "Please start a new session.")
-                    session.message_count += 1
-                    turn = self.engine.handle_text(session, message)
-                elif decision is not None:
-                    turn = self.engine.handle_decision(session, decision)
-                else:
-                    turn = self.engine.handle_choice(session, choice)
+                refused = self._admit(session, uses_provider=decision is None)
+                if refused is not None:
+                    return error("rate_limited", refused)
+                with self.budget.session(session.session_ref):
+                    if message is not None:
+                        if session.message_count >= self.settings.max_messages_per_session:
+                            return error("rate_limited", "You've reached the message limit for this session. "
+                                                         "Please start a new session.")
+                        session.message_count += 1
+                        turn = self.engine.handle_text(session, message)
+                    elif decision is not None:
+                        turn = self.engine.handle_decision(session, decision)
+                    else:
+                        turn = self.engine.handle_choice(session, choice)
             except Exception:
                 log.exception("request failed ref=%s request=%s", session.session_ref, request_id)
                 return error("internal", "Something went wrong. Please try again.")
+        finally:
+            self.registry.touch(session)
+            session.turn_lock.release()
         return reply(turn)
+
+    def _admit(self, session, *, uses_provider: bool):
+        """The refusal text if this request is over a per-session or provider limit, else ``None``.
+
+        A confirmation (``uses_provider`` false) is never refused for the provider budget: it makes no model call, and a
+        valid customer operation must not be dropped because of it."""
+        why, _wait = self.registry.admit_request(session)
+        if why == "limit":
+            return _REQUEST_LIMIT_TEXT
+        if why == "rate":
+            return _REQUEST_RATE_TEXT
+        if uses_provider:
+            budget = self.budget.refusal(session.session_ref)
+            if budget == "session":
+                return _SESSION_BUDGET_TEXT
+            if budget == "window":
+                return _WINDOW_BUDGET_TEXT
+        return None
 
     # -- health ---------------------------------------------------------
 
@@ -150,6 +201,7 @@ def get_backend() -> Backend:
     with _backend_lock:
         if _backend is None:
             _backend = Backend()
+            _backend.registry.start_sweeper()  # expired sessions are removed even when nobody calls the API
         return _backend
 
 

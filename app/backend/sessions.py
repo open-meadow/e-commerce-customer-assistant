@@ -13,11 +13,20 @@ Security properties:
   concurrent confirmations cannot both proceed.
 * Write capacity is enforced as committed plus reserved, so concurrent
   confirmations cannot exceed the per-session cap.
+
+H3 resource protection (all process-local, see docs/session_resource_protection.md):
+
+* Creation is atomic under the lock: the global cap and the creation rates are checked and the session stored in one step.
+* Sessions expire when idle and when older than an absolute age; a background sweeper (and every create) removes them.
+  A session whose turn is running or whose action is claimed is never removed, so an operation cannot lose its session.
+* Listeners are told when a session is dropped, so the HTTP maps and LiveKit rooms are released with it.
+* Finished pending actions are kept only in a small bounded number (a repeated confirmation still sees ``done``).
 """
 
 from __future__ import annotations
 
 import hashlib
+import logging
 import secrets
 import threading
 import uuid
@@ -27,7 +36,11 @@ from typing import Any, Optional
 
 from app.backend import clock
 from app.backend.config import Settings
+from app.backend.limits import SessionLimitError, SlidingWindowLimiter
 from app.orchestrator.issues import IssueBook
+
+log = logging.getLogger("app.backend.sessions")
+_KEEP_FINISHED_PENDING = 20  # finished actions kept per session so a repeated confirmation still reports its state
 
 
 @dataclass
@@ -66,6 +79,7 @@ class Session:
     verified_durations: set[str] = field(default_factory=set)
     history: list[dict[str, str]] = field(default_factory=list)
     message_count: int = 0
+    request_count: int = 0  # every admitted request (message, decision or choice), for the per-session limit
     issues: IssueBook = field(default_factory=IssueBook)
     clarification: list[tuple[datetime, str]] = field(default_factory=list)
     choice: Optional[ChoiceState] = None
@@ -93,57 +107,189 @@ class SessionRegistry:
         self._lock = threading.RLock()
         self._sessions: dict[str, Session] = {}
         self._pending: dict[str, PendingAction] = {}
+        self._listeners: list = []
+        self._sweeper: Optional[threading.Thread] = None
+        self._sweeper_stop = threading.Event()
+        self._create_client = SlidingWindowLimiter(settings.session_creates_per_client_per_minute, 60,
+                                                   max_keys=max(1000, settings.max_active_sessions * 5))
+        self._create_all = SlidingWindowLimiter(settings.session_creates_per_minute, 60, max_keys=4)
+        self._requests = SlidingWindowLimiter(settings.session_requests_per_minute, 60,
+                                              max_keys=settings.max_active_sessions * 2 + 10)
 
     # -- sessions -------------------------------------------------------
 
-    def create(self, customer_id: str, display_name: str) -> Session:
+    def create(self, customer_id: str, display_name: str, client_key: Optional[str] = None) -> Session:
+        """Create a session, or raise ``SessionLimitError``. Cap, rates and storage are one atomic step.
+
+        ``client_key`` is whatever the caller can attribute the request to (the HTTP layer passes the peer address; it never
+        passes a header or a customer ID taken from the UI). The creation rates apply to an attributable client only; an
+        in-process caller (the Streamlit UI, the evaluation harness) passes ``None`` and is bounded by the cap, the idle
+        expiry and the absolute age. A refused attempt consumes no rate budget.
+        """
         now = clock.now()
-        handle = secrets.token_urlsafe(32)
-        session = Session(handle=handle, customer_id=customer_id, display_name=display_name,
-                          created=now, last_active=now, session_ref=_ref(handle))
-        with self._lock:
-            self._purge_locked(now)
-            self._sessions[handle] = session
-        return session
+        dropped: list = []
+        try:
+            with self._lock:
+                dropped = self._collect_expired_locked(now)
+                if len(self._sessions) >= self.settings.max_active_sessions:
+                    raise SessionLimitError("capacity", retry_after=30)
+                if client_key is not None:
+                    if not self._create_client.allow(client_key):
+                        raise SessionLimitError("creation_rate", self._create_client.retry_after(client_key))
+                    if not self._create_all.allow("all"):
+                        self._create_client.release(client_key)
+                        raise SessionLimitError("creation_rate", self._create_all.retry_after("all"))
+                handle = secrets.token_urlsafe(32)
+                session = Session(handle=handle, customer_id=customer_id, display_name=display_name,
+                                  created=now, last_active=now, session_ref=_ref(handle))
+                self._sessions[handle] = session
+                return session
+        finally:
+            self._notify(dropped)
 
     def get(self, handle: Any) -> Optional[Session]:
         if not isinstance(handle, str):
             return None
         now = clock.now()
+        dropped: list = []
+        try:
+            with self._lock:
+                session = self._sessions.get(handle)
+                if session is None:
+                    return None
+                reason = self._expiry_reason(session, now)
+                if reason is not None and not self._busy_locked(session):
+                    dropped = [self._pop_locked(handle, reason)]
+                    return None
+                session.last_active = now
+                return session
+        finally:
+            self._notify(dropped)
+
+    def touch(self, session: Session) -> None:
+        """Mark the session active now (called when a turn ends, so a long turn does not leave it looking idle)."""
         with self._lock:
-            session = self._sessions.get(handle)
-            if session is None:
-                return None
-            if now - session.last_active > self.settings.idle_timeout:
-                self._drop_locked(handle)
-                return None
-            session.last_active = now
-            return session
+            session.last_active = clock.now()
 
     def end(self, handle: Any) -> bool:
+        dropped: list = []
         with self._lock:
-            if handle in self._sessions:
-                self._drop_locked(handle)
-                return True
-            return False
+            if isinstance(handle, str) and handle in self._sessions:
+                dropped = [self._pop_locked(handle, "ended")]
+        self._notify(dropped)
+        return bool(dropped)
+
+    def sweep(self) -> int:
+        """Remove every expired session that is not busy. Returns how many were removed."""
+        with self._lock:
+            dropped = self._collect_expired_locked(clock.now())
+        self._notify(dropped)
+        return len(dropped)
 
     def purge(self) -> None:
-        with self._lock:
-            self._purge_locked(clock.now())
+        self.sweep()
 
     def count(self) -> int:
         with self._lock:
             return len(self._sessions)
 
-    def _purge_locked(self, now: datetime) -> None:
-        for handle in [h for h, s in self._sessions.items()
-                       if now - s.last_active > self.settings.idle_timeout]:
-            self._drop_locked(handle)
+    def shutdown(self) -> None:
+        """End every session (the application is stopping) and stop the sweeper."""
+        self.stop_sweeper()
+        with self._lock:
+            dropped = [self._pop_locked(h, "shutdown") for h in list(self._sessions)]
+        self._notify(dropped)
 
-    def _drop_locked(self, handle: str) -> None:
-        self._sessions.pop(handle, None)
+    # -- listeners and the background sweeper ----------------------------
+
+    def add_drop_listener(self, listener) -> None:
+        """``listener(session, reason)`` runs after a session is dropped (``ended``, ``idle``, ``age`` or ``shutdown``).
+
+        It runs outside the registry lock and its failure is logged, never raised.
+        """
+        with self._lock:
+            if listener not in self._listeners:
+                self._listeners.append(listener)
+
+    def start_sweeper(self, interval: Optional[float] = None) -> None:
+        with self._lock:
+            if self._sweeper is not None:
+                return
+            seconds = float(interval if interval is not None else self.settings.sweep_interval_seconds)
+            self._sweeper_stop.clear()
+
+            def loop() -> None:
+                while not self._sweeper_stop.wait(seconds):
+                    try:
+                        self.sweep()
+                    except Exception:
+                        log.exception("session sweep failed")
+
+            self._sweeper = threading.Thread(target=loop, name="session-sweeper", daemon=True)
+            self._sweeper.start()
+
+    def stop_sweeper(self) -> None:
+        with self._lock:
+            thread, self._sweeper = self._sweeper, None
+        self._sweeper_stop.set()
+        if thread is not None:
+            thread.join(timeout=5)
+
+    # -- per-session request admission ------------------------------------
+
+    def admit_request(self, session: Session) -> tuple[Optional[str], int]:
+        """``(None, 0)`` if the session may make another request, else ``("limit", 0)`` or ``("rate", seconds_to_wait)``."""
+        with self._lock:
+            if session.request_count >= self.settings.max_requests_per_session:
+                return "limit", 0
+            if not self._requests.allow(session.handle):
+                return "rate", self._requests.retry_after(session.handle)
+            session.request_count += 1
+            return None, 0
+
+    # -- internals ----------------------------------------------------------
+
+    def _expiry_reason(self, session: Session, now: datetime) -> Optional[str]:
+        if now - session.created > self.settings.max_session_age:
+            return "age"
+        if now - session.last_active > self.settings.idle_timeout:
+            return "idle"
+        return None
+
+    @staticmethod
+    def _busy_locked(session: Session) -> bool:
+        """A turn is running, or a confirmed action is executing: the session must not be removed underneath it."""
+        return session.turn_lock.locked() or any(n > 0 for n in session.reserved.values())
+
+    def _collect_expired_locked(self, now: datetime) -> list:
+        out = []
+        for handle, session in list(self._sessions.items()):
+            reason = self._expiry_reason(session, now)
+            if reason is not None and not self._busy_locked(session):
+                out.append(self._pop_locked(handle, reason))
+        return out
+
+    def _pop_locked(self, handle: str, reason: str) -> tuple:
+        session = self._sessions.pop(handle)
         for action_id in [a for a, p in self._pending.items() if p.session_handle == handle]:
             del self._pending[action_id]
+        self._requests.forget(handle)
+        return session, reason
+
+    def _notify(self, dropped: list) -> None:
+        for session, reason in dropped:
+            for listener in list(self._listeners):
+                try:
+                    listener(session, reason)
+                except Exception:
+                    log.exception("session drop listener failed (session %s)", session.session_ref)
+
+    def _prune_pending_locked(self, session: Session) -> None:
+        finished = [p for p in self._pending.values()
+                    if p.session_handle == session.handle and p.state not in ("open", "claimed")]
+        finished.sort(key=lambda p: p.created)
+        for action in finished[: max(0, len(finished) - _KEEP_FINISHED_PENDING)]:
+            self._pending.pop(action.action_id, None)
 
     # -- pending actions ------------------------------------------------
 
@@ -162,6 +308,7 @@ class SessionRegistry:
                     old.state = "cancelled"
             self._pending[action.action_id] = action
             session.pending_id = action.action_id
+            self._prune_pending_locked(session)
         return action
 
     def open_pending(self, session: Session) -> Optional[PendingAction]:

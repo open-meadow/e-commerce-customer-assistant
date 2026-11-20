@@ -170,6 +170,9 @@ def _begin_session(
         return
 
     if not result.ok or result.state is None:
+        if getattr(result, "error_code", None) in ("capacity", "rate_limited"):
+            st.session_state[UI_ERROR_KEY] = result.greeting  # the backend's own "busy, try again" wording
+            return
         st.session_state[UI_ERROR_KEY] = (
             "That customer session is unavailable. Please try again."
             if result.error_code == "unavailable"

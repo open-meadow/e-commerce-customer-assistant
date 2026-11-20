@@ -1,7 +1,7 @@
 # Project status
 
 **Project:** E-commerce customer-support assistant (capstone). **Branch:** `master` (PRs #1 and #2 were merged on 2026-11-19, `6e82d86`). The development line `rukum/corrective-v2` is kept locally.
-**Code checkpoint:** `224f7a5`, plus the return-prose fix described in section 13 of the evaluation report (the only application change after it). **Offline tests:** 3,369 passed, 0 failed,
+**Code checkpoint:** `224f7a5`, plus the return-prose fix described in section 13 of the evaluation report (the only application change after it). **Offline tests:** 3,462 passed, 0 failed,
 0 skipped (`uv run python -m pytest tests -q`, about 3 minutes, no network).
 
 This is the one current status page. Older snapshots are in [history/](history/). Verify against the files and Git rather than
@@ -40,6 +40,8 @@ Details: [evaluation/EVALUATION_REPORT.md](evaluation/EVALUATION_REPORT.md) and 
 3. Housekeeping: **done** on 2026-11-19. The remote branch `integrate/corrective-v2-public` was deleted after checking that it was fully merged into `master` (PR #2); the local copy at `aa5c8d9` is retained, as are `rukum/corrective-v2` and the private evidence backup.
 4. Refresh `docs/Capstone_Presentation.pptx` (it predates the corrective-v2 results; see [deck/README.md](deck/README.md)).
 5. Voice (LiveKit) has never been run live, and the Docker `worker` has not been tested. Docker `api` and `app` were verified on 2026-11-19 (see the table above).
+6. **Security work still open after H3** (session and resource protection, [session_resource_protection.md](session_resource_protection.md), offline-tested only and process-local):
+   **H1** authentication and customer identity (the customer ID is still chosen in the UI) and **H2** voice-confirmation authorization (a model still decides a spoken yes or no).
 
 ## Known limitations
 

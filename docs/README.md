@@ -13,6 +13,7 @@ Start with the [project README](../README.md). This page says where everything e
 | Evaluation files index and earlier runs | [evaluation/README.md](evaluation/README.md) |
 | **Archived raw evidence** (143 files, SHA-256 manifest; for audit; 18 files have a local user path redacted) | [evaluation/corrective_v2/raw/MANIFEST.md](evaluation/corrective_v2/raw/MANIFEST.md), [REDACTIONS.md](evaluation/corrective_v2/raw/REDACTIONS.md) |
 | **Localization review**: 110 sentences, 17 High priority (13 original plus 4 new) awaiting fluent human review | [localization_review_hinglish_hindi.md](localization_review_hinglish_hindi.md), [.csv](localization_review_hinglish_hindi.csv) |
+| **Session and resource protection** (H3): caps, expiry, request and provider limits, LiveKit cleanup, limitations, what multi-instance needs | [session_resource_protection.md](session_resource_protection.md) |
 | **Install, run and demonstrate** | [../README.md](../README.md) quick start; [06_demo_runbook.md](06_demo_runbook.md) for Docker, scripted verification and troubleshooting |
 | Contributor guidance | [../CLAUDE.md](../CLAUDE.md), [../AGENTS.md](../AGENTS.md) |
 
