@@ -12,7 +12,7 @@ Start with the [project README](../README.md). This page says where everything e
 | **Evaluation**: the one authoritative report | [evaluation/EVALUATION_REPORT.md](evaluation/EVALUATION_REPORT.md) |
 | Evaluation files index and earlier runs | [evaluation/README.md](evaluation/README.md) |
 | **Archived raw evidence** (143 files, SHA-256 manifest; for audit; 18 files have a local user path redacted) | [evaluation/corrective_v2/raw/MANIFEST.md](evaluation/corrective_v2/raw/MANIFEST.md), [REDACTIONS.md](evaluation/corrective_v2/raw/REDACTIONS.md) |
-| **Localization review**: 105 sentences, 13 High priority awaiting fluent human review | [localization_review_hinglish_hindi.md](localization_review_hinglish_hindi.md), [.csv](localization_review_hinglish_hindi.csv) |
+| **Localization review**: 107 sentences, 15 High priority (13 original plus 2 new) awaiting fluent human review | [localization_review_hinglish_hindi.md](localization_review_hinglish_hindi.md), [.csv](localization_review_hinglish_hindi.csv) |
 | **Install, run and demonstrate** | [../README.md](../README.md) quick start; [06_demo_runbook.md](06_demo_runbook.md) for Docker, scripted verification and troubleshooting |
 | Contributor guidance | [../CLAUDE.md](../CLAUDE.md), [../AGENTS.md](../AGENTS.md) |
 

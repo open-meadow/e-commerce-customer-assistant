@@ -127,6 +127,8 @@ TEXTS: dict[str, dict[str, str]] = {
         "item_fallback": "the item",
         "which_order_status": "You have more than one order with {product}: {orders}. Which order do you mean?",
         "which_order_to_return": "You have more than one delivered order: {orders}. Which one would you like to return?",
+        "ticket_out_of_scope": "I can only raise support tickets about orders, products, deliveries, payments, refunds and returns, so I haven't created one. Is there anything like that I can help with?",
+        "ticket_scope_ask": "Before I prepare a ticket, please tell me what went wrong: is it about an order, a product, a delivery, a payment, a refund or a return? Nothing is saved until you confirm.",
     },
     "hinglish": {
         "ticket_limit": "Is session mein support tickets ki limit poori ho gayi hai, isliye main aur ticket nahi bana sakta.",
@@ -234,6 +236,8 @@ TEXTS: dict[str, dict[str, str]] = {
         "item_fallback": "yeh item",
         "which_order_status": "Aapke paas {product} ke saath ek se zyada orders hain: {orders}. Aap kaun sa order poochh rahe hain?",
         "which_order_to_return": "Aapke paas ek se zyada delivered orders hain: {orders}. Aap kaun sa return karna chahte hain?",
+        "ticket_out_of_scope": "Main sirf orders, products, delivery, payment, refund aur return se jude support tickets bana sakta hoon, isliye maine koi ticket nahi banaya. Kya main inmein se kisi cheez mein madad kar sakta hoon?",
+        "ticket_scope_ask": "Ticket banane se pehle bataiye ki kya galat hua: kya yeh order, product, delivery, payment, refund ya return ke baare mein hai? Aapke confirm karne tak kuch save nahi hota.",
     },
     "hi": {
         "ticket_limit": "इस सेशन में सपोर्ट टिकट की सीमा पूरी हो चुकी है, इसलिए मैं और टिकट नहीं बना सकता।",
@@ -341,6 +345,8 @@ TEXTS: dict[str, dict[str, str]] = {
         "item_fallback": "यह आइटम",
         "which_order_status": "आपके पास {product} वाले एक से अधिक ऑर्डर हैं: {orders}। आप कौन सा ऑर्डर पूछ रहे हैं?",
         "which_order_to_return": "आपके पास एक से अधिक डिलीवर हुए ऑर्डर हैं: {orders}। आप कौन सा ऑर्डर रिटर्न करना चाहते हैं?",
+        "ticket_out_of_scope": "मैं सिर्फ़ ऑर्डर, प्रोडक्ट, डिलीवरी, भुगतान, रिफंड और रिटर्न से जुड़े सपोर्ट टिकट बना सकता हूँ, इसलिए मैंने कोई टिकट नहीं बनाया। क्या मैं इनमें से किसी चीज़ में मदद कर सकता हूँ?",
+        "ticket_scope_ask": "टिकट बनाने से पहले बताइए कि क्या गलत हुआ: क्या यह ऑर्डर, प्रोडक्ट, डिलीवरी, भुगतान, रिफंड या रिटर्न के बारे में है? आपके पुष्टि करने तक कुछ भी सेव नहीं होता।",
     },
 }
 

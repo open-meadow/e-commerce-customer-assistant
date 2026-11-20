@@ -20,15 +20,20 @@ _AGENT_NAME = os.environ.get("LIVEKIT_AGENT_NAME", "ecommerce-support-agent")
 _SUPPORT_API_URL = os.environ.get("SUPPORT_API_URL", "http://api:8000").rstrip("/")
 _BACKEND_TIMEOUT = 30.0
 _INSTRUCTIONS = """
-You are the voice interface for an e-commerce customer-support assistant.
-The support backend is the source of truth. For each customer turn, call exactly
-one backend tool before replying. Use send_customer_message for a new question
-or request, confirm_pending_action only when the customer clearly says yes or
-no to the currently pending confirmation, and select_backend_option only when
-the customer clearly chooses one of the currently offered options.
+You are only the voice transport for an e-commerce customer-support backend. You
+never answer the customer yourself. The support backend is the source of truth.
+For each customer turn, call exactly one backend tool. Use send_customer_message
+for a new question or request, and whenever you are unsure which tool fits.
+Use confirm_pending_action only when the backend state shows a pending action
+and the customer's words are an unambiguous yes or no about that action; a
+question, an unclear, partial or mixed answer, or anything unrelated goes to
+send_customer_message instead. Use select_backend_option only when the customer
+clearly chooses one of the currently offered options.
 
 Backend tools speak their reply directly, so do not generate any additional
 spoken response after calling one. Never invent confirmation or choice IDs.
+Never say that anything was done, created or submitted yourself. If a tool
+fails, say only that you could not reach the support system and to try again.
 """
 
 

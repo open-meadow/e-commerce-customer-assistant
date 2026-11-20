@@ -483,8 +483,10 @@ TOOL_SPECS: dict[str, ToolSpec] = {s.name: s for s in [
              {"order_id": _ORDER_ID, "item_id": {"type": "string"}},
              ("order_id", "item_id"), None),
     ToolSpec("start_support_ticket",
-             "Propose a support ticket for the customer's current issue. Call it directly when the customer asks for "
-             "a person, a manager or an agent, or when you cannot resolve the issue with your tools: do not ask "
+             "Propose a support ticket for the customer's current issue. Only for a problem with an order, product, "
+             "delivery, payment, refund or return, or a store service request: never for personal, relationship, "
+             "coaching, general-knowledge or coding requests. Call it directly when the customer asks for a person, "
+             "a manager or an agent about such a matter, or when you cannot resolve it with your tools: do not ask "
              "permission first, because the customer confirms or declines on the confirmation card.",
              {"issue_type": {"type": "string", "enum": ["order", "return", "payment", "product", "general"]},
               "order_id": _ORDER_ID}, ("issue_type",), None),

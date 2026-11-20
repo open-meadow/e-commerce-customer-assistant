@@ -25,6 +25,8 @@ WHEN = {
     # ticket flow
     "ticket_limit": "The session already holds its maximum number of tickets",
     "ask_issue": "The customer asks for a ticket or a person but has not said what it is about",
+    "ticket_out_of_scope": "A ticket was proposed for a personal or unrelated request: no ticket, says what tickets are for",
+    "ticket_scope_ask": "A ticket was proposed but the text does not yet say what went wrong with a store matter",
     "order_system_down": "The order database cannot be reached",
     "order_not_found_check": "The order named for a ticket is not on the customer's account",
     "order_not_found": "Same, in the ticket-after-refusal path (shorter)",
@@ -147,6 +149,8 @@ HIGH = {  # wording where tone or meaning can change what the customer believes 
     "return_submitted": "tells the customer a return request exists ('requested', not approved)",
     "which_order": "lists only IDs and statuses; the question must be neutral",
     "not_on_account": "must not hint whose the order is",
+    "ticket_out_of_scope": "refuses a ticket; must be polite and must not sound like a ticket exists; NEW: DRAFT, awaiting fluent review",
+    "ticket_scope_ask": "asks what went wrong; must not imply a ticket was prepared; NEW: DRAFT, awaiting fluent review",
 }
 MEDIUM = {
     "which_order_to_return": "neutral question listing IDs and statuses; NEW, added after the first review sheet: DRAFT, awaiting fluent review",

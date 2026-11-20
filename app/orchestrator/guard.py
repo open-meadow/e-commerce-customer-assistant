@@ -80,9 +80,127 @@ def mentions_order_or_item(text: str) -> bool:
     return bool(_ORDER_RE.search(text) or _ITEM_RE.search(text))
 
 
+# The cues above as whole words or exact phrases. Substring matching counted "tissue" (issue), "translate", "latest" and
+# "chocolate" (late) as store problems. Plural and inflected forms are written out instead.
+_ISSUE_CUE_RE = re.compile(
+    r"\b(?:not working|broken|damaged|wrong|late|delay(?:s|ed)?|missing|(?:over)?charged|failed|defect\w*|problems?"
+    r"|issues?|stopped|no sound|complain\w*|not received|never arrived|didn['’]?t arrive|doesn['’]?t work"
+    r"|not delivered|faulty|cracked|refund not)\b", re.I)
+
+
 def has_issue_cue(text: str) -> bool:
+    return bool(_ISSUE_CUE_RE.search(text or ""))
+
+
+# ---------------------------------------------------------------------------
+# Ticket scope: is this a store complaint or service request, a personal or unrelated request, or unclear?
+# ---------------------------------------------------------------------------
+# A ticket is proposed only for "store" text. Neither a store word alone (a product name, an order ID, "money", "paid")
+# nor a generic complaint word alone ("problem", "issue", "help") is enough: store text names something bought or a
+# store service AND says what went wrong, or asks for something the assistant cannot do itself, or asks for a person
+# about a named store matter. Store evidence wins over personal words ("the wedding gift I ordered arrived broken").
+# Deterministic: no model decides it.
+
+# Three tiers of "what is this about", from strongest to weakest:
+#   TRANSACTION: something ordered, bought, shipped or refunded (an order ID counts as one). With any stated complaint it
+#                is a store matter even when personal words are present ("the wedding gift I ordered arrived broken").
+#   PRODUCT:     a product noun. With a complaint it is a store matter unless the message is also personal.
+#   WEAK:        money, paid, payment, charge, box, cod, a bare "returned"... everyday words. They never authorise a ticket
+#                alone, and with a generic complaint word ("late", "wrong") they are still not enough; only a
+#                payment-specific complaint ("deducted", "charged twice", "paisa kat gaya") counts, and only when the message
+#                is not personal.
+_TRANSACTION_RE = re.compile(
+    r"\b(?:orders?|ordered|ordr|oder|odr|parcels?|parcle|packages?|pakage|packet|delivery|delivered|deliver|delivry"
+    r"|delivary|courier|shipment|shipping|shipped|purchase[ds]?|bought|buyed|refunds?|refnd|invoice|seller|packaging"
+    r"|return (?:request|pickup|pick-up)|(?:my|the|this|that) returns?|mangwaya|mangwayi|mangaya|mangayi|kharida"
+    r"|kharidi)\b"
+    r"|ऑर्डर|पार्सल|डिलीवरी|रिफंड|रिफ़ंड|आइटम|रिटर्न", re.I)
+_PRODUCT_RE = re.compile(
+    r"\b(?:box|items?|products?|prodcut|earbuds?|headphones?|charger|monitor|cable|hdmi|laptop|phone|speaker|keyboard"
+    r"|mouse|power bank|saman|samaan)\b|प्रोडक्ट|सामान", re.I)
+_WEAK_SUBJECT_RE = re.compile(
+    r"\b(?:payments?|paid|money|charge[ds]?|cod|warranty|packing|returns?|returned|exchange|replacement|paisa|paise"
+    r"|wapas)\b|पैसे|भुगतान|पेमेंट", re.I)
+# A complaint that is itself about money. It can stand with a weak subject.
+_PAYMENT_COMPLAINT_RE = re.compile(
+    r"\b(?:deducted|(?:over|double)[ -]?charged|charged (?:twice|two times|double|extra|more)|not refunded"
+    r"|refund (?:not|still not|never)|payment (?:failed|declined|stuck|pending|issue|problem)"
+    r"|kat gay\w*|kata|kaat liya|paise kat\w*|paisa kat\w*)\b|कट ग(?:ए|या|ई)", re.I)
+
+_COMPLAINT_RE = re.compile(
+    r"\b(?:broken|broke|snapped|break[s]?|damaged?|defective|faulty|cracked|crackling|noisy|hangs|freezes|heating up"
+    r"|scratch(?:ed|es)?|dented|torn|leak(?:s|ing)?|overheat\w*|not coming|not come yet"
+    r"|burn(?:ing|t|s)?|sparks?|sparking|smok(?:e|es|ing)|dead|not working|stopped|stops|isn['’]?t working"
+    r"|not (?:connecting|pairing|syncing|starting|opening|responding)|(?:can['’]?t|cannot|unable to) (?:use|charge|connect"
+    r"|pair|turn on|switch on|open|play|hear)|won['’]?t (?:connect|pair|start|open|charge|turn on)"
+    r"|(?:doesn|don|didn|won)['’]?t (?:work|turn on|switch on|charge|power on)"
+    r"|(?:does|do|did|will) not (?:work|turn on|switch on|charge|power on)|dont (?:work|turn on|charge)"
+    r"|not (?:turning|switching|powering) on|not charging|no sound|missing|empty|wrong|fake|counterfeit"
+    r"|late|delay(?:s|ed)?|not delivered|never (?:arrived|came|received|delivered)|(?:didn|hasn|haven)['’]?t"
+    r" (?:arrive[d]?|come|came|receive[d]?|get|got)|(?:did|has|have) not (?:arrive[d]?|come|receive[d]?|get)"
+    r"|not (?:arrived|come|came|received|reached)|not what i (?:expected|ordered)|not as (?:described|shown|advertised)"
+    r"|disappointed|(?:poor|bad|cheap) quality|(?:doesn['’]?t|does not|dont) fit|too (?:small|big|tight|loose)"
+    r"|uncomfortable|lost|stolen|wet|(?:over|double)[ -]?charged|charged (?:twice|two times|double|extra|more)"
+    r"|deducted|not refunded|refund (?:not|still not|never)|rude)\b"
+    r"|\b(?:kharab|kharaab|toot\w*|tuta|tuti|tute|kaam nahi\w*|kaam nahin\w*|chal nahi\w*|chalta nahi|band ho gay\w*"
+    r"|on nahi ho\w*|nahi aay\w*|nahin aay\w*|nahi aaya|nahi mil\w*|nahin mil\w*|galat|kat gay\w*|kata|kaat liya"
+    r"|gayab|phat gay\w*|jal gay\w*|garam ho\w*)\b"
+    r"|खराब|टूट|काम नहीं"
+    r"|नहीं आ(?:या|ई|ए)|नहीं मिल(?:ा|ी|े)"
+    r"|गलत|कट ग(?:ए|या|ई)|गायब", re.I)
+# खराब टूट "काम नहीं" "नहीं आया/आई/आए" "नहीं मिला/मिली/मिले" गलत "कट गए/गया/गई" गायब
+
+# A service request about something bought that the assistant cannot do itself ("cancel ORD1014", "exchange it").
+_SERVICE_REQUEST_RE = re.compile(
+    r"\b(?:cancel\w*|exchange|exchanged|replace\w*|replacement|reschedule\w*|re-?deliver\w*|modify|"
+    r"change (?:the |my )?(?:address|number|date|item)|update (?:the |my )?address)\b|रद्द", re.I)
+
+# Asks for a person about a named store matter ("I want to talk to a human about my refund").
+_PERSON_REQUEST_RE = re.compile(
+    r"\b(?:human|person|agent|manager|representative|someone|somebody|real person|insaan|kisi se baat)\b"
+    r"|इंसान|एजेंट", re.I)
+
+_PERSONAL_RE = re.compile(
+    r"\b(?:married|marry|marriage|wedding|engagement|girlfriend|boyfriend|wife|husband|fiance|fiancee|relationship"
+    r"|breakup|break up|divorce|dating|crush|love life|confidence|confident|nervous|anxiety|anxious|stress(?:ed)?"
+    r"|depress\w*|lonely|loneliness|motivation|self[- ]esteem|exams?|homework|assignment|interview|career|resume"
+    r"|coding|code|python|javascript|programming|recipe|capital of|president|prime minister|weather|horoscope"
+    r"|shaadi|shadi|biwi|pyaar|pyar|rishta|naukri|padhai|pariksha|ghabrahat|tension)\b"
+    r"|शादी|घबराहट|तनाव|रिश्त"
+    r"|नौकरी|परीक्षा|प्यार"
+    r"|आत्मविश्वास", re.I)
+# शादी घबराहट तनाव रिश्त नौकरी परीक्षा प्यार आत्मविश्वास
+
+
+def ticket_scope(text: str, *, names_product: bool = False) -> str:
+    """``store``, ``personal`` or ``unclear`` for the text a support ticket would be about.
+
+    ``store``: the text names something bought or a store service AND states a concrete complaint, or asks for something
+    the assistant cannot do itself (cancel an order, a replacement), or asks for a person about it. How much evidence is
+    needed depends on the tier of the subject (see the tier comment above): a transaction word with a complaint is
+    enough even beside personal words; a product noun with a complaint is enough unless the message is also personal;
+    an everyday word such as money or paid needs a payment-specific complaint and a non-personal message.
+    ``personal``: personal, relationship, coaching or unrelated words with no such store evidence.
+    ``unclear``: anything else, including a bare order ID, a bare product name, "help me", "I have a problem" or abuse.
+    ``names_product``: the caller recognised a catalogue product name in the text (counts as a product noun only).
+    """
+    text = unicodedata.normalize("NFC", text or "")
     lower = text.lower()
-    return any(cue in lower for cue in _ISSUE_CUES)
+    personal = bool(_PERSONAL_RE.search(text) or any(cue in lower for cue in _OUT_OF_SCOPE_CUES))
+    wanted = bool(_COMPLAINT_RE.search(text) or _PERSON_REQUEST_RE.search(text) or _SERVICE_REQUEST_RE.search(text))
+    transaction = bool(mentions_order_or_item(text) or _TRANSACTION_RE.search(text))
+    product = bool(names_product or _PRODUCT_RE.search(text))
+    if transaction and wanted:
+        return "store"
+    if product and wanted and not personal:
+        return "store"
+    if _WEAK_SUBJECT_RE.search(text) and _PAYMENT_COMPLAINT_RE.search(text) and not personal:
+        return "store"
+    operation = unsupported_operation(text)
+    if operation and not personal and (transaction or product
+                                       or operation in ("change account or delivery details", "change your account")):
+        return "store"
+    return "personal" if personal else "unclear"
 
 
 def is_ticket_request(text: str) -> bool:
