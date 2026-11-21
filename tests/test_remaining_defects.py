@@ -267,7 +267,8 @@ class TestC023TicketTextsAreLocalised:
     def test_the_english_sentences_are_exactly_the_ones_the_engine_used_before(self):
         assert flow_texts.text("ask_issue") == ("Happy to raise a ticket. What is the issue you'd like it to be "
                                                   "about? Please include the order ID if there is one.")
-        assert flow_texts.text("created", ticket_id="T1") == "Your support ticket T1 has been created. A human agent will follow up."
+        assert flow_texts.text("created", ticket_id="T1") == ("Your support ticket T1 has been created. This chat can't currently connect you to a human agent, "
+                                                          "so I can't promise a reply, an assignment or a follow-up. To check its status, ask me to show your tickets here.")
         assert flow_texts.text("cancelled") == "Okay, I've cancelled that. Nothing was changed."
         assert flow_texts.text("lead_plain") == "Here's the ticket I can create. Please confirm to submit it."
 
@@ -307,7 +308,7 @@ class TestC023TicketTextsAreLocalised:
         assert reply.text == flow_texts.text("lead_plain", "hinglish")
         assert "ek support ticket banayein".lower() in reply.pending.summary.lower() or "Ek support ticket banayein" in reply.pending.summary
         created = client.confirm(reply)
-        assert re.fullmatch(r"Aapka support ticket \S+ ban gaya hai\. Ek human agent follow up karega\.", created.text)
+        assert re.fullmatch(r"Aapka support ticket \S+ ban gaya hai\. Yeh chat abhi aapko kisi human agent se connect nahi kar sakta, isliye main kisi jawab, assignment ya follow up ka vaada nahi kar sakta\. Status check karne ke liye mujhse yahin apne tickets dikhane ko kahiye\.", created.text)
 
     def test_the_declined_flow_stays_in_hindi(self, temp_db):
         backend, _, _ = scripted(calls(("start_support_ticket", {"issue_type": "order", "order_id": "ORD1003"})))

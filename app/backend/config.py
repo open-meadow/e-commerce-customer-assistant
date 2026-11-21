@@ -31,7 +31,13 @@ class Settings:
     max_message_chars: int = 2000
     max_tool_calls_per_turn: int = 6
     max_messages_per_session: int = 60
-    max_tickets_per_session: int = 3
+    # Account-level new-ticket limit, owner-approved defaults (OD-01 / B-7): "rolling", 5 successfully created tickets per customer
+    # in a rolling 86400-second (24 h) UTC window, counted from the persisted rows inside the inserting transaction. A ticket
+    # created exactly one window ago no longer counts. These are configuration starting values, not an industry-standard figure;
+    # SUPPORT_TICKET_RATE_POLICY=off disables the limit explicitly.
+    ticket_rate_policy: str = "rolling"                 # SUPPORT_TICKET_RATE_POLICY: "off" or "rolling"
+    ticket_rate_max: int = 5                            # SUPPORT_TICKET_RATE_MAX
+    ticket_rate_window_seconds: int = 86400             # SUPPORT_TICKET_RATE_WINDOW_SECONDS (rolling UTC window)
     max_returns_per_session: int = 5
     idle_timeout: timedelta = timedelta(minutes=60)      # SUPPORT_IDLE_TIMEOUT_SECONDS
     pending_ttl: timedelta = timedelta(minutes=10)
@@ -39,7 +45,7 @@ class Settings:
     clarification_max_messages: int = 3
     clarification_ttl: timedelta = timedelta(minutes=10)
     max_output_tokens: int = 512
-    write_cap_kinds: tuple[str, ...] = ("return_request", "support_ticket")
+    write_cap_kinds: tuple[str, ...] = ("return_request",)  # the per-session ticket counter is retired: the account-level limit replaces it
 
     # --- H3: session and resource protection (all process-local) -------------------------------------------
     max_active_sessions: int = 200                      # SUPPORT_MAX_SESSIONS
@@ -60,9 +66,10 @@ class Settings:
     agent_token: str = field(default="", repr=False)    # SUPPORT_AGENT_TOKEN (voice worker -> /api/agent/*)
     ui_token: str = field(default="", repr=False)       # SUPPORT_UI_TOKEN (Streamlit -> API: its browser ids are trusted)
 
-    def cap_for(self, kind: str) -> int:
-        return {"return_request": self.max_returns_per_session,
-                "support_ticket": self.max_tickets_per_session}[kind]
+    def cap_for(self, kind: str) -> Optional[int]:
+        """The per-session cap for a kind of write, or ``None`` when it has none. Returns keep their cap; support tickets are
+        limited per customer (``ticket_rate_*``), not per chat session."""
+        return {"return_request": self.max_returns_per_session}.get(kind)
 
     @classmethod
     def from_env(cls, env: Mapping[str, str]) -> "Settings":
@@ -85,6 +92,12 @@ class Settings:
                 problems.append(f"{variable} must be between {_num(low)} and {_num(high)}")
                 continue
             chosen[name] = timedelta(seconds=value) if kind == "seconds" else value
+        policy = (env.get("SUPPORT_TICKET_RATE_POLICY") or "").strip().lower()
+        if policy:
+            if policy in ("off", "rolling"):
+                chosen["ticket_rate_policy"] = policy
+            else:
+                problems.append("SUPPORT_TICKET_RATE_POLICY must be off or rolling")
         for name, variable in (("agent_token", "SUPPORT_AGENT_TOKEN"), ("ui_token", "SUPPORT_UI_TOKEN")):
             raw = env.get(variable)
             if raw is None or raw == "":
@@ -132,6 +145,9 @@ _BOUNDS = (
     ("livekit_timeout_seconds", "SUPPORT_LIVEKIT_TIMEOUT_SECONDS", "float", 1, 60),
     ("sweep_interval_seconds", "SUPPORT_SWEEP_INTERVAL_SECONDS", "float", 1, 3600),
     ("shutdown_timeout_seconds", "SUPPORT_SHUTDOWN_TIMEOUT_SECONDS", "float", 1, 300),
+    # Technical validation bounds only (not policy): the owner-supplied starting values are 5 and 86400.
+    ("ticket_rate_max", "SUPPORT_TICKET_RATE_MAX", "int", 1, 1000),
+    ("ticket_rate_window_seconds", "SUPPORT_TICKET_RATE_WINDOW_SECONDS", "int", 60, 31536000),
 )
 
 

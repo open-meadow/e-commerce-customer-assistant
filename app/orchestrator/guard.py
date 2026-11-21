@@ -282,7 +282,8 @@ def unsupported_request(text: str) -> Optional[str]:
 
 def unsupported_reply(label: str) -> str:
     return (f"I'm not able to {label} myself. I can look up orders, answer policy questions, start return "
-            "requests and raise a support ticket so a human agent can follow up. "
+            "requests and raise a support ticket to record your request; this chat can't connect you to a human agent "
+            "or promise a reply. "
             "Would you like me to create a ticket for this?")
 
 
@@ -326,6 +327,91 @@ def infer_issue_type(text: str) -> str:
     if any(w in lower for w in ("product", "earbud", "headphone", "charger", "monitor", "battery", "cable")):
         return "product"
     return "general"
+
+
+# Ticket categories (OD-07). ENGLISH ONLY: Hindi and Hinglish aliases and families stay inactive until a fluent human reviewer
+# has reviewed them. ``refund`` is deliberately in no alias table: it is ambiguous (a refund for a return, or a payment).
+TICKET_CATEGORIES = ("order", "return", "payment", "product", "general")
+CATEGORY_LANGUAGES_ACTIVE = frozenset({"en"})
+_CATEGORY_ALIASES = {
+    "product": ("product", "damaged", "defective", "broken", "faulty", "item"),
+    "order": ("order", "delivery", "shipping", "shipment", "parcel", "package"),
+    "payment": ("payment", "charged", "deducted", "billing"),
+    "return": ("return", "exchange", "replacement"),
+    "general": ("general", "other"),
+}
+_ALIAS_TO_CATEGORY = {alias: category for category, aliases in _CATEGORY_ALIASES.items() for alias in aliases}
+# Words in the customer's own text that point at a category. Used to VALIDATE a proposed category and to SUGGEST one that the
+# customer then sees on the card; never to store one silently. The words are the ones ``infer_issue_type`` has always used.
+_CATEGORY_SIGNALS = {
+    "return": ("return",),
+    "payment": ("payment", "charged", "refund", "paid", "deducted", "billing"),
+    "order": ("order", "delivery", "shipping", "arrive", "delivered", "parcel", "package", "shipment"),
+    "product": ("product", "earbud", "headphone", "charger", "monitor", "battery", "cable", "damaged", "defective",
+                "broken", "faulty"),
+}
+
+
+def normalize_category(value: object) -> Optional[str]:
+    """A canonical ticket category for a proposed value, or ``None`` when it is not one (``None``, empty, a number, an
+    unknown word, or an ambiguous one such as ``refund``). Lower-casing and trimming are the only repairs; the English alias
+    table maps the owner-approved aliases."""
+    if not isinstance(value, str):
+        return None
+    word = " ".join(value.lower().split())
+    if word in TICKET_CATEGORIES:
+        return word
+    return _ALIAS_TO_CATEGORY.get(word)
+
+
+def category_signals(text: str, language: str = "en") -> set[str]:
+    """The categories the (English) text points at. Empty for any language whose families are not active."""
+    if language not in CATEGORY_LANGUAGES_ACTIVE:
+        return set()
+    lower = (text or "").lower()
+    return {category for category, words in _CATEGORY_SIGNALS.items() if any(w in lower for w in words)}
+
+
+# Typed text while a ticket card is open. English only. "close" revokes the card, "pause" keeps it and says so; neither ever
+# confirms anything (only the Confirm decision does).
+_REFUSAL_CLOSE = frozenset({"no", "nope", "no thanks", "no thank you", "i changed my mind", "changed my mind",
+                            "never mind", "nevermind", "dont", "dont do it", "do not"})
+_REFUSAL_PAUSE = frozenset({"not yet", "wait", "hold on", "wait a moment", "not now", "one moment"})
+_MORE_TICKETS = re.compile(
+    r"^\s*(?:please\s+)?(?:(?:show|list|give|see|display)\s+)?(?:me\s+)?(?:the\s+)?(?:more|next|rest of|remaining|older)\s+"
+    r"(?:of\s+)?(?:my\s+)?(?:support\s+)?tickets?\s*[.!?]*\s*$", re.I)
+
+
+def plain_refusal(text: str) -> Optional[str]:
+    """``"close"`` for a plain no (or a changed mind), ``"pause"`` for not yet / wait, else ``None``. Whole message only."""
+    word = " ".join(re.sub(r"[^\w ]", "", (text or "").lower().replace("'", "")).split())
+    if word in _REFUSAL_CLOSE:
+        return "close"
+    if word in _REFUSAL_PAUSE:
+        return "pause"
+    return None
+
+
+def asks_about_the_ticket(text: str) -> bool:
+    """A question about the open ticket card itself (what it will say), not any question: an unrelated one keeps the plain
+    reminder."""
+    return is_question(text) and bool(re.search(r"\b(ticket|description|preview|summary)\b", text or "", re.I))
+
+
+# The same request in Hinglish and Hindi. DRAFT wording, awaiting fluent human review (it only has an effect right after a list
+# that had more tickets than one page).
+_MORE_TICKETS_HINGLISH = re.compile(
+    r"^\s*(?:please\s+|kripya\s+)?(?:aur|agle|agla|baaki|baki)\s+(?:support\s+)?tickets?"
+    r"(?:\s+(?:dikhao|dikhaiye|dikhaiyega|dikhaye|dikha\s+do|dikhana|dekhao))?\s*[.!?]*\s*$", re.I)
+_MORE_TICKETS_HINDI = re.compile(
+    r"^\s*(?:कृपया\s+)?(?:और|अगले|बाकी)\s+(?:सपोर्ट\s+)?टिकट(?:\s+(?:दिखाओ|दिखाइए|दिखाइये|दिखाएँ|दिखा\s+दो|दिखाना))?"
+    r"\s*[।.!?]*\s*$")
+
+
+def is_more_tickets_request(text: str) -> bool:
+    """The customer asks for the next page of their ticket list (English, and draft Hinglish and Hindi phrases)."""
+    value = text or ""
+    return bool(_MORE_TICKETS.match(value) or _MORE_TICKETS_HINGLISH.match(value) or _MORE_TICKETS_HINDI.match(value))
 
 
 def _word_tokens(text: str) -> list[str]:
@@ -715,6 +801,36 @@ def strip_unsupported_durations(text: str, supported: set[str]) -> str:
         sentence = parts[index]
         separator = parts[index + 1] if index + 1 < len(parts) else ""
         if all(_duration_key(m.group(1)) in supported for m in _REPLY_DURATION.finditer(sentence)):
+            kept.append(sentence + separator)
+        else:
+            dropped = True
+    return "".join(kept).strip() if dropped else text
+
+
+# A ticket reference as a reply may state it: the normal form (TKT_ and 32 hex characters) and any shorter or invented form
+# such as TKT_1. Matching is case-insensitive and the reference is compared in lower case.
+_TICKET_REF = re.compile(r"(?<![A-Za-z0-9_])TKT_[A-Za-z0-9]+", re.I)
+
+
+def ticket_refs(text: str) -> set[str]:
+    """Every ticket reference in ``text``, lower-cased. Used on VERIFIED sources (tool results of the signed-in customer)
+    to build the set of references a reply may state; never on a customer's message or on model prose."""
+    return {m.group(0).lower() for m in _TICKET_REF.finditer(text or "")}
+
+
+def strip_unverified_ticket_ids(text: str, verified: set[str]) -> str:
+    """Drop the sentences of a reply that state a ticket reference not in ``verified``. A reference is only ever stated
+    when this customer's own tool results or a ticket this session created gave it; a reference in the customer's message
+    or in the model's prose establishes nothing. Returns the text unchanged when every reference is verified, and an empty
+    string when nothing safe is left. Sentences are split the way ``strip_unsupported_durations`` splits them."""
+    verified = {v.lower() for v in verified}
+    parts = re.split(r"(?<=[.!?\u0964])(\s+)", text or "")
+    kept: list[str] = []
+    dropped = False
+    for index in range(0, len(parts), 2):
+        sentence = parts[index]
+        separator = parts[index + 1] if index + 1 < len(parts) else ""
+        if all(m.group(0).lower() in verified for m in _TICKET_REF.finditer(sentence)):
             kept.append(sentence + separator)
         else:
             dropped = True

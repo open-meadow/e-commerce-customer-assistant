@@ -237,12 +237,12 @@ class TestOfferConversations:
         c, _ = make_offer(backend, set_now)
         assert "cancelled" in c.say("cancel").text and session_of(backend, c).ticket_offer is None
 
-    def test_an_affirmative_answer_still_checks_capacity_and_ownership(self, backend, raw, set_now):
+    def test_an_affirmative_answer_is_not_blocked_by_the_retired_session_counter(self, backend, raw, set_now):
         c, _ = make_offer(backend, set_now)
         session = session_of(backend, c)
-        session.committed["support_ticket"] = Settings().cap_for("support_ticket")
+        session.committed["support_ticket"] = 99  # the old per-session counter is retired and is not consulted
         reply = c.say("yes")
-        assert "limit of support tickets" in reply.text and session.ticket_offer is None
+        assert "limit of support tickets" not in reply.text and session.ticket_offer is not None
 
 
 class TestOfferStateAndWordingAgree:

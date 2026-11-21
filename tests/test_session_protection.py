@@ -596,7 +596,7 @@ class TestCleanupAfterFailures:
             r = c.confirm(card)
         assert r.status == "error" and tickets(raw) == []
         assert session.reserved["support_ticket"] == 0
-        assert backend.registry.capacity_left(session, "support_ticket") == backend.settings.max_tickets_per_session
+        assert session.committed["support_ticket"] == 0  # the failed write was not counted
         bnow(minutes=31)
         assert backend.registry.sweep() == 1  # nothing keeps it alive
 
@@ -633,8 +633,8 @@ class TestNoDuplicateBusinessOperations:
         assert first.error_code is None and len(tickets(raw)) == 1
         assert retry.pending is None and len(tickets(raw)) == 1
 
-    def test_the_ticket_cap_is_not_exceeded_by_concurrent_cards(self, raw):
-        backend = Backend(llm=TicketModel(), settings=settings(max_tickets_per_session=1, session_requests_per_minute=1000,
+    def test_one_card_confirmed_concurrently_creates_one_ticket(self, raw):
+        backend = Backend(llm=TicketModel(), settings=settings(session_requests_per_minute=1000,
                                                                max_requests_per_session=1000))
         c = Client(backend, "C101")
         card = ticket_card(c)

@@ -34,6 +34,8 @@ original error.
 
 from __future__ import annotations
 
+import hashlib
+import logging
 import sqlite3
 import uuid
 from datetime import datetime, timedelta
@@ -98,6 +100,9 @@ def _rollback_quietly(connection: sqlite3.Connection) -> None:
             connection.rollback()
     except Exception:  # noqa: BLE001
         pass
+
+
+_log = logging.getLogger(__name__)
 
 
 def _new_id(prefix: str) -> str:
@@ -264,6 +269,42 @@ def get_customer_tickets(authenticated_customer_id: str) -> list[dict[str, Any]]
                 row["created_at"], "support_tickets.created_at", now
             )
         return result
+
+    return _run_read(work)
+
+
+def list_customer_tickets_page(authenticated_customer_id: str, offset: int = 0, limit: int = 10) -> dict[str, Any]:
+    """One page of the customer's tickets, most recent first (``created_at`` descending, then ``ticket_id`` ascending).
+
+    Returns ``{"tickets": [...], "total": n, "skipped": k}``. A row whose stored timestamp fails validation (for example one
+    dated in the future after a clock correction) is SKIPPED and counted instead of making the whole list unavailable;
+    ``total`` counts only the valid rows. ``get_customer_tickets`` is unchanged and still fails on such a row."""
+    validate_identifier(authenticated_customer_id, "authenticated_customer_id")
+    if isinstance(offset, bool) or not isinstance(offset, int) or offset < 0:
+        raise ValueError("'offset' must be a non-negative integer")
+    if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
+        raise ValueError("'limit' must be a positive integer")
+
+    def work(connection: sqlite3.Connection, now: datetime) -> dict[str, Any]:
+        rows = connection.execute(
+            f"SELECT {_SUPPORT_TICKET_COLUMNS} FROM support_tickets "
+            "WHERE customer_id = ? ORDER BY created_at DESC, ticket_id ASC",
+            (authenticated_customer_id,),
+        ).fetchall()
+        valid: list[dict[str, Any]] = []
+        skipped = 0
+        for row in rows:
+            record = dict(row)
+            try:
+                clock.validate_persisted_timestamp(record["created_at"], "support_tickets.created_at", now)
+            except DatabaseDataIntegrityError:
+                skipped += 1
+                # opaque references only: a hashed customer reference and the ticket's own opaque ID, never any ticket text
+                _log.warning("support ticket row skipped (invalid stored timestamp) customer_ref=%s ticket=%s",
+                             hashlib.sha256(authenticated_customer_id.encode()).hexdigest()[:10], record.get("ticket_id"))
+                continue
+            valid.append(record)
+        return {"tickets": valid[offset:offset + limit], "total": len(valid), "skipped": skipped}
 
     return _run_read(work)
 
@@ -515,14 +556,65 @@ def create_return_request(
     return _run_write(work)
 
 
+def _validate_rate_limit(rate_limit: Optional[tuple[int, int]]) -> Optional[tuple[int, int]]:
+    if rate_limit is None:
+        return None
+    try:
+        maximum, window = rate_limit
+    except (TypeError, ValueError):
+        raise ValueError("'rate_limit' must be (maximum, window_seconds)") from None
+    for value in (maximum, window):
+        if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+            raise ValueError("'rate_limit' values must be positive integers")
+    return maximum, window
+
+
+def _rate_state(connection: sqlite3.Connection, now: datetime, customer_id: str,
+                limit: tuple[int, int]) -> dict[str, Any]:
+    """The customer's rolling-window count against ``limit``, read on ``connection`` (inside the caller's transaction)."""
+    maximum, window = limit
+    cutoff = clock.format_timestamp(now - timedelta(seconds=window))
+    count = connection.execute(
+        "SELECT COUNT(*) FROM support_tickets WHERE customer_id = ? AND created_at > ?",
+        (customer_id, cutoff),
+    ).fetchone()[0]
+    if count < maximum:
+        return {"allowed": True, "retry_at": None, "count": count}
+    oldest = connection.execute(
+        "SELECT created_at FROM support_tickets WHERE customer_id = ? AND created_at > ? "
+        "ORDER BY created_at ASC LIMIT 1 OFFSET ?",
+        (customer_id, cutoff, count - maximum),
+    ).fetchone()[0]
+    retry_at = clock.format_timestamp(clock.parse_timestamp(oldest) + timedelta(seconds=window))
+    return {"allowed": False, "retry_at": retry_at, "count": count}
+
+
+def get_ticket_rate_state(authenticated_customer_id: str, rate_limit: tuple[int, int]) -> dict[str, Any]:
+    """Read-only view of the account-level limit for the customer: ``{"allowed", "retry_at", "count"}``.
+
+    Used by the engine as a courtesy check before it shows a confirmation card; the authority is the check inside
+    ``create_support_ticket``'s transaction."""
+    validate_identifier(authenticated_customer_id, "authenticated_customer_id")
+    limit = _validate_rate_limit(rate_limit)
+    assert limit is not None
+    return _run_read(lambda connection, now: _rate_state(connection, now, authenticated_customer_id, limit))
+
+
 def create_support_ticket(
     authenticated_customer_id: str,
     issue_type: str,
     description: str,
     conversation_summary: str,
     order_id: Optional[str] = None,
+    rate_limit: Optional[tuple[int, int]] = None,
 ) -> dict[str, Any]:
     """Create a support ticket, optionally linked to an owned order.
+
+    ``rate_limit`` is ``(maximum, window_seconds)`` or ``None`` (no account-level limit). When given, the customer's tickets
+    created in the rolling UTC window ``(now - window, now]`` are counted INSIDE this transaction (``BEGIN IMMEDIATE``), so
+    concurrent sessions and processes on one database file cannot both pass the check; at or above ``maximum`` nothing is
+    written and ``{"outcome": "rate_limited", "retry_at": <UTC text>}`` is returned. Every committed ticket counts, whatever
+    its status; a row exactly one window old no longer counts. ``retry_at`` is when the count first drops below the maximum.
 
     ``issue_type`` must be one of ``order``, ``return``, ``payment``,
     ``product``, ``general``. ``description`` and ``conversation_summary``
@@ -540,6 +632,7 @@ def create_support_ticket(
     validate_text(conversation_summary, "conversation_summary", TICKET_TEXT_MAX)
     if order_id is not None:
         validate_identifier(order_id, "order_id")
+    limit = _validate_rate_limit(rate_limit)
 
     def work(connection: sqlite3.Connection, now: datetime) -> tuple[dict[str, Any], bool]:
         linked: Optional[str] = None
@@ -550,6 +643,10 @@ def create_support_ticket(
             ).fetchone()
             if owned is not None:
                 linked = order_id
+        if limit is not None:
+            state = _rate_state(connection, now, authenticated_customer_id, limit)
+            if not state["allowed"]:
+                return {"outcome": "rate_limited", "retry_at": state["retry_at"]}, False
         ticket_id = _new_id("TKT")
         connection.execute(
             "INSERT INTO support_tickets "
