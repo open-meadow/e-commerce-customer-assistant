@@ -44,6 +44,7 @@ services:
       UI_BACKEND: real
       SUPPORT_API_URL: http://api:8000
       SEED_DATABASE: "false"
+      SUPPORT_AGENT_TOKEN: ""  # the UI holds SUPPORT_UI_TOKEN only; the voice worker's secret is not given to it
       LIVEKIT_URL: ""
       LIVEKIT_API_KEY: ""
       LIVEKIT_API_SECRET: ""
@@ -65,6 +66,7 @@ services:
       SUPPORT_API_URL: http://api:8000
       SEED_DATABASE: "false"
       FISH_API_KEY: ""
+      SUPPORT_UI_TOKEN: ""  # the worker holds SUPPORT_AGENT_TOKEN only; the UI's secret is not given to it
     depends_on:
       api:
         condition: service_healthy

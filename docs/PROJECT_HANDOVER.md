@@ -73,7 +73,7 @@ app/db  repository.py (the authorization boundary, SQL filters on the signed-in 
 | Behaviour | Intent split for returns (request, eligibility question, status question); `check_return_eligibility` timing tool with item recovery; named-order lookup enforced; general policy questions routed to search; angry refund demands looked up first; repeat-complaint clarification; refund-status wording; ambiguity guards |
 | Language | Code-decided language; 110 sentences in one three-language catalogue; Hindi and Hinglish greetings, thanks and off-topic detection |
 | Evaluation engineering | Real-backend harness with denominators kept explicit; persistent usage ledger (every request, embeddings included, fail-closed ceiling); harness-only retry of pre-transmission failures; per-test attribution of transport failures; composition of attempts (first clean result per test, everything disclosed) |
-| Tests | 3462 offline tests (3137 at the original handover), all passing (section 6) |
+| Tests | 3796 offline tests (3137 at the original handover), all passing (section 6) |
 
 ## 4. Evaluation results (details and caveats in `docs/evaluation/EVALUATION_REPORT.md`)
 

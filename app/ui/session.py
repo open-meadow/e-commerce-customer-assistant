@@ -7,6 +7,7 @@ types appear only in annotations and are not imported at runtime.
 
 from __future__ import annotations
 
+import secrets
 from collections.abc import MutableMapping
 from typing import TYPE_CHECKING, Any, TypedDict
 from uuid import uuid4
@@ -39,6 +40,10 @@ UI_ERROR_KEY = "ui_error"
 UI_NOTICE_KEY = "ui_notice"
 REQUEST_ID_KEY = "request_id"
 VOICE_SESSION_KEY = "livekit_voice_session"
+# An anonymous, random, opaque identifier for this browser session, generated here on the server and kept in Streamlit's
+# session state. It only separates one browser's rate-limit bucket from another's: it is abuse control, not authentication,
+# and a reload gives a new one. It is never derived from the customer ID or any header.
+BROWSER_ID_KEY = "browser_id"
 NEW_CHAT_TITLE = "New chat"
 
 
@@ -50,7 +55,13 @@ class ChatSession(TypedDict):
     choice_view: ChoiceView | None
 
 
+def new_browser_id() -> str:
+    return secrets.token_urlsafe(24)
+
+
 def initialize_session(session_state: SessionState) -> None:
+    if not isinstance(session_state.get(BROWSER_ID_KEY), str) or not session_state.get(BROWSER_ID_KEY):
+        session_state[BROWSER_ID_KEY] = new_browser_id()  # kept across logins and chats within this browser session
     session_state.setdefault(AUTHENTICATED_CUSTOMER_ID_KEY, None)
     session_state.setdefault(CHATS_KEY, {})
     session_state.setdefault(ACTIVE_CHAT_ID_KEY, None)

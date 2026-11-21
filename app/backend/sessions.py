@@ -40,6 +40,11 @@ from app.backend.limits import SessionLimitError, SlidingWindowLimiter
 from app.orchestrator.issues import IssueBook
 
 log = logging.getLogger("app.backend.sessions")
+
+
+class SessionClosedError(Exception):
+    """The session was ended or expired while a turn was still running; nothing more may be attached to it."""
+
 _KEEP_FINISHED_PENDING = 20  # finished actions kept per session so a repeated confirmation still reports its state
 
 
@@ -80,6 +85,7 @@ class Session:
     history: list[dict[str, str]] = field(default_factory=list)
     message_count: int = 0
     request_count: int = 0  # every admitted request (message, decision or choice), for the per-session limit
+    closed: bool = False  # set when the registry drops the session; a turn still running must not attach new state to it
     issues: IssueBook = field(default_factory=IssueBook)
     clarification: list[tuple[datetime, str]] = field(default_factory=list)
     choice: Optional[ChoiceState] = None
@@ -121,10 +127,10 @@ class SessionRegistry:
     def create(self, customer_id: str, display_name: str, client_key: Optional[str] = None) -> Session:
         """Create a session, or raise ``SessionLimitError``. Cap, rates and storage are one atomic step.
 
-        ``client_key`` is whatever the caller can attribute the request to (the HTTP layer passes the peer address; it never
-        passes a header or a customer ID taken from the UI). The creation rates apply to an attributable client only; an
-        in-process caller (the Streamlit UI, the evaluation harness) passes ``None`` and is bounded by the cap, the idle
-        expiry and the absolute age. A refused attempt consumes no rate budget.
+        ``client_key`` is whatever the caller can attribute the request to: the TCP peer address, or the browser identifier of a
+        front end that authenticated itself (never a customer ID taken from the UI, never a forwarded header). The per-client
+        rate needs an identity. A caller that cannot be attributed passes ``None`` and is NOT exempt: it counts against the
+        GLOBAL creation rate and the cap. A refused attempt consumes no rate budget.
         """
         now = clock.now()
         dropped: list = []
@@ -133,12 +139,12 @@ class SessionRegistry:
                 dropped = self._collect_expired_locked(now)
                 if len(self._sessions) >= self.settings.max_active_sessions:
                     raise SessionLimitError("capacity", retry_after=30)
-                if client_key is not None:
-                    if not self._create_client.allow(client_key):
-                        raise SessionLimitError("creation_rate", self._create_client.retry_after(client_key))
-                    if not self._create_all.allow("all"):
+                if client_key is not None and not self._create_client.allow(client_key):
+                    raise SessionLimitError("creation_rate", self._create_client.retry_after(client_key))
+                if not self._create_all.allow("all"):
+                    if client_key is not None:
                         self._create_client.release(client_key)
-                        raise SessionLimitError("creation_rate", self._create_all.retry_after("all"))
+                    raise SessionLimitError("creation_rate", self._create_all.retry_after("all"))
                 handle = secrets.token_urlsafe(32)
                 session = Session(handle=handle, customer_id=customer_id, display_name=display_name,
                                   created=now, last_active=now, session_ref=_ref(handle))
@@ -161,15 +167,15 @@ class SessionRegistry:
                 if reason is not None and not self._busy_locked(session):
                     dropped = [self._pop_locked(handle, reason)]
                     return None
-                session.last_active = now
-                return session
+                return session  # a lookup is not activity: only ``touch`` (an accepted request) refreshes ``last_active``
         finally:
             self._notify(dropped)
 
     def touch(self, session: Session) -> None:
-        """Mark the session active now (called when a turn ends, so a long turn does not leave it looking idle)."""
+        """Mark the session active now. Called only for accepted activity, never for a refused or rate-limited request."""
         with self._lock:
-            session.last_active = clock.now()
+            if not session.closed:
+                session.last_active = clock.now()
 
     def end(self, handle: Any) -> bool:
         dropped: list = []
@@ -271,6 +277,7 @@ class SessionRegistry:
 
     def _pop_locked(self, handle: str, reason: str) -> tuple:
         session = self._sessions.pop(handle)
+        session.closed = True
         for action_id in [a for a, p in self._pending.items() if p.session_handle == handle]:
             del self._pending[action_id]
         self._requests.forget(handle)
@@ -302,6 +309,8 @@ class SessionRegistry:
             customer_id=session.customer_id, kind=kind, payload=payload, summary=summary,
             created=now, expires=now + self.settings.pending_ttl)
         with self._lock:
+            if session.closed or self._sessions.get(session.handle) is not session:
+                raise SessionClosedError()  # never recreate an entry for an ended session (it could not be reclaimed)
             if session.pending_id and session.pending_id in self._pending:
                 old = self._pending[session.pending_id]
                 if old.state == "open":

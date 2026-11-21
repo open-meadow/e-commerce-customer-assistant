@@ -103,6 +103,15 @@ else:
     )
 
 
+def browser_client_key(browser_id):
+    """The backend's rate-limit key for this browser's anonymous identifier (``None`` for the canned demo backend)."""
+    if BACKEND_MODE == "fake":
+        return None
+    from app.backend.limits import browser_client_key as _key
+
+    return _key(browser_id)
+
+
 @dataclass(frozen=True)
 class BackendStatus:
     """Whether the selected backend can serve requests.
@@ -175,6 +184,7 @@ __all__ = [
     "PendingView",
     "StartSessionResult",
     "backend_status",
+    "browser_client_key",
     "handle_message",
     "list_login_options",
     "start_session",

@@ -21,8 +21,21 @@ def _support_api_url() -> str:
     return (os.environ.get("SUPPORT_API_URL") or "http://api:8000").rstrip("/")
 
 
-def start_voice_session(customer_id: str) -> LiveKitVoiceSession:
-    with httpx.Client(base_url=_support_api_url(), timeout=30.0) as client:
+def _identity_headers(browser_id: str | None) -> dict[str, str]:
+    """Tell the API which browser this is, proving that WE are the Streamlit server.
+
+    The API honours ``X-Browser-Id`` only together with ``X-Service-Token`` equal to its ``SUPPORT_UI_TOKEN``. Without the
+    token (or without a browser id) nothing is sent and the API falls back to this server's network address, so all voice
+    users would share one bucket. The token is read from the environment and never logged.
+    """
+    token = (os.environ.get("SUPPORT_UI_TOKEN") or "").strip()
+    if not token or not browser_id:
+        return {}
+    return {"X-Service-Token": token, "X-Browser-Id": browser_id}
+
+
+def start_voice_session(customer_id: str, browser_id: str | None = None) -> LiveKitVoiceSession:
+    with httpx.Client(base_url=_support_api_url(), timeout=30.0, headers=_identity_headers(browser_id)) as client:
         response = client.post("/api/sessions", json={"customer_id": customer_id})
         response.raise_for_status()
         payload = response.json()
@@ -44,8 +57,8 @@ def start_voice_session(customer_id: str) -> LiveKitVoiceSession:
     return {"session_id": session_id, "url": url, "token": token}
 
 
-def end_voice_session(session_id: str) -> None:
-    with httpx.Client(base_url=_support_api_url(), timeout=15.0) as client:
+def end_voice_session(session_id: str, browser_id: str | None = None) -> None:
+    with httpx.Client(base_url=_support_api_url(), timeout=15.0, headers=_identity_headers(browser_id)) as client:
         response = client.post(
             "/api/sessions/close",
             json={"session_id": session_id},

@@ -94,7 +94,8 @@ The ten tools: `list_my_orders`, `get_order_status`, `get_my_returns`, `get_my_t
 
 ### Session and resource protection
 - **What:** the registry caps active sessions and session creation rates atomically, expires sessions that are idle or too old (a background sweeper plus every create), never removes a session whose turn is running or whose confirmed action is executing, and tells listeners so the HTTP session maps and the LiveKit room are released with it. Requests are limited by body size, per peer address and per session; model calls have a per-session and per-minute budget and are never retried; LiveKit calls are time-bounded; the voice worker has a maximum call length and tells the API when its job ends.
-- **Limitation:** every limit is process-local and the client identity is the TCP peer, not an authenticated user. See [session_resource_protection.md](session_resource_protection.md) for the limits, the configuration and what a multi-instance deployment needs.
+- **Who is a client:** an anonymous, random browser identifier that the Streamlit server generates and, over HTTP, sends only together with its service token (otherwise the TCP peer); never a customer ID or a forwarded header. The global cap and global creation rate apply to everyone. `/api/agent/*` needs the voice worker's service token and fails closed without one. Room releases run in the background, bounded and idempotent, and shutdown drains them within a deadline.
+- **Limitation:** every limit is process-local; the browser identifier is abuse control, not authentication, and the service tokens authenticate services, not customers (H1) or spoken confirmations (H2). See [session_resource_protection.md](session_resource_protection.md) for the limits, the configuration and what a multi-instance deployment needs.
 
 ### Policy controls
 - **What:** FAQ and policy answers come from retrieved passages (`search_policies`), not from the model's memory. Return windows

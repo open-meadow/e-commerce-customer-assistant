@@ -23,6 +23,14 @@ from livekit.agents import Agent, AgentServer, AgentSession, ChatContext, ChatMe
 from livekit.agents import RunContext, function_tool, inference, room_io
 from livekit.plugins import openai
 
+from app.backend.config import (
+    DEFAULT_VOICE_IDLE_SECONDS,
+    DEFAULT_VOICE_MAX_SECONDS,
+    ConfigError,
+    token_from_env,
+    voice_limits_from_env,
+)
+
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 load_dotenv(_PROJECT_ROOT / ".env", override=False)
 
@@ -30,8 +38,8 @@ _AGENT_NAME = os.environ.get("LIVEKIT_AGENT_NAME", "ecommerce-support-agent")
 _SUPPORT_API_URL = os.environ.get("SUPPORT_API_URL", "http://api:8000").rstrip("/")
 _BACKEND_TIMEOUT = 30.0
 _CLOSE_TIMEOUT = 5.0  # the disconnect notice must never hold a shutting-down job
-DEFAULT_MAX_SECONDS = 1800.0  # SUPPORT_VOICE_MAX_SECONDS: longest call
-DEFAULT_IDLE_SECONDS = 300.0  # SUPPORT_VOICE_IDLE_SECONDS: longest silence
+DEFAULT_MAX_SECONDS = DEFAULT_VOICE_MAX_SECONDS  # SUPPORT_VOICE_MAX_SECONDS: longest call
+DEFAULT_IDLE_SECONDS = DEFAULT_VOICE_IDLE_SECONDS  # SUPPORT_VOICE_IDLE_SECONDS: longest silence
 log = logging.getLogger("app.voice")
 _INSTRUCTIONS = """
 You are only the voice transport for an e-commerce customer-support backend. You
@@ -58,12 +66,20 @@ def _required_env(name: str) -> str:
     return value
 
 
-def _env_seconds(name: str, default: float) -> float:
-    try:
-        value = float(os.environ.get(name, "") or default)
-    except ValueError:
-        return default
-    return value if value > 0 else default
+def _agent_headers() -> dict[str, str]:
+    """The service credential the API requires on /api/agent/*. Raises without ever including the secret in the message."""
+    token = token_from_env(os.environ, "SUPPORT_AGENT_TOKEN")
+    if token is None:
+        raise RuntimeError("SUPPORT_AGENT_TOKEN is not set.")
+    return {"X-Service-Token": token}
+
+
+def check_startup(env=None) -> None:
+    """Refuse to start the worker with an invalid configuration (clear message, no secret in it)."""
+    env = os.environ if env is None else env
+    voice_limits_from_env(env)
+    if token_from_env(env, "SUPPORT_AGENT_TOKEN") is None:
+        raise ConfigError("Invalid configuration: SUPPORT_AGENT_TOKEN is required by the voice worker")
 
 
 class SessionWatchdog:
@@ -103,7 +119,7 @@ async def run_watchdog(watchdog: SessionWatchdog, shutdown: Callable[[str], obje
 async def _notify_session_closed(room_name: str) -> None:
     """Tell the API this room's job ended. Best effort and bounded: a failure here must never block or break shutdown."""
     try:
-        async with httpx.AsyncClient(base_url=_SUPPORT_API_URL, timeout=_CLOSE_TIMEOUT) as client:
+        async with httpx.AsyncClient(base_url=_SUPPORT_API_URL, timeout=_CLOSE_TIMEOUT, headers=_agent_headers()) as client:
             response = await client.post("/api/agent/close", json={"room_name": room_name})
             response.raise_for_status()
     except Exception as exc:  # the session may already be gone (404) or the API may be down; the API's own sweeper covers it
@@ -114,6 +130,7 @@ async def _post_backend_turn(room_name: str, **turn: object) -> dict[str, object
     async with httpx.AsyncClient(
         base_url=_SUPPORT_API_URL,
         timeout=_BACKEND_TIMEOUT,
+        headers=_agent_headers(),
     ) as client:
         response = await client.post(
             "/api/agent/turn",
@@ -176,6 +193,11 @@ class SupportAgent(Agent):
         await context.session.say(text)
         if reply.get("error_code") == "invalid_session":
             self._on_end("session ended")  # the backend no longer has this session: do not keep the call open
+        elif reply.get("terminal") is True:
+            # A hard limit (the session's request limit or model-call budget) will never recover. Its message was just spoken;
+            # end the job so no further speech-to-text, model or text-to-speech work is done for this call. A transient
+            # refusal (``rate_limited`` without ``terminal``) is NOT a reason to hang up: waiting helps.
+            self._on_end("session limit reached")
 
     @function_tool()
     async def send_customer_message(self, context: RunContext) -> None:
@@ -232,8 +254,9 @@ server = AgentServer()
 
 @server.rtc_session(agent_name=_AGENT_NAME)
 async def support_agent(ctx: agents.JobContext) -> None:
-    watchdog = SessionWatchdog(max_seconds=_env_seconds("SUPPORT_VOICE_MAX_SECONDS", DEFAULT_MAX_SECONDS),
-                               idle_seconds=_env_seconds("SUPPORT_VOICE_IDLE_SECONDS", DEFAULT_IDLE_SECONDS))
+    max_seconds, idle_seconds = voice_limits_from_env(os.environ)  # an invalid value stops the job with a clear message
+    _agent_headers()  # fail now, not on the first turn, if the service token is missing or malformed
+    watchdog = SessionWatchdog(max_seconds=max_seconds, idle_seconds=idle_seconds)
     watchdog_task = asyncio.create_task(run_watchdog(watchdog, ctx.shutdown))
 
     async def on_shutdown() -> None:
@@ -265,4 +288,5 @@ async def support_agent(ctx: agents.JobContext) -> None:
 
 
 if __name__ == "__main__":
+    check_startup()
     agents.cli.run_app(server)

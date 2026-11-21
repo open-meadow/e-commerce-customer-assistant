@@ -40,7 +40,7 @@ uv run python -m app.db.seed_data --db-path demo/demo.db --reference-time 2026-1
 ```
 
 Settings come from a git-ignored `.env` (template: `.env.example`); real environment variables override it. There is no linter,
-formatter or coverage tool. The full suite (3,462 tests) takes about three minutes and needs no network.
+formatter or coverage tool. The full suite (3,796 tests) takes about three minutes and needs no network.
 
 ## Layout
 

@@ -56,7 +56,8 @@ class TestLoginAndContract:
         reply = Client(backend, "C101").say("hello")
         assert isinstance(reply, ChatReply)
         names = [f.name for f in dataclasses.fields(ChatReply)]
-        assert names == ["text", "state", "status", "error_code", "pending", "choice", "citations", "request_id"]
+        # ``terminal`` was appended by the H3 follow-up (a hard session limit versus a transient refusal); nothing else changed
+        assert names == ["text", "state", "status", "error_code", "pending", "choice", "citations", "request_id", "terminal"]
         assert reply.status == "ok" and reply.request_id
         with pytest.raises(dataclasses.FrozenInstanceError):
             reply.text = "x"

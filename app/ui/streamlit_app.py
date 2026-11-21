@@ -16,6 +16,7 @@ if __package__:
         ChoiceSelection,
         ConfirmationDecision,
         backend_status,
+        browser_client_key,
         handle_message,
         list_login_options,
         start_session,
@@ -25,6 +26,7 @@ if __package__:
     from .session import (
         ACTIVE_CHAT_ID_KEY,
         AUTHENTICATED_CUSTOMER_ID_KEY,
+        BROWSER_ID_KEY,
         CHATS_KEY,
         NEW_CHAT_TITLE,
         REQUEST_ID_KEY,
@@ -46,6 +48,7 @@ else:
         ChoiceSelection,
         ConfirmationDecision,
         backend_status,
+        browser_client_key,
         handle_message,
         list_login_options,
         start_session,
@@ -55,6 +58,7 @@ else:
     from session import (
         ACTIVE_CHAT_ID_KEY,
         AUTHENTICATED_CUSTOMER_ID_KEY,
+        BROWSER_ID_KEY,
         CHATS_KEY,
         NEW_CHAT_TITLE,
         REQUEST_ID_KEY,
@@ -92,6 +96,13 @@ _ERROR_MESSAGES = {
 }
 
 
+def _session_start_arguments() -> dict:
+    """The in-process backend counts session starts per browser (the canned demo backend takes no such argument)."""
+    if BACKEND_MODE != "real":
+        return {}
+    return {"client_key": browser_client_key(st.session_state.get(BROWSER_ID_KEY))}
+
+
 def _close_voice_session() -> bool:
     """Close the current LiveKit session before switching chats."""
     voice_session = st.session_state.get(VOICE_SESSION_KEY)
@@ -104,7 +115,7 @@ def _close_voice_session() -> bool:
 
     try:
         with st.spinner("Ending the voice call..."):
-            end_voice_session(voice_session["session_id"])
+            end_voice_session(voice_session["session_id"], st.session_state.get(BROWSER_ID_KEY))
     except httpx.HTTPError:
         LOGGER.exception("Could not close the LiveKit voice session")
         st.session_state[UI_ERROR_KEY] = (
@@ -120,7 +131,7 @@ def _start_voice_session(customer_id: str) -> None:
     """Create a server-side backend session and expose only its room token."""
     try:
         with st.spinner("Starting a voice call..."):
-            voice_session = start_voice_session(customer_id)
+            voice_session = start_voice_session(customer_id, st.session_state.get(BROWSER_ID_KEY))
     except httpx.HTTPError:
         LOGGER.exception("Could not start the LiveKit voice session")
         st.session_state[UI_ERROR_KEY] = (
@@ -161,7 +172,7 @@ def _begin_session(
 
     try:
         with st.spinner("Starting a new chat..."):
-            result = start_session(customer_id)
+            result = start_session(customer_id, **_session_start_arguments())
     except Exception:
         LOGGER.exception("Could not start the customer support session")
         st.session_state[UI_ERROR_KEY] = (

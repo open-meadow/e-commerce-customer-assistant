@@ -3,13 +3,19 @@
 H3 resource protection at this boundary (all limits are per process; see docs/session_resource_protection.md):
 
 * The request body is size-limited before it is parsed, and identifier fields have a length limit.
-* Each peer address has a request rate and a session-creation rate. The peer is the TCP peer of the connection;
-  ``X-Forwarded-For`` and similar headers are NOT trusted (behind a reverse proxy every client shares the proxy's address,
-  so put a real limiter at the proxy too). A customer ID chosen in the UI is never used as a client identity.
+* Each client has a request rate and a session-creation rate. The client is the browser identifier an AUTHENTICATED front end
+  (the Streamlit server, presenting ``SUPPORT_UI_TOKEN``) supplies in ``X-Browser-Id``, otherwise the TCP peer of the
+  connection. ``X-Forwarded-For`` and similar headers are NOT trusted, a browser identifier from an unauthenticated caller is
+  ignored (anyone could rotate it), and a customer ID chosen in the UI is never a client identity. The browser identifier is
+  anonymous abuse control, not authentication. The global cap and global creation rate apply to everyone.
+* ``/api/agent/*`` is for the voice worker only: it needs ``SUPPORT_AGENT_TOKEN`` in ``X-Service-Token`` (compared in constant
+  time, never logged) and answers 503 until the token is configured. The room name still has to belong to a live session.
+  Network isolation (the API is not published by the compose file) remains an additional layer, not the only control.
 * The session maps in this module are cleaned in the same step as the backend registry: when the registry drops a session
-  (closed, idle, too old, shutdown) a listener removes the map entries and releases the LiveKit room.
-* LiveKit calls (agent dispatch, room release) are time-bounded; a failure is cleaned up and reported without details.
-* A background sweeper and the application's shutdown end every session and release every room.
+  (closed, idle, too old, shutdown) a listener removes the map entries and schedules the LiveKit room release.
+* LiveKit room releases run on a small pool of worker threads in the background, never on a request thread, are idempotent
+  (a room already queued is not queued twice), are each time-bounded, and at shutdown are drained concurrently within
+  ``SUPPORT_SHUTDOWN_TIMEOUT_SECONDS`` overall.
 """
 
 from __future__ import annotations
@@ -17,10 +23,11 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import queue
 import secrets
 import threading
+import time
 import uuid
-from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from dataclasses import asdict, dataclass
 from datetime import timedelta
@@ -34,7 +41,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from app.backend.api import Backend, get_backend
 from app.backend.config import Settings
-from app.backend.limits import SlidingWindowLimiter
+from app.backend.limits import SlidingWindowLimiter, browser_client_key, tokens_match
 from app.backend.types import (
     ChatReply,
     ChoiceSelection,
@@ -50,6 +57,8 @@ load_dotenv(_PROJECT_ROOT / ".env", override=False)
 
 _AGENT_NAME = os.environ.get("LIVEKIT_AGENT_NAME", "ecommerce-support-agent")
 _ID_MAX = 128
+_SERVICE_TOKEN_HEADER = "x-service-token"
+_BROWSER_ID_HEADER = "x-browser-id"
 
 
 @dataclass(frozen=True)
@@ -106,16 +115,127 @@ _sessions: dict[str, _ActiveSession] = {}
 _session_by_room: dict[str, str] = {}
 _session_by_handle: dict[str, str] = {}
 _sessions_lock = threading.RLock()
-_state: dict[str, object] = {"backend": None, "client_limiter": None, "timeout": Settings().livekit_timeout_seconds}
+_state: dict[str, object] = {"backend": None, "client_limiter": None, "auth_failures": None,
+                             "timeout": Settings().livekit_timeout_seconds}
+
+
+# ---------------------------------------------------------------------------
+# LiveKit room release: background, bounded, idempotent
+# ---------------------------------------------------------------------------
+
+
+def _livekit_values() -> tuple[str, str, str] | None:
+    values = tuple(os.environ.get(name, "").strip() for name in ("LIVEKIT_URL", "LIVEKIT_API_KEY", "LIVEKIT_API_SECRET"))
+    return values if all(values) else None
+
+
+def _release_room(room_name: str) -> None:
+    """Delete one LiveKit room (which disconnects its agent). Bounded by the LiveKit timeout; a failure is logged, never raised."""
+    values = _livekit_values()
+    if values is None:
+        return
+    url, api_key, api_secret = values
+    try:
+        asyncio.run(asyncio.wait_for(
+            _delete_room(url=url, api_key=api_key, api_secret=api_secret, room_name=room_name),
+            float(_state["timeout"])))
+    except Exception as exc:
+        log.warning("could not release LiveKit room %s (%s)", room_name, type(exc).__name__)
+
+
+class _RoomReleaser:
+    """A small pool of daemon threads that release rooms in the background.
+
+    * ``schedule`` returns at once (a request thread is never held by LiveKit) and ignores a room that is already queued.
+    * One room failing or timing out never stops another: every release is its own bounded attempt.
+    * ``drain`` waits up to a deadline for everything scheduled; releases that have not started by then are skipped, so shutdown
+      takes at most the deadline plus one per-room timeout however many rooms there are.
+    """
+
+    WORKERS = 8
+
+    def __init__(self) -> None:
+        self._cond = threading.Condition()
+        self._queue: "queue.Queue[str | None]" = queue.Queue()
+        self._outstanding: set[str] = set()
+        self._threads: list[threading.Thread] = []
+        self._abandon = False
+        self._stopped = False
+
+    def schedule(self, room_name: str) -> None:
+        with self._cond:
+            if self._stopped or room_name in self._outstanding:
+                return
+            self._outstanding.add(room_name)
+            self._threads = [t for t in self._threads if t.is_alive()]
+            while len(self._threads) < min(self.WORKERS, len(self._outstanding)):
+                thread = threading.Thread(target=self._work, name="livekit-room-release", daemon=True)
+                thread.start()
+                self._threads.append(thread)
+        self._queue.put(room_name)
+
+    def _work(self) -> None:
+        while True:
+            room_name = self._queue.get()
+            if room_name is None:
+                return
+            try:
+                if not self._abandon:
+                    _release_room(room_name)
+            except Exception:
+                log.exception("room release failed")
+            finally:
+                with self._cond:
+                    self._outstanding.discard(room_name)
+                    self._cond.notify_all()
+
+    def flush(self, timeout: float) -> bool:
+        """Wait until nothing is outstanding. True if everything finished within ``timeout`` seconds."""
+        deadline = time.monotonic() + timeout
+        with self._cond:
+            while self._outstanding:
+                left = deadline - time.monotonic()
+                if left <= 0:
+                    return False
+                self._cond.wait(left)
+            return True
+
+    def drain(self, timeout: float) -> int:
+        """Shutdown: wait up to ``timeout`` seconds; skip what has not started. Returns how many were left unreleased."""
+        if self.flush(timeout):
+            return 0
+        self._abandon = True
+        with self._cond:
+            left = len(self._outstanding)
+        log.warning("shutdown: %d LiveKit room(s) were not released in time; LiveKit closes empty rooms by itself", left)
+        return left
+
+    def stop(self) -> None:
+        with self._cond:
+            self._stopped = True
+            workers = len(self._threads)
+        for _ in range(workers):
+            self._queue.put(None)
+
+
+_releaser = _RoomReleaser()
+
+
+def _flush_cleanup(timeout: float = 10.0) -> bool:
+    """Wait for scheduled room releases (tests, and shutdown)."""
+    return _releaser.flush(timeout)
 
 
 def _reset_state() -> None:
-    """Forget every HTTP-side session and limiter (tests, and a clean start)."""
+    """Forget every HTTP-side session, limiter and queued release (tests, and a clean start)."""
+    global _releaser
+    _releaser.stop()
+    _releaser = _RoomReleaser()
     with _sessions_lock:
         _sessions.clear()
         _session_by_room.clear()
         _session_by_handle.clear()
-    _state.update(backend=None, client_limiter=None, timeout=Settings().livekit_timeout_seconds)
+    _state.update(backend=None, client_limiter=None, auth_failures=None, timeout=Settings().livekit_timeout_seconds)
 
 
 # ---------------------------------------------------------------------------
@@ -192,45 +312,6 @@ class BodySizeLimitMiddleware:
 # ---------------------------------------------------------------------------
 
 
-def _run_blocking(factory, timeout: float) -> None:
-    """Run a coroutine to completion with a time limit from synchronous code (never inside a running loop)."""
-    def go() -> None:
-        asyncio.run(asyncio.wait_for(factory(), timeout))
-
-    with ThreadPoolExecutor(max_workers=1) as pool:
-        pool.submit(go).result(timeout + 5)
-
-
-def _livekit_values() -> tuple[str, str, str] | None:
-    values = tuple(os.environ.get(name, "").strip() for name in ("LIVEKIT_URL", "LIVEKIT_API_KEY", "LIVEKIT_API_SECRET"))
-    return values if all(values) else None
-
-
-def _release_room_blocking(room_name: str) -> None:
-    """Best effort: delete the LiveKit room, which disconnects its agent. Bounded; a failure is logged, never raised."""
-    values = _livekit_values()
-    if values is None:
-        return
-    url, api_key, api_secret = values
-    try:
-        _run_blocking(lambda: _delete_room(url=url, api_key=api_key, api_secret=api_secret, room_name=room_name),
-                      float(_state["timeout"]))
-    except Exception as exc:
-        log.warning("could not release LiveKit room %s (%s)", room_name, type(exc).__name__)
-
-
-async def _release_room(room_name: str) -> None:
-    values = _livekit_values()
-    if values is None:
-        return
-    url, api_key, api_secret = values
-    try:
-        await asyncio.wait_for(_delete_room(url=url, api_key=api_key, api_secret=api_secret, room_name=room_name),
-                               float(_state["timeout"]))
-    except Exception as exc:
-        log.warning("could not release LiveKit room %s (%s)", room_name, type(exc).__name__)
-
-
 def _on_session_dropped(session, reason: str) -> None:
     """The backend registry dropped a session (idle, too old, ended elsewhere or shutdown): release what this layer holds."""
     with _sessions_lock:
@@ -240,33 +321,41 @@ def _on_session_dropped(session, reason: str) -> None:
             _session_by_room.pop(active.room_name, None)
     if active is not None:
         log.info("http session released reason=%s ref=%s", reason, session.session_ref)
-        _release_room_blocking(active.room_name)
+        _releaser.schedule(active.room_name)
 
 
 def _install(backend: Backend) -> None:
-    """Wire this module to the backend in use (once per backend): cleanup listener, client limiter, timeout."""
+    """Wire this module to the backend in use (once per backend): cleanup listener, limiters, timeout."""
     if _state["backend"] is backend:
         return
     backend.registry.add_drop_listener(_on_session_dropped)
     _state.update(backend=backend,
                   client_limiter=SlidingWindowLimiter(backend.settings.client_requests_per_minute, 60, max_keys=10000),
+                  auth_failures=SlidingWindowLimiter(30, 60, max_keys=10000),
                   timeout=backend.settings.livekit_timeout_seconds)
+
+
+def _shutdown(backend: Backend) -> None:
+    backend.registry.shutdown()  # ends every session; the drop listener schedules every room release
+    _releaser.drain(backend.settings.shutdown_timeout_seconds)
 
 
 @asynccontextmanager
 async def _lifespan(_app: FastAPI):
     backend = None
     try:
-        backend = get_backend()
+        backend = get_backend()  # an invalid SUPPORT_* value raises ConfigError here and stops the startup
         _install(backend)
         backend.registry.start_sweeper()
     except LLMConfigError:
         log.warning("backend not configured: the session sweeper is not running")
+    if backend is not None and not backend.settings.agent_token:
+        log.warning("SUPPORT_AGENT_TOKEN is not set: /api/agent/* answers 503 and the voice worker cannot connect")
     try:
         yield
     finally:
         if backend is not None:
-            await asyncio.to_thread(backend.registry.shutdown)  # ends every session; the listener releases every room
+            await asyncio.to_thread(_shutdown, backend)
 
 
 app = FastAPI(title="E-commerce support API", lifespan=_lifespan)
@@ -301,9 +390,24 @@ def _configured_backend() -> Backend:
     return backend
 
 
+def _peer(request: Request) -> str:
+    return "peer:" + (request.client.host if request.client else "unknown")
+
+
 def _client_key(request: Request) -> str:
-    """The TCP peer of this connection. Forwarded headers are deliberately ignored: anyone can set them."""
-    return request.client.host if request.client else "unknown"
+    """Who a request is attributed to for rate limiting.
+
+    The browser identifier from ``X-Browser-Id`` when the caller proved it is the Streamlit server (``X-Service-Token`` equal to
+    ``SUPPORT_UI_TOKEN``) and the identifier is well formed; otherwise the TCP peer. Forwarded headers are ignored, and an
+    identifier from an unauthenticated caller is ignored too, because anyone could rotate it to dodge a limit.
+    """
+    backend = _state.get("backend")
+    ui_token = backend.settings.ui_token if backend is not None else ""
+    if ui_token and tokens_match(request.headers.get(_SERVICE_TOKEN_HEADER), ui_token):
+        key = browser_client_key(request.headers.get(_BROWSER_ID_HEADER))
+        if key is not None:
+            return key
+    return _peer(request)
 
 
 def _too_many(detail: str, retry_after: int, code: int = status.HTTP_429_TOO_MANY_REQUESTS) -> HTTPException:
@@ -311,12 +415,32 @@ def _too_many(detail: str, retry_after: int, code: int = status.HTTP_429_TOO_MAN
 
 
 def _client_rate_limit(request: Request) -> None:
-    """Dependency for the public endpoints: at most N requests a minute per peer address."""
+    """Dependency for the public endpoints: at most N requests a minute per client (browser or peer)."""
     _configured_backend()
     limiter: SlidingWindowLimiter = _state["client_limiter"]  # type: ignore[assignment]
     key = _client_key(request)
     if not limiter.allow(key):
         raise _too_many("Too many requests. Please wait a moment and try again.", limiter.retry_after(key))
+
+
+def _require_agent_token(request: Request) -> None:
+    """Dependency for ``/api/agent/*``: the voice worker must present ``SUPPORT_AGENT_TOKEN``.
+
+    Fails closed: with no token configured the endpoints answer 503 whatever is presented. The comparison is constant time, the
+    presented value is never logged or echoed, and repeated failures from one peer are throttled.
+    """
+    backend = _configured_backend()
+    expected = backend.settings.agent_token
+    if not expected:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="The agent endpoints are not configured.")
+    if tokens_match(request.headers.get(_SERVICE_TOKEN_HEADER), expected):
+        return
+    failures: SlidingWindowLimiter = _state["auth_failures"]  # type: ignore[assignment]
+    peer = _peer(request)
+    if not failures.allow(peer):
+        raise _too_many("Too many failed attempts.", failures.retry_after(peer))
+    log.warning("agent endpoint rejected a request without valid credentials (%s)", peer)
+    raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized.")
 
 
 def _create_room_token(
@@ -432,6 +556,7 @@ def _serialize_reply(reply: ChatReply) -> dict[str, object]:
         "text": reply.text,
         "status": reply.status,
         "error_code": reply.error_code,
+        "terminal": reply.terminal,
         "pending": asdict(reply.pending) if reply.pending is not None else None,
         "choice": choice,
         "citations": [asdict(citation) for citation in reply.citations],
@@ -454,7 +579,7 @@ def _handle_turn(active: _ActiveSession, request: TurnRequest) -> dict[str, obje
             session_id = _session_by_room.get(active.room_name)
         if session_id is not None:
             _remove_session(session_id)
-            _release_room_blocking(active.room_name)
+            _releaser.schedule(active.room_name)
     return _serialize_reply(reply)
 
 
@@ -493,7 +618,7 @@ async def create_livekit_session(request: Request, body: SessionRequest) -> Sess
     async def abort(code: int, detail: str) -> HTTPException:
         _remove_session(session_id)
         await asyncio.to_thread(backend.end_session, result.state)
-        await _release_room(room_name)
+        _releaser.schedule(room_name)
         return HTTPException(status_code=code, detail=detail)
 
     try:
@@ -528,9 +653,9 @@ def session_turn(request: SessionTurnRequest) -> dict[str, object]:
     return _handle_turn(_lookup_session(request.session_id), request)
 
 
-@app.post("/api/agent/turn")
+@app.post("/api/agent/turn", dependencies=[Depends(_require_agent_token)])
 def agent_turn(request: AgentTurnRequest) -> dict[str, object]:
-    """Internal agent endpoint; keep this API off the public host interface."""
+    """Internal voice-worker endpoint: needs the service token, and the room must belong to a live session."""
     with _sessions_lock:
         session_id = _session_by_room.get(request.room_name)
         active = _sessions.get(session_id) if session_id is not None else None
@@ -542,7 +667,7 @@ def agent_turn(request: AgentTurnRequest) -> dict[str, object]:
     return _handle_turn(active, request)
 
 
-@app.post("/api/agent/close", status_code=status.HTTP_204_NO_CONTENT)
+@app.post("/api/agent/close", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(_require_agent_token)])
 def agent_close(request: AgentCloseRequest) -> Response:
     """Internal: the voice agent's job ended (the customer left or a limit was reached); release the session and room."""
     with _sessions_lock:
@@ -554,7 +679,7 @@ def agent_close(request: AgentCloseRequest) -> Response:
             detail="The voice session is unavailable.",
         )
     _configured_backend().end_session(active.state)
-    _release_room_blocking(active.room_name)
+    _releaser.schedule(active.room_name)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -567,5 +692,5 @@ def close_session(request: CloseSessionRequest) -> Response:
             detail="The support session is unavailable.",
         )
     _configured_backend().end_session(active.state)
-    _release_room_blocking(active.room_name)
+    _releaser.schedule(active.room_name)
     return Response(status_code=status.HTTP_204_NO_CONTENT)

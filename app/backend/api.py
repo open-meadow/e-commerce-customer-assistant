@@ -11,12 +11,13 @@ import logging
 import os
 import threading
 import uuid
+from dataclasses import replace
 from typing import Mapping, Optional
 
 from app.backend import clock
 from app.backend.config import Settings
 from app.backend.limits import BudgetedLLM, ProviderBudget, SessionLimitError
-from app.backend.sessions import SessionRegistry
+from app.backend.sessions import SessionClosedError, SessionRegistry
 from app.backend.types import (BackendHealth, ChatReply, ChoiceSelection, ConfirmationDecision,
                                ConversationState, LoginOption, StartSessionResult)
 from app.db import repository
@@ -112,22 +113,23 @@ class Backend:
             return ChatReply(turn.text, state, turn.status, turn.error_code, turn.pending, turn.choice,
                              turn.citations, request_id)
 
-        def error(code: str, text: str) -> ChatReply:
-            return reply(Turn(text, "error", code))
+        def error(code: str, text: str, terminal: bool = False) -> ChatReply:
+            return replace(reply(Turn(text, "error", code)), terminal=terminal)
 
         supplied = [x is not None for x in (message, decision, choice)]
         if sum(supplied) != 1:
             return error("invalid_request", "Send exactly one of a message, a confirmation or a choice.")
         session = self.registry.get(state._handle)
         if session is None:
-            return error("invalid_session", _INVALID_SESSION_TEXT)
+            return error("invalid_session", _INVALID_SESSION_TEXT, terminal=True)
         # A request that cannot get the session's turn lock in time is refused (and says so) instead of holding a worker
         # thread for as long as another turn runs. The customer's open card is untouched and can be answered again.
         if not session.turn_lock.acquire(timeout=self.settings.turn_lock_timeout_seconds):
             return error("rate_limited", _BUSY_TEXT)
+        accepted = False  # only an accepted request counts as activity: a refused one must not keep a session alive
         try:
             if self.registry.get(state._handle) is None:  # ended or expired while waiting
-                return error("invalid_session", _INVALID_SESSION_TEXT)
+                return error("invalid_session", _INVALID_SESSION_TEXT, terminal=True)
             try:
                 if message is not None:
                     if not isinstance(message, str) or not message.strip():
@@ -136,44 +138,54 @@ class Backend:
                         return error("message_too_long",
                                      f"That message is too long. Please keep it under "
                                      f"{self.settings.max_message_chars} characters.")
+                    if session.message_count >= self.settings.max_messages_per_session:
+                        return error("rate_limited", "You've reached the message limit for this session. "
+                                                     "Please start a new session.", terminal=True)
                 refused = self._admit(session, uses_provider=decision is None)
                 if refused is not None:
-                    return error("rate_limited", refused)
+                    return error("rate_limited", refused[0], terminal=refused[1])
+                accepted = True
+                self.registry.touch(session)
                 with self.budget.session(session.session_ref):
                     if message is not None:
-                        if session.message_count >= self.settings.max_messages_per_session:
-                            return error("rate_limited", "You've reached the message limit for this session. "
-                                                         "Please start a new session.")
                         session.message_count += 1
                         turn = self.engine.handle_text(session, message)
                     elif decision is not None:
                         turn = self.engine.handle_decision(session, decision)
                     else:
                         turn = self.engine.handle_choice(session, choice)
+            except SessionClosedError:
+                # The session ended while this turn ran. Nothing was attached to it; a confirmed action that was already
+                # claimed has finished on its own (the claim is taken once, before the session could be dropped).
+                return error("invalid_session", _INVALID_SESSION_TEXT, terminal=True)
             except Exception:
                 log.exception("request failed ref=%s request=%s", session.session_ref, request_id)
                 return error("internal", "Something went wrong. Please try again.")
         finally:
-            self.registry.touch(session)
+            if accepted:
+                self.registry.touch(session)
             session.turn_lock.release()
         return reply(turn)
 
     def _admit(self, session, *, uses_provider: bool):
-        """The refusal text if this request is over a per-session or provider limit, else ``None``.
+        """``(refusal text, terminal)`` if this request is over a per-session or provider limit, else ``None``.
+
+        ``terminal`` is true for a hard limit that never recovers (the session's request limit or model-call budget) and false
+        for a transient one (a request rate, the shared model-call window).
 
         A confirmation (``uses_provider`` false) is never refused for the provider budget: it makes no model call, and a
         valid customer operation must not be dropped because of it."""
         why, _wait = self.registry.admit_request(session)
         if why == "limit":
-            return _REQUEST_LIMIT_TEXT
+            return _REQUEST_LIMIT_TEXT, True
         if why == "rate":
-            return _REQUEST_RATE_TEXT
+            return _REQUEST_RATE_TEXT, False
         if uses_provider:
             budget = self.budget.refusal(session.session_ref)
             if budget == "session":
-                return _SESSION_BUDGET_TEXT
+                return _SESSION_BUDGET_TEXT, True
             if budget == "window":
-                return _WINDOW_BUDGET_TEXT
+                return _WINDOW_BUDGET_TEXT, False
         return None
 
     # -- health ---------------------------------------------------------
@@ -216,8 +228,8 @@ def list_login_options() -> list[LoginOption]:
     return get_backend().list_login_options()
 
 
-def start_session(customer_id: str) -> StartSessionResult:
-    return get_backend().start_session(customer_id)
+def start_session(customer_id: str, client_key: Optional[str] = None) -> StartSessionResult:
+    return get_backend().start_session(customer_id, client_key)
 
 
 def end_session(state: ConversationState) -> None:

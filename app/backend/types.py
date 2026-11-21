@@ -92,6 +92,11 @@ class ChatReply:
     ``unavailable`` or ``internal``. At most one of ``pending`` and
     ``choice`` is set. ``text`` is untrusted text: render it as plain
     text, never as HTML.
+
+    ``terminal`` is true when this session can never serve another request: it is gone (``invalid_session``) or a hard
+    limit is used up (the session's request or message limit, or its model-call budget). A transient refusal (a request
+    rate, a busy session, the shared model-call window) is ``rate_limited`` with ``terminal`` false: waiting helps.
+    A voice front end ends the call on ``terminal``.
     """
 
     text: str
@@ -102,6 +107,7 @@ class ChatReply:
     choice: Optional[ChoiceView] = None
     citations: tuple[Citation, ...] = ()
     request_id: str = ""
+    terminal: bool = False
 
 
 @dataclass(frozen=True)

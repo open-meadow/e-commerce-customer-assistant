@@ -11,12 +11,40 @@ from __future__ import annotations
 
 import contextlib
 import contextvars
+import hmac
+import re
+import secrets
 import threading
 from collections import deque
 from typing import Any, Iterator, Optional
 
 from app.backend import clock
 from app.llm.base import LLMError
+
+
+# An anonymous, random, opaque identifier a front end generates for one browser session. It is an ABUSE-CONTROL handle, not an
+# identity: it proves nothing about who the person is, anyone who can reload the page gets a new one, and it is honoured only
+# when it arrives from a service that authenticated itself (see ``tokens_match``).
+_BROWSER_ID = re.compile(r"^[A-Za-z0-9_-]{16,64}$")
+
+
+def new_browser_id() -> str:
+    """A fresh random browser-session identifier (192 random bits, URL-safe)."""
+    return secrets.token_urlsafe(24)
+
+
+def browser_client_key(browser_id: Optional[str]) -> Optional[str]:
+    """The rate-limit key for a browser identifier, or ``None`` if it is missing or malformed."""
+    if isinstance(browser_id, str) and _BROWSER_ID.fullmatch(browser_id):
+        return "browser:" + browser_id
+    return None
+
+
+def tokens_match(supplied: Optional[str], expected: str) -> bool:
+    """Constant-time comparison of a presented service secret with the configured one. False if either is empty."""
+    if not supplied or not expected:
+        return False
+    return hmac.compare_digest(supplied.encode("utf-8"), expected.encode("utf-8"))
 
 
 class SessionLimitError(Exception):

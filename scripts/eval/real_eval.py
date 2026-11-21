@@ -54,10 +54,19 @@ if str(Path(__file__).resolve().parent) not in sys.path:
 from app import catalog as catalog_module  # noqa: E402
 from app import rag  # noqa: E402
 from app.rag import local_embeddings  # noqa: E402
-from app.backend import Backend  # noqa: E402
+from app.backend import Backend, Settings  # noqa: E402
 from app.backend import clock as backend_clock  # noqa: E402
 from app.backend.types import ChoiceSelection, ConfirmationDecision  # noqa: E402
 from app.db import clock as db_clock  # noqa: E402
+
+
+def _harness_settings() -> Settings:
+    """The offline harness starts hundreds of sessions in seconds. It is not a client of the service, so the per-minute
+    creation limits (which exist for clients) are lifted; the session cap, expiry and per-session limits still apply."""
+    import dataclasses
+
+    return dataclasses.replace(Settings.from_env(os.environ), session_creates_per_minute=1_000_000,
+                               session_creates_per_client_per_minute=1_000_000)
 from app.db import connection as db_connection  # noqa: E402
 from app.db import repository  # noqa: E402
 from app.db.schema import create_schema  # noqa: E402
@@ -372,7 +381,7 @@ def environment(llm_factory: Callable[[], LLMClient], retrieval: str = "local") 
                                          max_distance=local_embeddings.DEFAULT_MAX_DISTANCE,
                                          label=local_embeddings.LABEL)
             recorder = RecordingLLM(llm_factory())
-            backend = Backend(llm=recorder)
+            backend = Backend(llm=recorder, settings=_harness_settings())
             if getattr(recorder.inner, "interprets_language", False) and not backend.interpretation_active:
                 raise RuntimeError("evaluation wiring error: the model interprets language but the backend's "
                                    "interpretation layer is off, so this run would not measure the intended design")

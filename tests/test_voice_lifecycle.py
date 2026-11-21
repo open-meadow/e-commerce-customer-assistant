@@ -17,6 +17,14 @@ import pytest
 from app.voice import agent as voice
 
 
+AGENT_TOKEN = "agent-secret-token-for-tests-0001"
+
+
+@pytest.fixture(autouse=True)
+def _agent_token(monkeypatch):
+    monkeypatch.setenv("SUPPORT_AGENT_TOKEN", AGENT_TOKEN)
+
+
 def run(coro):
     return asyncio.run(coro)
 
@@ -179,3 +187,162 @@ class TestWorkerEntryPoint:
         run(go())
         notify.assert_awaited_once_with("support-abc")
         assert shutdowns == []  # a normal shutdown does not trigger another shutdown
+
+
+class FakeHttp:
+    """Records what the worker sends to the API (client options, path, body)."""
+
+    def __init__(self, status=204, error=None):
+        self.calls, self.status, self.error = [], status, error
+
+    def factory(self):
+        outer = self
+
+        class Client:
+            def __init__(self, **kw):
+                self.kw = kw
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *a):
+                return False
+
+            async def post(self, path, json=None):
+                outer.calls.append((path, json, dict(self.kw.get("headers") or {}), self.kw.get("timeout")))
+                if outer.error:
+                    raise outer.error
+                return SimpleNamespace(status_code=outer.status, raise_for_status=lambda: None,
+                                       json=lambda: {"text": "ok", "error_code": None})
+
+        return Client
+
+
+class TestServiceCredential:
+    def test_every_backend_call_carries_the_service_token(self):
+        fake = FakeHttp()
+        with mock.patch.object(voice.httpx, "AsyncClient", fake.factory()):
+            run(voice._post_backend_turn("support-abc", message="hello"))
+            run(voice._notify_session_closed("support-abc"))
+        assert [c[0] for c in fake.calls] == ["/api/agent/turn", "/api/agent/close"]
+        assert all(c[2] == {"X-Service-Token": AGENT_TOKEN} for c in fake.calls)
+
+    def test_a_missing_token_sends_nothing_and_never_raises_on_shutdown(self, monkeypatch):
+        monkeypatch.delenv("SUPPORT_AGENT_TOKEN")
+        fake = FakeHttp()
+        with mock.patch.object(voice.httpx, "AsyncClient", fake.factory()):
+            run(voice._notify_session_closed("support-abc"))  # must not raise
+            with pytest.raises(RuntimeError) as info:
+                run(voice._post_backend_turn("support-abc", message="hello"))
+        assert fake.calls == [] and "SUPPORT_AGENT_TOKEN" in str(info.value)
+
+    def test_the_token_never_appears_in_an_error_or_a_log(self, monkeypatch, caplog):
+        caplog.set_level("DEBUG")
+        monkeypatch.setenv("SUPPORT_AGENT_TOKEN", "short")  # malformed: refused without echoing it
+        with pytest.raises(ValueError) as info:
+            voice._agent_headers()
+        assert "short" not in str(info.value)
+        monkeypatch.setenv("SUPPORT_AGENT_TOKEN", AGENT_TOKEN)
+        fake = FakeHttp(error=httpx.ConnectError("down"))
+        with mock.patch.object(voice.httpx, "AsyncClient", fake.factory()):
+            run(voice._notify_session_closed("support-abc"))
+        assert AGENT_TOKEN not in caplog.text
+
+
+class TestHardLimitsEndTheCall:
+    """F5: a hard session limit ends the voice job; a transient refusal does not."""
+
+    def make(self):
+        ended, said = [], []
+        agent = voice.SupportAgent("support-abc", on_end=lambda reason: ended.append(reason))
+        context = SimpleNamespace(session=SimpleNamespace(say=mock.AsyncMock(side_effect=lambda text: said.append(text))))
+        return agent, context, ended, said
+
+    def test_a_terminal_reply_is_spoken_then_the_job_ends(self):
+        agent, context, ended, said = self.make()
+        run(agent._speak_backend_reply(context, {"text": "You have reached the usage limit for this session.",
+                                                 "error_code": "rate_limited", "terminal": True}))
+        assert said == ["You have reached the usage limit for this session."] and ended == ["session limit reached"]
+
+    def test_a_transient_rate_limit_does_not_hang_up(self):
+        agent, context, ended, said = self.make()
+        run(agent._speak_backend_reply(context, {"text": "Please wait a moment.", "error_code": "rate_limited",
+                                                 "terminal": False}))
+        assert said == ["Please wait a moment."] and ended == []
+
+    def test_a_reply_without_the_field_is_not_terminal(self):
+        agent, context, ended, said = self.make()
+        run(agent._speak_backend_reply(context, {"text": "Fine.", "error_code": None}))
+        assert ended == []
+
+    def test_a_vanished_session_still_ends_the_job_once(self):
+        agent, context, ended, said = self.make()
+        run(agent._speak_backend_reply(context, {"text": "Gone.", "error_code": "invalid_session", "terminal": True}))
+        assert ended == ["session ended"]  # one reason, one shutdown request
+
+    def test_ending_the_job_notifies_the_backend_through_the_shutdown_callback(self, monkeypatch):
+        monkeypatch.setenv("LIVEKIT_STT_MODEL", "stt")
+        monkeypatch.setenv("LIVEKIT_TTS_MODEL", "tts")
+        monkeypatch.setenv("FISH_AUDIO_VOICE", "voice")
+        callbacks, shutdowns = [], []
+        ctx = SimpleNamespace(room=SimpleNamespace(name="support-abc"), add_shutdown_callback=callbacks.append,
+                              shutdown=lambda reason="": shutdowns.append(reason))
+        notify, session = mock.AsyncMock(), mock.MagicMock()
+        session.start, session.say = mock.AsyncMock(), mock.AsyncMock()
+        captured = {}
+
+        def agent_factory(room_name, on_end=None, on_activity=None):
+            captured["on_end"] = on_end
+            return mock.MagicMock()
+
+        async def go():
+            with mock.patch.object(voice, "AgentSession", return_value=session), \
+                    mock.patch.object(voice, "_notify_session_closed", notify), \
+                    mock.patch.object(voice, "SupportAgent", agent_factory), \
+                    mock.patch.object(voice.openai, "STT"), mock.patch.object(voice.openai, "LLM"), \
+                    mock.patch.object(voice.inference, "TTS"), mock.patch.object(voice.room_io, "RoomOptions"):
+                await voice.support_agent(ctx)
+                captured["on_end"]("session limit reached")  # what the agent does after a terminal reply
+                for callback in callbacks:  # the framework then runs the shutdown callbacks
+                    await callback()
+
+        run(go())
+        assert shutdowns == ["session limit reached"]
+        notify.assert_awaited_once_with("support-abc")
+
+
+class TestStrictStartup:
+    @pytest.mark.parametrize("variable,value", [
+        ("SUPPORT_VOICE_MAX_SECONDS", "0"), ("SUPPORT_VOICE_MAX_SECONDS", "abc"), ("SUPPORT_VOICE_MAX_SECONDS", "999999"),
+        ("SUPPORT_VOICE_MAX_SECONDS", "5"), ("SUPPORT_VOICE_IDLE_SECONDS", "-1"), ("SUPPORT_VOICE_IDLE_SECONDS", "nan"),
+        ("SUPPORT_VOICE_IDLE_SECONDS", "100000")])
+    def test_an_invalid_limit_is_rejected_with_a_clear_message(self, variable, value):
+        env = {"SUPPORT_AGENT_TOKEN": AGENT_TOKEN, variable: value}
+        with pytest.raises(voice.ConfigError) as info:
+            voice.check_startup(env)
+        assert variable in str(info.value) and AGENT_TOKEN not in str(info.value)
+
+    def test_idle_longer_than_the_call_limit_is_rejected(self):
+        with pytest.raises(voice.ConfigError):
+            voice.check_startup({"SUPPORT_AGENT_TOKEN": AGENT_TOKEN, "SUPPORT_VOICE_MAX_SECONDS": "60",
+                                 "SUPPORT_VOICE_IDLE_SECONDS": "120"})
+
+    @pytest.mark.parametrize("token", [None, "", "short", "has a space in it 1234567890", "x" * 300])
+    def test_a_missing_or_malformed_token_is_rejected_without_echoing_it(self, token):
+        env = {} if token is None else {"SUPPORT_AGENT_TOKEN": token}
+        with pytest.raises(voice.ConfigError) as info:
+            voice.check_startup(env)
+        assert "SUPPORT_AGENT_TOKEN" in str(info.value)
+        assert not token or token not in str(info.value)
+
+    def test_the_defaults_with_a_valid_token_start(self):
+        voice.check_startup({"SUPPORT_AGENT_TOKEN": AGENT_TOKEN})
+
+    def test_a_job_with_an_invalid_limit_stops_before_doing_any_work(self, monkeypatch):
+        monkeypatch.setenv("SUPPORT_VOICE_MAX_SECONDS", "0")
+        ctx = SimpleNamespace(room=SimpleNamespace(name="support-abc"), add_shutdown_callback=lambda cb: None,
+                              shutdown=lambda reason="": None)
+        with mock.patch.object(voice, "AgentSession") as session:
+            with pytest.raises(voice.ConfigError):
+                run(voice.support_agent(ctx))
+        session.assert_not_called()
