@@ -427,12 +427,14 @@ class TestTickets:
         assert description[999] == "…"
         assert len(saved["conversation_summary"]) <= 2000
 
-    def test_ticket_cap(self, temp_db):
-        b = Backend(llm=ScriptedLLM(), settings=Settings(max_tickets_per_session=1))
+    def test_there_is_no_per_session_ticket_cap_but_the_account_limit_applies(self, temp_db):
+        """The per-session counter is retired (it reset with every chat); the account-level limit replaces it."""
+        b = Backend(llm=ScriptedLLM())
         c = Client(b, "C101")
-        c.confirm(make_ticket(c))
+        for _ in range(5):  # more than the old per-session cap of three, up to the account maximum
+            assert "has been created" in c.confirm(make_ticket(c)).text
         out = c.say("I want a human agent")
-        assert "limit" in out.text
+        assert "limit for creating new support tickets" in out.text and out.pending is None
 
     def test_get_my_tickets_projection_has_no_free_text(self, backend):
         c = Client(backend, "C101")

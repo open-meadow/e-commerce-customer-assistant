@@ -270,13 +270,13 @@ class TestEnglishIsExactlyWhatItWasBefore:
          "There is already an active return request for that item, so I can't start another."),
         ({"outcome": "delivery_timestamp_missing"},
          "I can't confirm the delivery date for this order, so I can't check the return window. I can raise a support "
-         "ticket for a human agent to look into it."),
+         "ticket to record this, but I can't promise a reply or a review."),
         ({"outcome": "outside_return_window", "window_hours": 168, "window_closes_at": "2026-11-05T00:00:00Z"},
          "The 168-hour return window for this type of return closed on 2026-11-05, so I can't start a return. I can "
-         "raise a support ticket if you'd like a human agent to review it."),
+         "raise a support ticket to record this if you'd like. This chat can't connect you to a human agent, so I can't promise a reply."),
         ({"outcome": "outside_return_window"},
          "The return window for this type of return has closed, so I can't start a return. I can raise a support "
-         "ticket if you'd like a human agent to review it."),
+         "ticket to record this if you'd like. This chat can't connect you to a human agent, so I can't promise a reply."),
         ({"outcome": "x"}, "I can't start a return for that item.")])
     def test_ineligible_texts(self, verdict, expected):
         assert engine_module.Engine._ineligible_text(verdict) == expected
@@ -284,8 +284,8 @@ class TestEnglishIsExactlyWhatItWasBefore:
     def test_the_offer_variant_is_the_old_ticket_offer(self):
         verdict = {"outcome": "outside_return_window", "window_hours": 168, "window_closes_at": "2026-11-05T00:00:00Z"}
         assert engine_module.Engine._window_closed_offer_text(verdict).endswith(
-            "I can help you raise a support ticket so a human agent can review what happened. Would you like to do that? "
-            "A ticket is a request for review, and I can't promise any particular outcome.")
+            "I can help you raise a support ticket to record what happened. Would you like to do that? "
+            "This chat can't connect you to a human agent, so I can't promise a review, a reply or any particular outcome.")
 
     def test_other_pinned_sentences(self):
         assert flow_texts.text("return_card_lead") == "This item is eligible for a return. Please confirm to submit the request."

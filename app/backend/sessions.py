@@ -28,6 +28,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import secrets
+import sys
 import threading
 import uuid
 from dataclasses import dataclass, field
@@ -82,6 +83,11 @@ class Session:
     # Durations (numbers only) that a tool result or policy text has given in this session. A reply may state a
     # duration only if it is in a tool result this turn or here; the customer's own words never add to it.
     verified_durations: set[str] = field(default_factory=set)
+    # Ticket IDs returned by a SUCCESSFUL repository creation in this session (lower case). The only session-level source
+    # of trust for a ticket ID in a reply; never filled from model prose, customer input or any other text.
+    known_ticket_ids: set[str] = field(default_factory=set)
+    # Where the next page of the customer's ticket list starts, set only after a list that had more rows than one page.
+    ticket_next_offset: Optional[int] = None
     history: list[dict[str, str]] = field(default_factory=list)
     message_count: int = 0
     request_count: int = 0  # every admitted request (message, decision or choice), for the per-session limit
@@ -363,7 +369,8 @@ class SessionRegistry:
             if action.state != "open":
                 return None, action.state
             used = session.committed[action.kind] + session.reserved[action.kind]
-            if used >= self.settings.cap_for(action.kind):
+            cap = self.settings.cap_for(action.kind)
+            if cap is not None and used >= cap:
                 action.state = "cancelled"
                 return None, "cap_reached"
             action.state = "claimed"
@@ -379,8 +386,10 @@ class SessionRegistry:
 
     def capacity_left(self, session: Session, kind: str) -> int:
         with self._lock:
-            return (self.settings.cap_for(kind)
-                    - session.committed[kind] - session.reserved[kind])
+            cap = self.settings.cap_for(kind)
+            if cap is None:  # no per-session cap for this kind (support tickets)
+                return sys.maxsize
+            return cap - session.committed[kind] - session.reserved[kind]
 
     def _lookup_locked(self, session: Session, action_id: Any) -> Optional[PendingAction]:
         if not isinstance(action_id, str):

@@ -34,6 +34,7 @@ from app.tools import flow_texts, return_texts
 from app.tools.context import CustomerContext
 from app.tools.registry import (TOOL_SPECS, ArgumentError, execute_tool, llm_tool_definitions,
                                 validate_arguments)
+from app.tools.registry import _LIST_LIMIT as TICKET_PAGE_SIZE
 from app.tools.results import ToolResult
 
 log = logging.getLogger("app.orchestrator")
@@ -172,6 +173,8 @@ class _Ctx:
     lookups: dict = field(default_factory=dict)  # order ID -> get_order_status result this turn: one lookup per ID
     refunds: dict = field(default_factory=dict)  # order ID -> (refund_status, refund_amount) from this turn's tools
     return_tool_proposed: bool = False  # the model proposed start_return_request this turn (the return path owns the turn)
+    tickets: Optional[dict] = None  # the get_my_tickets result data of this turn (verified rows: rendered by code, not by the model)
+    tools_used: list = field(default_factory=list)  # names of the read tools run this turn
 
 
 # The ticket offer made (as text only) when a return is refused for a closed window is ``flow_texts`` key
@@ -208,7 +211,7 @@ class Engine:
             return self._typed_cancel(s)
         pending = self.registry.open_pending(s)
         if pending is not None:
-            return self._remind_pending(pending, s.language)
+            return self._typed_text_with_open_card(s, pending, text)
         if s.choice is not None:
             return self._remind_choice(s)
         if s.draft and s.draft.get("awaiting_reason"):
@@ -217,6 +220,9 @@ class Engine:
             offer_turn = self._ticket_offer_turn(s, text)
             if offer_turn is not None:
                 return self._record(s, text, offer_turn)
+
+        if s.ticket_next_offset is not None and guard.is_more_tickets_request(text):
+            return self._record(s, text, self._more_tickets_turn(s))  # the next page of a list the customer just saw
 
         known = self._names_something(text)
         kind = guard.classify_scope(text, specific=known)
@@ -340,6 +346,18 @@ class Engine:
                 s.issues.suspend_active_and_start(message)
                 ctx.notices.append(flow_texts.text("notice_dropped_hold", s.language))
             return self._record(s, message, self._answer(s, message, ctx))
+        if c.kind in ("ticket_category", "ticket_order"):
+            if selection.option_id == "cancel":
+                return Turn(flow_texts.text("cancelled", s.language))
+            args = dict(c.data.get("args") or {})
+            if c.kind == "ticket_category":
+                args["issue_type"] = selection.option_id
+                return self._propose_ticket(s, args, "", _Ctx(issue_turn=True), confirmed_category=selection.option_id,
+                                            no_order=bool(c.data.get("no_order")))
+            if selection.option_id != "none":
+                args["order_id"] = selection.option_id
+            return self._propose_ticket(s, args, "", _Ctx(issue_turn=True), confirmed_category=args.get("issue_type"),
+                                        no_order=selection.option_id == "none")
         return Turn(flow_texts.text("choice_gone_short", s.language))
 
     # ------------------------------------------------------------------
@@ -414,6 +432,72 @@ class Engine:
     # ------------------------------------------------------------------
     # Reminders for outstanding prompts
     # ------------------------------------------------------------------
+
+    def _typed_text_with_open_card(self, s: Session, a: PendingAction, text: str) -> Turn:
+        """Typed words while a ticket card is open. They NEVER confirm anything (only the Confirm decision does). not yet /
+        wait keeps the card and says so; a question ABOUT THE TICKET is answered with the card's own text; a different order
+        of the customer's own, written in their words, replaces the card (fresh Confirm needed, the old card can no longer be
+        claimed); anything else is the usual reminder. A plain typed "no" still only gets the reminder: existing tests pin
+        that, and whether it should close the card is an open owner decision. Category and description corrections are not
+        handled here (cancel and start again).
+        """
+        if a.kind == "support_ticket":
+            if guard.plain_refusal(text) == "pause":
+                return Turn(flow_texts.text("pending_paused", s.language), "needs_confirmation", pending=self._pending_view(a))
+            corrected = self._correct_pending_order(s, a, text)
+            if corrected is not None:
+                return corrected
+            if guard.asks_about_the_ticket(text):
+                return Turn(flow_texts.text("pending_explain", s.language, summary=a.summary), "needs_confirmation",
+                            pending=self._pending_view(a))
+        return self._remind_pending(a, s.language)
+
+    def _correct_pending_order(self, s: Session, a: PendingAction, text: str) -> Optional[Turn]:
+        ids = guard.order_ids_in(text)
+        payload = a.payload
+        if len(ids) != 1 or ids[0] == payload.get("order_id") or s.issues.active is None:
+            return None
+        try:
+            owned = repository.get_order(s.customer_id, ids[0]) is not None
+        except DatabaseError:
+            return None
+        if not owned:  # an unknown or another customer's order: the old card stays exactly as it was
+            return Turn(self._with_notices(_Ctx(), flow_texts.text("order_not_found_check", s.language)), "needs_confirmation",
+                        pending=self._pending_view(a))
+        if self.registry.cancel(s, a.action_id) != "cancelled":
+            return None
+        return self._propose_ticket(s, {"issue_type": payload["issue_type"], "order_id": ids[0]}, "", _Ctx(),
+                                    confirmed_category=payload["issue_type"])
+
+    def _more_tickets_turn(self, s: Session) -> Turn:
+        """The next page of the customer's tickets, rendered by code from the database (no model call)."""
+        offset = s.ticket_next_offset or 0
+        try:
+            page = repository.list_customer_tickets_page(s.customer_id, offset=offset, limit=TICKET_PAGE_SIZE)
+        except DatabaseError:
+            s.ticket_next_offset = None
+            return Turn(flow_texts.text("unavailable", s.language), "error", "unavailable")
+        rows, total = page["tickets"], page["total"]
+        if not rows:
+            s.ticket_next_offset = None
+            return Turn(flow_texts.text("tickets_none", s.language))
+        lines = [flow_texts.text("tickets_page_range", s.language, first=offset + 1, last=offset + len(rows), total=total)]
+        lines += self._ticket_lines(s, rows)
+        s.ticket_next_offset = offset + len(rows) if offset + len(rows) < total else None
+        if s.ticket_next_offset is not None:
+            lines.append(flow_texts.text("tickets_more_hint", s.language))
+        return Turn("\n".join(lines))
+
+    def _ticket_lines(self, s: Session, rows: list[dict[str, Any]]) -> list[str]:
+        lines = []
+        for t in rows:
+            fields = {"ticket_id": t["ticket_id"], "issue_type": t["issue_type"], "order_id": t.get("order_id") or "",
+                      "status": t["status"], "created": str(t.get("created_at") or "")[:10]}
+            if t.get("order_id"):
+                lines.append(flow_texts.text("tickets_line_order", s.language, **fields))
+            else:
+                lines.append(flow_texts.text("tickets_line", s.language, **fields))
+        return lines
 
     def _pending_view(self, a: PendingAction) -> PendingView:
         return PendingView(a.action_id, a.kind, a.summary, format_timestamp(a.expires))
@@ -619,6 +703,9 @@ class Engine:
                 if name == "list_my_orders" and tool_result.status == "ok":
                     ctx.orders = list(tool_result.data.get("orders", []))
                 ctx.sources.append(tool_result.to_json())
+                ctx.tools_used.append(name)
+                if name == "get_my_tickets" and tool_result.status == "ok":
+                    ctx.tickets = tool_result.data
                 self._note_refund(ctx, name, tool_result)
                 if name == "check_return_eligibility":
                     tool_result = self._eligibility_for_the_named_item(ctoken, call.arguments, tool_result, text)
@@ -844,7 +931,29 @@ class Engine:
         names = ", ".join(f"{i['item_id']} ({i['product_name']})" for i in feedback.data["items"])
         return flow_texts.text("which_item", language, names=names)
 
+    def _render_tickets(self, s: Session, data: dict[str, Any]) -> str:
+        """The customer's ticket list from the database rows the tool returned: the count, IDs, categories, orders and
+        statuses are stated by code from fixed sentences, never by the model."""
+        rows = list(data.get("tickets") or [])
+        total = int(data.get("total_tickets") or 0)
+        if total == 0 or not rows:
+            s.ticket_next_offset = None
+            return flow_texts.text("tickets_none", s.language)
+        lines = [flow_texts.text("tickets_header", s.language, total=total)]
+        lines += self._ticket_lines(s, rows)
+        if total > len(rows):
+            lines.append(flow_texts.text("tickets_more", s.language, shown=len(rows), total=total))
+            lines.append(flow_texts.text("tickets_more_hint", s.language))
+            s.ticket_next_offset = len(rows)
+        else:
+            s.ticket_next_offset = None
+        return "\n".join(lines)
+
     def _finish_text(self, s: Session, text: Optional[str], ctx: _Ctx, used_tools: bool) -> Turn:
+        if ctx.tickets is not None and set(ctx.tools_used) == {"get_my_tickets"}:
+            # The customer asked about their tickets and nothing else was looked up: the answer is the database's, so a wrong
+            # count, a false "no tickets" or an invented ID in the model's prose can never reach them.
+            return Turn(self._with_notices(ctx, self._render_tickets(s, ctx.tickets)), citations=ctx.citations)
         body = (text or "").strip()
         if not body:
             body = flow_texts.text("no_answer", s.language)
@@ -862,6 +971,13 @@ class Engine:
                 body = supported or flow_texts.text("no_timeline", s.language)
             body = self._refund_wording(s, ctx, body)
             body = self._with_eligibility_disclosures(s, ctx, body)
+        # A ticket reference is stated only when it is verified: it appears in this turn's tool results for the signed-in
+        # customer (``ctx.sources``) or was returned by a successful creation in this session. What the model wrote, or what
+        # the customer typed, never verifies one. The cleaned text, not the model's, is what is recorded in the history.
+        cleaned = guard.strip_unverified_ticket_ids(body, guard.ticket_refs(" ".join(ctx.sources)) | s.known_ticket_ids)
+        if cleaned != body:
+            log.info("reply sentence with an unverified ticket reference removed (session %s)", s.session_ref)
+            body = cleaned or flow_texts.text("ticket_id_unverified", s.language)
         if len(body) > 4000:
             body = body[:3999] + "…"
         if (ctx.issue_turn and s.issues.active is not None and "ticket" not in body.lower()
@@ -1304,11 +1420,56 @@ class Engine:
     # Ticket workflow
     # ------------------------------------------------------------------
 
+    def _rate_limit(self) -> Optional[tuple[int, int]]:
+        """``(maximum, window_seconds)`` when the account-level new-ticket limit is enforced, else ``None``."""
+        st = self.settings
+        if st.ticket_rate_policy != "rolling":
+            return None
+        return st.ticket_rate_max, st.ticket_rate_window_seconds
+
+    def _rate_limited_turn(self, s: Session) -> Optional[Turn]:
+        """A courtesy check before a card is shown: the customer is told at once that a new ticket is not possible right
+        now. Never the authority (the count inside ``create_support_ticket`` is); a database error here defers to it."""
+        limit = self._rate_limit()
+        if limit is None:
+            return None
+        try:
+            state = repository.get_ticket_rate_state(s.customer_id, limit)
+        except DatabaseError:
+            return None
+        if state["allowed"]:
+            return None
+        return Turn(flow_texts.text("ticket_rate_limited", s.language, retry_at=state["retry_at"]))
+
+    def _ask_ticket_category(self, s: Session, args: dict[str, Any], no_order: bool) -> Turn:
+        """No single category can be stored without the customer seeing it: ask. Hindi and Hinglish aliases are inactive
+        (owner decision OD-07), so a complaint in those languages with no valid proposal also lands here."""
+        options = (*guard.TICKET_CATEGORIES, "cancel")
+        labels = {"order": flow_texts.text("ticket_cat_order", s.language),
+                  "return": flow_texts.text("ticket_cat_return", s.language),
+                  "payment": flow_texts.text("ticket_cat_payment", s.language),
+                  "product": flow_texts.text("ticket_cat_product", s.language),
+                  "general": flow_texts.text("ticket_cat_general", s.language),
+                  "cancel": flow_texts.text("ticket_cat_cancel", s.language)}
+        resume = {k: v for k, v in args.items() if k == "order_id"}
+        return self._new_choice(s, "ticket_category", options, flow_texts.text("ticket_cat_question", s.language), labels,
+                                {"args": resume, "no_order": no_order})
+
+    def _ask_ticket_order(self, s: Session, owned: list[str], issue_type: str) -> Turn:
+        options = (*owned, "none", "cancel")
+        labels = {**{o: o for o in owned}, "none": flow_texts.text("ticket_order_none", s.language),
+                  "cancel": flow_texts.text("ticket_cat_cancel", s.language)}
+        return self._new_choice(s, "ticket_order", options,
+                                flow_texts.text("ticket_order_question", s.language, orders=", ".join(owned)), labels,
+                                {"args": {"issue_type": issue_type}})
+
     def _propose_ticket(self, s: Session, arguments: Any, user_text: str, ctx: Optional[_Ctx] = None, *,
-                        answered: Optional[str] = None, service: bool = False) -> Turn:
+                        answered: Optional[str] = None, service: bool = False,
+                        confirmed_category: Optional[str] = None, no_order: bool = False) -> Turn:
         ctx = ctx or _Ctx()
-        if self.registry.capacity_left(s, "support_ticket") <= 0:
-            return Turn(flow_texts.text("ticket_limit", s.language))
+        limited = self._rate_limited_turn(s)
+        if limited is not None:
+            return limited
         issue = s.issues.active
         if (issue is None and user_text and answered is None
                 and guard.unsupported_request(user_text) == guard.ACCOUNT_CHANGE
@@ -1343,8 +1504,41 @@ class Engine:
                 args = validate_arguments(TOOL_SPECS["start_support_ticket"], arguments)
             except ArgumentError:
                 args = {}
-        issue_type = args.get("issue_type") or guard.infer_issue_type(issue.text())
+        # A category the model PROPOSED is never repaired silently: it is normalised through the owner-approved English aliases;
+        # an invalid or ambiguous value (``refund``, a number, an unknown word) is asked about unless the customer's own English
+        # words point at exactly one category, which is then only a suggestion shown on the card. Hindi and Hinglish aliases are
+        # inactive (OD-07), so there such a value is always asked about.
+        # NOT implemented, pending an owner decision (see the Phase 1 report): asking when the proposed category contradicts the
+        # customer's words, and asking when the engine itself starts the ticket with no category at all (the clarification path).
+        # That second case keeps ``infer_issue_type``, whose result is shown on the card, because asking there would reopen the
+        # clarification loop fixed in commit 837de7d and break the existing clarification tests.
+        if confirmed_category in guard.TICKET_CATEGORIES:
+            issue_type = confirmed_category
+        elif isinstance(arguments, dict) and "issue_type" in arguments:
+            proposed = guard.normalize_category(arguments.get("issue_type"))
+            if proposed is None:
+                signals = guard.category_signals(issue.text(), s.language)
+                if len(signals) != 1:
+                    return self._ask_ticket_category(s, args, no_order)
+                proposed = next(iter(signals))
+            issue_type = proposed
+        else:
+            issue_type = guard.infer_issue_type(issue.text())
         order_id = args.get("order_id")
+        if not order_id and not no_order:
+            # An order the customer typed in their own words is linked even if the model did not name it (also after a
+            # clarification question); several of their own orders are asked about, never guessed.
+            owned = []
+            for typed in guard.order_ids_in(" ".join(issue.messages)):
+                try:
+                    if repository.get_order(s.customer_id, typed) is not None:
+                        owned.append(typed)
+                except DatabaseError:
+                    return Turn(flow_texts.text("order_system_down", s.language), "error", "unavailable")
+            if len(owned) == 1:
+                order_id = owned[0]
+            elif len(owned) > 1:
+                return self._ask_ticket_order(s, owned, issue_type)
         facts: list[str] = []
         if order_id:
             try:
@@ -1471,9 +1665,10 @@ class Engine:
                     s.ticket_offer = None
                     return None
                 return Turn(flow_texts.text("unclear", s.language))
-            if self.registry.capacity_left(s, "support_ticket") <= 0:
+            limited = self._rate_limited_turn(s)
+            if limited is not None:
                 s.ticket_offer = None
-                return Turn(flow_texts.text("ticket_limit", s.language))
+                return limited
             items, failure = self._check_owned(s, offer["order_id"], offer["item_id"])
             if failure is not None:
                 s.ticket_offer = None
@@ -1567,7 +1762,10 @@ class Engine:
         if action.kind == "support_ticket":
             result = repository.create_support_ticket(
                 s.customer_id, p["issue_type"], p["description"], p["conversation_summary"],
-                order_id=p.get("order_id"))
+                order_id=p.get("order_id"), rate_limit=self._rate_limit())
+            if result["outcome"] == "rate_limited":
+                return Turn(flow_texts.text("ticket_rate_limited", s.language, retry_at=result["retry_at"])), False
+            s.known_ticket_ids.add(result["ticket_id"].lower())  # the only place a session learns an ID it may state
             active = s.issues.active
             if active is not None and active.issue_id == p.get("issue_id"):
                 s.issues.end_active()

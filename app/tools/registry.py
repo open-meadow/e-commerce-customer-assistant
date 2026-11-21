@@ -214,11 +214,14 @@ def _get_my_returns(ctx: CustomerContext, args: dict[str, Any]) -> ToolResult:
 
 @_guard
 def _get_my_tickets(ctx: CustomerContext, args: dict[str, Any]) -> ToolResult:
-    tickets = repository.get_customer_tickets(ctx.customer_id)
+    page = repository.list_customer_tickets_page(ctx.customer_id, offset=0, limit=_LIST_LIMIT)
     shown = [{"ticket_id": t["ticket_id"], "issue_type": t["issue_type"], "order_id": t["order_id"],
               "status": t["status"], "priority": t["priority"], "created_at": t["created_at"]}
-             for t in tickets[:_LIST_LIMIT]]
-    return ToolResult("ok", "tickets", {"tickets": shown, "total_tickets": len(tickets)})
+             for t in page["tickets"]]
+    data: dict[str, Any] = {"tickets": shown, "total_tickets": page["total"], "has_more": page["total"] > len(shown)}
+    if page["skipped"]:
+        data["unreadable_rows"] = page["skipped"]  # a count only; the rows themselves are never shown
+    return ToolResult("ok", "tickets", data, note=None if page["total"] else "The customer has no support tickets on file.")
 
 
 def _log_retrieval_failure(error: KnowledgeBaseError) -> None:

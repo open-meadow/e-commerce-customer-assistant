@@ -120,12 +120,13 @@ class TestTicketUsesWhatTheCustomerSaid:
         assert c.say("yes").status == "needs_confirmation" and rows(raw, "support_tickets") == []
         assert "TKT_" in c.confirm(card).text and len(rows(raw, "support_tickets")) == 1
 
-    def test_the_session_ticket_cap_still_applies(self, temp_db, raw):
+    def test_the_old_session_ticket_cap_no_longer_applies(self, temp_db, raw):
         c = self.start(temp_db, issue_type="order", order_id="ORD1014")
         session = c.backend.registry.get(c.state._handle)
-        session.committed["support_ticket"] = Settings().cap_for("support_ticket")
+        session.committed["support_ticket"] = 99  # the old per-session counter is retired and is not consulted
+        assert Settings().cap_for("support_ticket") is None
         reply = c.say("Just cancel ORD1014, I don't want it anymore.")
-        assert reply.pending is None and "limit of support tickets" in reply.text
+        assert "limit of support tickets" not in reply.text and reply.pending is not None
 
 
 class TestBareComplaintsStillAsk:
