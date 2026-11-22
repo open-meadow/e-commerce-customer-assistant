@@ -17,7 +17,7 @@ deterministic code validates it, enforces who may see what, and owns every chang
 | Order and delivery status | Looks up the signed-in customer's own orders, items, dates, payment and refund state |
 | Policy and FAQ answers | Retrieval over the FAQ and policy documents (Chroma vector index, OpenAI embeddings) |
 | Returns | Checks the return window and eligibility, then creates a request after an explicit Confirm |
-| Support tickets | Offers a ticket when a return is not possible or a human is asked for; created only after confirmation |
+| Support tickets | Offers a ticket when a return is not possible or a human is asked for; created only after confirmation. An optional fresh-description flow is OFF by default (see [Support tickets](#support-tickets-fresh-description-flow-and-schema-version-2)) |
 | Product questions | Read-only lookup from `Products.json` |
 | Three languages | The customer's latest message decides the language; all fixed replies exist in English, Hinglish and Hindi |
 | Voice (optional) | LiveKit microphone channel with speech-to-text and text-to-speech |
@@ -127,13 +127,41 @@ A return runs as: describe the problem, the assistant checks the window, shows a
 creates the request. The offline tests cover this journey in all three languages; it has not been re-run against the live model
 since the localisation work. Screenshots are not included.
 
+## Support tickets: fresh-description flow and schema version 2
+
+Two changes are implemented and tested offline. Neither has been used against a protected or production database or against a live
+model.
+
+- **Fresh-description flow (Phase 1.1), default OFF.** `SUPPORT_TICKET_FRESH_FLOW_ENABLED` accepts only `true` or `false` and defaults to
+  `false`. When ON, the customer's own current message is the ticket description (kept exactly as typed, at most 2,000 characters),
+  then they pick one of their own orders or "no order", read a plain-text preview and press Confirm; typing "yes" never confirms.
+  With the gate OFF the earlier flow is unchanged. With the gate ON the application starts only with the real repository writer
+  and a migrated database, and otherwise refuses to start.
+- **Database schema version 2 (Phase 2).** `support_tickets` is rebuilt with a nullable `conversation_summary` (new tickets have none;
+  legacy summaries are untouched) and `ticket_events`, `ticket_erasure_log` and `ticket_write_intents` are added. Runtime code
+  requires version 2 exactly, whatever the gate says: a version-1 database, including an existing `app_d2.db` or Docker volume, is
+  refused until it is migrated or re-seeded. **Nothing migrates automatically.**
+- **Manual, scratch-only migration.** `python -m app.db.migrate` (needs `--scratch`) takes a verified backup, rehearses a restore and
+  refuses `app/db/data/app.db`, `app_d2.db` and any non-scratch use. It has been run on scratch databases only; no protected database
+  has been migrated.
+- **Creation.** Each confirmation card carries a request key. The key and the immutable payload are stored before the insert, so a retry
+  of the same confirmation never creates a second ticket. Duplicate detection (a new request for an issue that already has an active
+  ticket) is a separate outcome from idempotency. The account-level rate limit is counted inside the creation transaction.
+- **Uncertain outcomes.** If the database cannot say whether a write committed, the card, key and payload are kept and no second
+  creation is allowed. After a session expires or the process restarts, the next ticket request first reconciles the customer's own
+  stored requests with their original key and payload.
+- **Outstanding.** The delayed-replay policy (how long a stored confirmed request may be replayed without a fresh confirmation) is
+  undecided; four English messages are proposals awaiting owner approval (`ticket_duplicate_active`, `ticket_idempotency_conflict`,
+  `ticket_recovery_unknown`, `ticket_recovered_created`); the Hindi and Hinglish wording awaits a fluent reviewer. Production
+  enablement stays blocked until these are settled.
+
 ## Testing and evaluation
 
 | Tier | What it covers | Status |
 |---|---|---|
 | **Live-validated** | Real `gpt-4o-mini` runs: Evaluations A and B, then two post-fix checks, last on code `78f9790` (12 targeted conversations passed) | Replies read by hand; not signed by an independent reviewer |
-| **Offline-tested** | 3,796 automated tests, all passing, no network. This includes every change after `78f9790` (the ticket-scope gate and compact prompt, refund-status wording, the localised return journey, the order-ambiguity guards, the guard that settles a return request the model answered in prose) | Shows the code does what it says; **not** verified against the live model |
-| **Awaiting human review** | All 110 Hinglish and Hindi sentences are drafts; 17 high-priority ones (the original 13 plus four ticket-scope sentences) need a fluent reader | [Review sheets](docs/localization_review_hinglish_hindi.md) |
+| **Offline-tested** | Latest recorded full run: **4,314 passed, 0 failed, 0 skipped** (one ChromaDB deprecation warning), no network; it was not re-run after the later documentation-only edits. It includes the ticket flow and schema version 2 work. This includes every change after `78f9790` (the ticket-scope gate and compact prompt, refund-status wording, the localised return journey, the order-ambiguity guards, the guard that settles a return request the model answered in prose) | Shows the code does what it says; **not** verified against the live model |
+| **Awaiting human review** | All 150 Hinglish and Hindi sentences are drafts; 26 are marked high priority and need a fluent reader. Four English ticket messages are also proposals awaiting owner approval | [Review sheets](docs/localization_review_hinglish_hindi.md) |
 
 ```bash
 uv run python -m pytest tests -q
@@ -153,6 +181,8 @@ Read the full methodology, sample sizes and caveats in the [evaluation report](d
 - Voice has never been run live, and the optional voice `worker` container has not been tested. Docker `api` and `app` were built and
   health-checked on 2026-11-19; the rest of the stack, the Docker UI in a browser and any live provider were not exercised.
 - The ambiguity guards act on tool calls; an order the model describes without calling a tool is not caught.
+- Not verified: how a live model behaves with the fresh-description prompt, and several processes writing to one database file at once
+  (SQLite single-file locking only). Schema version 2 has been migrated on scratch databases only.
 
 The full list is in section 11 of the evaluation report.
 

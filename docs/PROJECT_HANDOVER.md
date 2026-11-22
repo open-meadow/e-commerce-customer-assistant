@@ -9,8 +9,8 @@ evaluation evidence see `docs/evaluation/EVALUATION_REPORT.md`; for wording that
 | Category | What it covers | Evidence |
 |---|---|---|
 | **Live-validated** (real `gpt-4o-mini`, replies read by hand) | The behaviour of code `8fafd95` (Evaluations A and B); the first post-fix check of `bccbc12` (language switching, policy routing, refund lookup, N01/N02); the final check of `78f9790` (29 requests, 12 conversations all passed): named orders not on the account (H10, C027, N01, N02, H09, E07), the repeat-complaint order list (C003), Hinglish ticket question (C023), S02 and S03 | `docs/evaluation/EVALUATION_REPORT.md` sections 3 to 8 |
-| **Offline-tested only** (3137 tests; NOT validated against the live model) | Everything added after `78f9790`: refund-status wording replacement; the whole localised return journey; the ambiguity guards (returns, eligibility, tickets in `41c1c9c`; status, refund and listing, and the "ask before any tool runs" rule in `4462cb5`); issue-management, greeting, thanks and scope localisation; Hindi and Hinglish courtesy detection; order IDs written `ORD-1010`; number-word and Hindi-unit durations | `tests/test_final_cycle.py`, `tests/test_handover_cycle.py` and the older files; offline tests show the code does what it says, not that the model behaves |
-| **Human-review pending** | All 105 Hinglish and Hindi sentences, drafts written by the assistant; **13 are High priority and are awaiting fluent human review** (`lead_limit`, `created`, `not_on_account`, `which_order`, `grounding`, `reason_notice`, `return_card_lead`, `return_card_summary`, `return_submitted`, `ticket_offer_review`, `refund_pending`, `refund_processed`, `refund_failed`). Also every manual verdict in the evaluation report | `docs/localization_review_hinglish_hindi.md` and `.csv` |
+| **Offline-tested only** (3137 tests when written; latest recorded full run 4,314; NOT validated against the live model) | Everything added after `78f9790`: refund-status wording replacement; the whole localised return journey; the ambiguity guards (returns, eligibility, tickets in `41c1c9c`; status, refund and listing, and the "ask before any tool runs" rule in `4462cb5`); issue-management, greeting, thanks and scope localisation; Hindi and Hinglish courtesy detection; order IDs written `ORD-1010`; number-word and Hindi-unit durations | `tests/test_final_cycle.py`, `tests/test_handover_cycle.py` and the older files; offline tests show the code does what it says, not that the model behaves |
+| **Human-review pending** | All 150 Hinglish and Hindi sentences (105 when written), drafts written by the assistant; **26 are marked High priority in the review sheet and await fluent human review**, including the original 13 (`lead_limit`, `created`, `not_on_account`, `which_order`, `grounding`, `reason_notice`, `return_card_lead`, `return_card_summary`, `return_submitted`, `ticket_offer_review`, `refund_pending`, `refund_processed`, `refund_failed`). Also every manual verdict in the evaluation report | `docs/localization_review_hinglish_hindi.md` and `.csv` |
 | **Remaining known limitations** | Section 5 below | |
 
 ## 1. What this is
@@ -35,12 +35,12 @@ app/orchestrator/engine.py   the tool loop and every state change
    |-- summarizer.py         ticket summary
    |
    |-- app/llm               LLMClient: OpenAI Responses, Anthropic, offline RuleBasedLLM (a deterministic stand-in)
-   |-- app/tools             registry.py (10 tools, schemas, notes), flow_texts.py (85+ fixed sentences, 3 languages),
+   |-- app/tools             registry.py (10 tools, schemas, notes), flow_texts.py (150 fixed sentences, 3 languages),
    |                         return_texts.py (eligibility paragraphs with times)
    |-- app/rag               BM25-free: Chroma vector index over FAQ.md and Policies.md, OpenAI embeddings
    v
-app/db  repository.py (the authorization boundary, SQL filters on the signed-in customer), schema.py (SQLite, 5 tables),
-        seed_data.py, connection.py (three factories; never creates a file by accident), health.py
+app/db  repository.py (the authorization boundary, SQL filters on the signed-in customer), schema.py (SQLite, 8 tables, schema version 2; migrations.py and migrate.py are operator-run and scratch-only),
+        seed_data.py, connection.py (four factories; never creates a file by accident), health.py
 ```
 
 | Component | Responsibility | Where |
@@ -71,9 +71,9 @@ app/db  repository.py (the authorization boundary, SQL filters on the signed-in 
 | Area | Result |
 |---|---|
 | Behaviour | Intent split for returns (request, eligibility question, status question); `check_return_eligibility` timing tool with item recovery; named-order lookup enforced; general policy questions routed to search; angry refund demands looked up first; repeat-complaint clarification; refund-status wording; ambiguity guards |
-| Language | Code-decided language; 110 sentences in one three-language catalogue; Hindi and Hinglish greetings, thanks and off-topic detection |
+| Language | Code-decided language; 150 sentences in one three-language catalogue (129 before the ticket work); Hindi and Hinglish greetings, thanks and off-topic detection |
 | Evaluation engineering | Real-backend harness with denominators kept explicit; persistent usage ledger (every request, embeddings included, fail-closed ceiling); harness-only retry of pre-transmission failures; per-test attribution of transport failures; composition of attempts (first clean result per test, everything disclosed) |
-| Tests | 3796 offline tests (3137 at the original handover), all passing (section 6) |
+| Tests | 4,314 offline tests in the latest recorded run (3796 before the ticket work, 3137 at the original handover), all passing (section 6) |
 
 ## 4. Evaluation results (details and caveats in `docs/evaluation/EVALUATION_REPORT.md`)
 
@@ -88,7 +88,7 @@ scenarios 5/5, conversations 11/12 (45/46 keys, 133/134 universal), single-turn 
 ## 5. Known limitations and what still needs a person
 
 0. **Ticket-scope gate**: The ticket-scope gate (`guard.ticket_scope`) is vocabulary-based: it recognises store complaints from word lists, so unusual wording can be asked a clarifying question instead of getting a card, and it has **not yet passed independent held-out validation** (protocol: `tests/data/ticket_scope_heldout.md`; the 190 regression tests in `tests/test_ticket_scope_gate.py` are the tuning set).
-1. **Human review (blocking for production wording)**: all 110 Hinglish and Hindi sentences are drafts; 17 are marked High priority (13 original plus the four ticket-scope sentences) (the 105th, `which_order_to_return` (added after the review sheet's first 104 and not yet seen by a reviewer), is also a draft).
+1. **Human review (blocking for production wording)**: all 150 Hinglish and Hindi sentences are drafts; 26 are marked High priority in the review sheet (13 original, the four ticket-scope sentences and the ticket-flow sentences) (the 105th, `which_order_to_return` (added after the review sheet's first 104 and not yet seen by a reviewer), is also a draft).
    Every manual verdict in the evaluation report is the assistant's own reading, not a signed review.
 2. **Live validation of the last two cycles** was not run (ledger headroom 18 of 700 at the end). About 20 requests would cover the
    Hinglish refund wording, a Hindi return journey and the which-order question; the ceiling must be discussed first.
@@ -102,8 +102,26 @@ scenarios 5/5, conversations 11/12 (45/46 keys, 133/134 universal), single-turn 
 7. **Statistical weight**: small sets, one to five repetitions, temperature 0.2, written by the same team as the prompts.
 8. **Voice (LiveKit)** has never been run live. **Docker**: the `api` and `app` services were built and health-checked on 2026-11-19 (see `docs/PROJECT_STATUS.md`); the voice `worker` was not tested.
 9. **Request counts** are client-side bookkeeping at the `urllib`/`httpx` layer; other HTTP libraries would not be counted.
+10. **Ticket flow (Phase 1.1 and Phase 2)**: gate OFF by default; schema version 2 migrated on scratch databases only; not verified against a live model or with several processes writing at once. Outstanding owner decisions: the delayed-replay policy, four proposed English messages and the fluent Hindi and Hinglish review (see the section at the end of section 6).
 
 ## 6. Final offline test result
+
+**Later recorded run (ticket flow and schema version 2).** `uv run python -m pytest tests -q -p no:cacheprovider`: **4,314 passed, 0 failed,
+0 skipped**, one ChromaDB deprecation warning (about 14 minutes in the last recorded run). The figures above are the historical record of
+the corrective-v2 cycle and are kept as written. This later result was recorded before the documentation-only edits that followed it
+and has not been re-run for them.
+
+**Ticket flow and schema version 2 (Phase 1.1 and Phase 2).** `SUPPORT_TICKET_FRESH_FLOW_ENABLED` (default `false`) switches on the
+fresh-description flow; with it ON the backend starts only with `RepositoryTicketWriter` (`app/db/ticket_writer.py`) and a schema
+version 2 database. Runtime code requires version 2 exactly (`app/db/connection.py`, four connection factories); a version-1 database
+is refused until it is migrated or re-seeded and nothing migrates at startup. `python -m app.db.migrate` (`app/db/migrations.py`) is
+operator-run, needs `--scratch`, makes a verified backup and rehearses a restore; it has been run on scratch databases only. Creation
+is idempotent per request key (`ticket_write_intents` keeps the key and payload before the insert), duplicate detection is a separate
+outcome, and the account-level rate limit is counted inside the creation transaction. After an uncertain outcome the request is kept and
+reconciled with its original key and payload at the customer's next ticket request. Unverified: live-model behaviour and several
+processes writing at once. Outstanding owner decisions: the delayed-replay policy, four proposed English messages
+(`ticket_duplicate_active`, `ticket_idempotency_conflict`, `ticket_recovery_unknown`, `ticket_recovered_created`) and the fluent
+Hindi and Hinglish review. Current status: [PROJECT_STATUS.md](PROJECT_STATUS.md).
 
 `uv run python -m pytest tests -q -rs`: **3137 passed, 0 failed, 0 skipped**, 1 warning (a Chroma deprecation note), 239 seconds. Growth:
 2639 before the evaluation tooling, 2825 after the second correction round, 2983 after the third, 3079 at the handover, 3137 after the return-prose fix (evaluation report, section 13).

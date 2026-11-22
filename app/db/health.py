@@ -48,7 +48,7 @@ def check_database_health(db_path: Optional[str] = None) -> HealthResult:
             pass
     if state == "empty":
         return HealthResult(NOT_INITIALIZED)
-    if state == "legacy":
+    if state in ("legacy", "outdated"):
         return HealthResult(SCHEMA_INCOMPATIBLE, "outdated")
     if state == "future":
         return HealthResult(SCHEMA_INCOMPATIBLE, "future")

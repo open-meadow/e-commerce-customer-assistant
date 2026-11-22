@@ -26,7 +26,9 @@ TKT_ID = re.compile(r"TKT_[0-9a-f]{32}")
 def tickets(path, customer=None):
     connection = get_connection(path)
     try:
-        sql = "SELECT * FROM support_tickets"
+        # the nine original columns; the Phase 2 columns are covered by tests/test_phase2_*.py
+        sql = ("SELECT ticket_id, customer_id, order_id, issue_type, description, conversation_summary, status, priority, "
+               "created_at FROM support_tickets")
         params = ()
         if customer:
             sql += " WHERE customer_id = ?"

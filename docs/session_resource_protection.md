@@ -141,6 +141,8 @@ means "unset". Also listed in `.env.example`.
 | `SUPPORT_LIVEKIT_TIMEOUT_SECONDS` | 10 | 1 to 60 | One LiveKit dispatch or room release |
 | `SUPPORT_SWEEP_INTERVAL_SECONDS` | 60 | 1 to 3,600 | Background cleanup of expired sessions |
 | `SUPPORT_SHUTDOWN_TIMEOUT_SECONDS` | 20 | 1 to 300 | All room releases at shutdown, overall |
+| `SUPPORT_TICKET_RATE_MAX` | 5 | 1 to 1,000 | Account-level ticket creations allowed per rolling window |
+| `SUPPORT_TICKET_RATE_WINDOW_SECONDS` | 86400 | 60 to 31,536,000 | Length of the rolling ticket-creation window |
 | `SUPPORT_VOICE_MAX_SECONDS` | 1800 | 30 to 14,400 | Voice worker: longest call |
 | `SUPPORT_VOICE_IDLE_SECONDS` | 300 | 10 to 3,600 | Voice worker: longest silence (not above the call limit) |
 | `SUPPORT_AGENT_TOKEN` | none | 16 to 256 printable characters, no spaces | Voice worker to `/api/agent/*`. Required for voice (503 until set; the worker will not start without it) |

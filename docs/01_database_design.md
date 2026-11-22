@@ -6,6 +6,8 @@
 **Status:** Phase 1 design approved. Checkpoint 2 (`app/db/schema.py`) implements Section C and was approved on 2026-11-06. Checkpoint 7A (the write-function contracts in Sections F, G, and H) is approved and was committed and pushed in `8ce2d43`. Those functions are **implemented** (`6a2c11a`, `app/db/repository.py`) and tested (`0f27739`). Database Checkpoints 1–10 are complete. See "Implementation status" below. **D2 contract freeze (approved by Person A in the master handover, 2026-11-11):** this document records the approved D2 design in Sections C, E, F, G, I, K and L: a persisted `reason_category` column, exact-text reason and ticket-text validation, canonical timestamp constraints, `RET_`/`TKT_` identifiers, the new eligibility outcomes and precedence, the `utc_now()` clock, `user_version` 0/1/>1 with fresh-database-only policy, three connection factories and the health states. **D2 is implemented** (checkpoints D3 to D8, commit `7dfd2f0` on `rukum/db`, 2026-11-11); the "Implementation status" block below describes the code. Sections labelled "Legacy" describe the pre-D2 contract, which is superseded and no longer implemented.
 **Scope of this document:** design. It was written under the Phase 1 task boundary (no application code, migrations, seed scripts, UI, RAG, LangGraph, or voice work); that sentence describes the original task, not the current repository, which now contains the implementation described below. Checkpoint 7A changed the write contracts only; it did not change Section C.
 
+**Phase 2 amendment (schema version 2).** This document is the D2 design record at schema version 1 and is kept as written. The code now has `SCHEMA_VERSION = 2`: `support_tickets` was rebuilt (nullable `conversation_summary`, request key and hash, issue key, ten statuses) and `ticket_events`, `ticket_erasure_log` and `ticket_write_intents` were added, so the schema has eight tables. Every runtime connection requires version 2 exactly; a version-1 database is `outdated` and is refused until an operator migrates it or it is re-seeded. A fourth connection factory, `get_migration_connection()`, exists for the operator-run migration only (`python -m app.db.migrate`, scratch databases only; no protected database has been migrated), and nothing migrates automatically. Where a paragraph below says five tables, three connection factories, "M2: fresh database only" or `user_version = 1` is current, read it as the D2 state described here. Current status: [PROJECT_STATUS.md](PROJECT_STATUS.md).
+
 **Implementation status (2026-11-11, reconciled with the code in database commit `7dfd2f0` on `rukum/db`).** This block reports what exists in `app/db/`. The D2 contract frozen in this document is implemented. Where an older paragraph below is labelled "Legacy", it describes the pre-D2 code and is kept for history only.
 
 - **Tables (`app/db/schema.py`, `create_schema`):** the five tables in Section C with the composite foreign keys, the D2 CHECK constraints (canonical timestamps, exact-text limits, status and delivery consistency, the `issue_type` allowlist, the `reason_category` allowlist), the persisted `reason_category` column, `conversation_summary NOT NULL`, the partial unique index `uq_active_return_per_item`, and `PRAGMA user_version = 1` stamped in the same `BEGIN IMMEDIATE` transaction. `create_schema` accepts only a genuinely empty database (no migration, M2); a legacy or newer database is rejected unchanged.
@@ -285,7 +287,7 @@ erDiagram
 
 **6. Identifiers.** Return ID `RET_` plus 32 lowercase hexadecimal characters from one UUID4. Ticket ID `TKT_` plus 32 lowercase hexadecimal characters from one UUID4. One UUID4 per operation. A collision is handled by the primary-key constraint: roll back and raise `DatabaseConstraintError`. No pre-check and no automatic retry. IDs are not authorization credentials. (The legacy format is `RET-` or `TKT-` plus 12 uppercase hexadecimal characters.)
 
-**7. Schema version.** New D2 schema creation stamps `PRAGMA user_version = 1` in the same transaction as the schema (Section I).
+**7. Schema version.** New D2 schema creation stamps `PRAGMA user_version = 1` in the same transaction as the schema (Section I). *(Phase 2: the current version is 2.)*
 
 **8. Unchanged.** The five tables, the composite foreign keys, `uq_active_return_per_item`, the Section D enums, integer paise and the ownership model.
 
@@ -589,21 +591,22 @@ Already consistent with the HR Leave Assistant practical referenced earlier in t
 
 ### D2 amendment: schema versioning, fresh-database policy, connections and health (approved by Person A, 2026-11-11; implemented)
 
-**Status.** Source: Person A's master handover, Sections 8.6 to 8.8. **Implemented** (checkpoints D3 and D4). The code has three connection factories, `user_version` checks on every connection, an `APP_DB_PATH` override with the default `data/app_d2.db`, a 5.0 s timeout and no migration. The legacy `data/app.db` is protected and never opened or migrated. Initialization and seeding are explicit, operator-run commands (`python -m app.db.seed_data`) that never run on a normal connection or at application startup. The "created from a schema script and seeded at startup" wording in "Running locally" above describes the original plan and is superseded.
+**Status.** Source: Person A's master handover, Sections 8.6 to 8.8. **Implemented** (checkpoints D3 and D4). The code had three connection factories at D2 (a fourth was added in Phase 2), `user_version` checks on every connection, an `APP_DB_PATH` override with the default `data/app_d2.db`, a 5.0 s timeout and no migration. The legacy `data/app.db` is protected and never opened or migrated. Initialization and seeding are explicit, operator-run commands (`python -m app.db.seed_data`) that never run on a normal connection or at application startup. The "created from a schema script and seeded at startup" wording in "Running locally" above describes the original plan and is superseded.
 
 **1. Schema versions (`PRAGMA user_version`).**
 
 | `user_version` | Meaning | Behavior |
 |---:|---|---|
 | 0 | Uninitialized if there are no tables; legacy or unknown if tables exist | An empty or missing database may be initialized through the controlled initializer. Existing tables with version 0 are rejected and preserved unchanged |
-| 1 | The current approved D2 schema | Runtime-compatible, subject to the per-connection version check |
-| greater than 1 | Future or unsupported schema | Fail closed. Not opened for normal operation |
+| 1 | The D2 schema (version 1) | **Outdated since Phase 2:** refused by every runtime connection until an operator migrates it or it is re-seeded |
+| 2 | The current schema (Phase 2) | Runtime-compatible, subject to the per-connection version check |
+| greater than 2 | Future or unsupported schema | Fail closed. Not opened for normal operation |
 
-The legacy code never stamped `user_version`, so existing databases are **legacy pre-D2 databases at `user_version = 0`**. They are not "version 1". New D2 schema creation stamps `user_version = 1` in the same transaction as the schema.
+The legacy code never stamped `user_version`, so existing databases are **legacy pre-D2 databases at `user_version = 0`**. They are not "version 1". New D2 schema creation stamps `user_version = 1` in the same transaction as the schema. *(Phase 2: new schemas are stamped `user_version = 2`.)*
 
-**2. Migration choice M2: fresh database only.** There is **no** legacy migration engine in the MVP: no automatic upgrade, cleanup, row transformation, truncation, category inference, migration mapping file, DDL fingerprint comparison, operator row override or data-migration framework. A legacy database file is preserved unchanged and rejected. A missing database is created only through the controlled initialization factory.
+**2. Migration choice M2: fresh database only (D2; amended in Phase 2, see the note at the top of this document).** There is **no** legacy migration engine in the MVP: no automatic upgrade, cleanup, row transformation, truncation, category inference, migration mapping file, DDL fingerprint comparison, operator row override or data-migration framework. A legacy database file is preserved unchanged and rejected. A missing database is created only through the controlled initialization factory.
 
-**3. Three connection factories, all in `app/db/connection.py`.**
+**3. Connection factories, all in `app/db/connection.py` (three at D2; a fourth, `get_migration_connection()`, was added in Phase 2 for the operator-run migration only).**
 
 | Factory | URI mode | Purpose and rules |
 |---|---|---|
@@ -620,8 +623,9 @@ Normal and read-only connections never initialize a database. Every writable con
 | Missing database file | No creation. `not_initialized` |
 | Empty database, no schema | `not_initialized` |
 | Existing tables with `user_version = 0` | `schema_incompatible`, reason `outdated` (legacy) |
-| `user_version = 1` | `ready`, if accessible |
-| `user_version` greater than 1 | `schema_incompatible`, reason `future` |
+| `user_version = 2` (version 1 at D2) | `ready`, if accessible |
+| `user_version = 1` (the older D2 schema, since Phase 2) | `schema_incompatible`, reason `outdated` |
+| `user_version` greater than 2 | `schema_incompatible`, reason `future` |
 | Read-only connection failure | `unavailable` |
 
 Exact schema structure is validated during controlled initialization. Runtime checks focus on the version and state, with no full DDL comparison on every request. Write paths fail with typed exceptions for incompatible or unavailable states.

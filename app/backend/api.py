@@ -15,7 +15,7 @@ from dataclasses import replace
 from typing import Mapping, Optional
 
 from app.backend import clock
-from app.backend.config import Settings
+from app.backend.config import ConfigError, Settings
 from app.backend.limits import BudgetedLLM, ProviderBudget, SessionLimitError
 from app.backend.sessions import SessionClosedError, SessionRegistry
 from app.backend.types import (BackendHealth, ChatReply, ChoiceSelection, ConfirmationDecision,
@@ -25,10 +25,41 @@ from app.db.errors import DatabaseError
 from app.db.health import check_database_health
 from app.llm.base import LLMClient, LLMError
 from app.llm.providers import build_llm_client
+from app.orchestrator import guard
 from app.orchestrator.engine import Engine, Turn
 from app.rag import embedding_configuration
 
 log = logging.getLogger("app.backend")
+
+# A description longer than the 2,000-character limit is let through to the engine ONLY while a fresh-description request is
+# open, so the approved over-limit reply (and its attempt count) can answer it; everything else still gets the generic refusal.
+# The cap bounds what the engine ever sees [R].
+_OVER_LIMIT_HARD_CAP = 50_000
+
+
+def build_ticket_writer(settings: Settings):
+    """The production composition of the fresh-description flow's writer: the persistence-gate interlock (U-1).
+
+    Gate OFF: no writer (the legacy flow persists as before). Gate ON: ONLY the real repository writer is accepted. There is no
+    parameter, environment value, request, UI control or model output that can select another writer, and a fake can never be
+    passed in here (tests inject one straight into an ``Engine``). If the real writer is missing, or refuses to start (for example
+    because the schema is not migrated), startup fails closed.
+    """
+    if not settings.fresh_ticket_flow_enabled:
+        return None
+    try:
+        from app.db.ticket_writer import RepositoryTicketWriter
+    except ImportError as exc:
+        raise ConfigError("SUPPORT_TICKET_FRESH_FLOW_ENABLED is true but the real ticket writer is not available; "
+                          "the fresh-description flow cannot be enabled") from exc
+    try:
+        writer = RepositoryTicketWriter()
+    except Exception as exc:
+        raise ConfigError("SUPPORT_TICKET_FRESH_FLOW_ENABLED is true but the real ticket writer cannot start "
+                          f"({type(exc).__name__}); the fresh-description flow cannot be enabled") from exc
+    if type(writer) is not RepositoryTicketWriter:
+        raise ConfigError("SUPPORT_TICKET_FRESH_FLOW_ENABLED requires the real repository ticket writer")
+    return writer
 
 _UNAVAILABLE_TEXT = "The service is temporarily unavailable. Please try again shortly."
 _INVALID_SESSION_TEXT = "Your session has ended or is no longer valid. Please sign in again."
@@ -53,7 +84,10 @@ class Backend:
         # The engine's model calls are charged to the session's budget; ``self.llm`` stays the raw client.
         self.budget = ProviderBudget(self.settings.provider_calls_per_session, self.settings.provider_calls_per_minute)
         self.registry.add_drop_listener(lambda session, reason: self.budget.forget(session.session_ref))
-        self.engine = Engine(self.registry, BudgetedLLM(self.llm, self.budget), self.settings, interpret=interpret_replies)
+        self.ticket_writer = build_ticket_writer(self.settings)  # None while the gate is OFF; fail closed when ON (U-1)
+        log.info("fresh-description ticket flow: %s", "ON" if self.ticket_writer is not None else "OFF")
+        self.engine = Engine(self.registry, BudgetedLLM(self.llm, self.budget), self.settings, interpret=interpret_replies,
+                             ticket_writer=self.ticket_writer)
 
     @property
     def interpretation_active(self) -> bool:
@@ -91,9 +125,7 @@ class Backend:
                 return StartSessionResult(False, None, _CAPACITY_TEXT, "capacity", exc.retry_after)
             return StartSessionResult(False, None, _CREATION_RATE_TEXT, "rate_limited", exc.retry_after)
         log.info("session started ref=%s", session.session_ref)
-        greeting = (f"Hi {match['name']}! I'm the store's automated support assistant. I can check order "
-                    "status, answer refund and policy questions, look up products, start return requests "
-                    "and raise support tickets. What can I help you with?")
+        greeting = guard.GREETING_REPLY.replace("Hello!", f"Hi {match['name']}!", 1)  # the approved greeting (U-3)
         return StartSessionResult(True, ConversationState(session.handle), greeting)
 
     def end_session(self, state: ConversationState) -> None:
@@ -135,9 +167,13 @@ class Backend:
                     if not isinstance(message, str) or not message.strip():
                         return error("invalid_request", "Please type a message.")
                     if len(message) > self.settings.max_message_chars:
-                        return error("message_too_long",
-                                     f"That message is too long. Please keep it under "
-                                     f"{self.settings.max_message_chars} characters.")
+                        draft = session.ticket_draft
+                        description_requested = (self.settings.fresh_ticket_flow_enabled and draft is not None
+                                                 and draft.stage == "awaiting" and len(message) <= _OVER_LIMIT_HARD_CAP)
+                        if not description_requested:
+                            return error("message_too_long",
+                                         f"That message is too long. Please keep it under "
+                                         f"{self.settings.max_message_chars} characters.")
                     if session.message_count >= self.settings.max_messages_per_session:
                         return error("rate_limited", "You've reached the message limit for this session. "
                                                      "Please start a new session.", terminal=True)

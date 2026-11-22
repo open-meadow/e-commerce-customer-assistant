@@ -156,8 +156,37 @@ WHEN = {
     "notice_on_hold": "Added when the earlier issue is put on hold for a separate new one",
     "item_fallback": "Used inside other sentences when an item's product name is unavailable",
     "which_order_status": "Several orders hold the product the customer named and none was typed: asks which order (IDs and statuses only; nothing is read first)",
+    "ticket_fresh_request": "A customer-originated ticket request starts the fresh-description flow: the first request for a description in the customer's own words (gate ON); states that only this description is used",
+    "ticket_prompt_two_bare": "The first invalid description (a bare or generic word from the closed list): the approved second prompt, with Cancel (gate ON)",
+    "ticket_prompt_two_over": "The first over-limit description: asks to shorten it to 2,000 characters or fewer, with Cancel (gate ON)",
+    "ticket_exit": "The second invalid description: graceful exit, nothing saved, the customer may ask again (gate ON)",
+    "ticket_cancel_label": "Button label: cancel the ticket request",
+    "ticket_outcome_unknown": "The ticket writer cannot say whether the ticket was created: the details stay, do not submit the same issue again while unresolved (gate ON)",
+    "ticket_write_failed": "The ticket writer established that no ticket was created (or the flow has no writer): nothing was saved, try later (gate ON)",
+    "ticket_duplicate_active": "An active ticket already exists for this issue: names it, says nothing new was created and that adding to it is not available yet (gate ON; wording proposed, not yet approved)",
+    "ticket_idempotency_conflict": "The same request key arrived with different content: nothing new was created (gate ON; wording proposed, not yet approved)",
+    "ticket_recovery_unknown": "A new ticket request while an earlier confirmed request of the same customer still cannot be reconciled: says its outcome is unconfirmed, do not resubmit (gate ON; wording proposed, not yet approved)",
+    "ticket_recovered_created": "An earlier confirmed ticket request was found to have been saved: names the ticket, says no new request was started (gate ON; wording proposed, not yet approved)",
+    "ticket_conflict_question": "A second state-changing request while a ticket draft is pending: asks Keep pending or Discard and start new (gate ON)",
+    "ticket_keep_label": "Button label: keep the pending ticket request",
+    "ticket_discard_label": "Button label: discard the pending ticket request and start the new one",
+    "ticket_classify_question": "An ambiguous message while a description is awaited: asks whether it is the description or a question (gate ON)",
+    "ticket_use_desc_label": "Button label: use the held message as the ticket description",
+    "ticket_is_question_label": "Button label: the held message is a question",
+    "ticket_order_pick": "After a valid description: asks which of the customer's own orders the ticket is about (gate ON)",
+    "ticket_order_pick_more": "As ticket_order_pick when the customer has more orders than are shown: says how many are shown and that another order ID can be typed (gate ON)",
+    "ticket_no_order_label": "Button label and card text: the ticket is about no order",
+    "pending_fresh": "The confirmation card of the fresh flow: the complete description as typed, then category and order on separate lines (gate ON)",
 }
 HIGH = {  # wording where tone or meaning can change what the customer believes or does
+    "ticket_outcome_unknown": "NEW: owner-approved English wording (decision W-1, verbatim); Hindi and Hinglish are DRAFTS awaiting fluent review",
+    "ticket_write_failed": "NEW: owner-approved English wording (decision U-4, verbatim); Hindi and Hinglish are DRAFTS awaiting fluent review",
+    "ticket_duplicate_active": "NEW: PROPOSAL, NOT OWNER-APPROVED: the English wording is a proposal pending owner approval (the English review status above does not approve it); Hindi and Hinglish are DRAFTS awaiting fluent review",
+    "ticket_recovery_unknown": "NEW: PROPOSAL, NOT OWNER-APPROVED: the English wording is a proposal pending owner approval (the English review status above does not approve it); Hindi and Hinglish are DRAFTS awaiting fluent review",
+    "ticket_recovered_created": "NEW: PROPOSAL, NOT OWNER-APPROVED: the English wording is a proposal pending owner approval (the English review status above does not approve it); Hindi and Hinglish are DRAFTS awaiting fluent review",
+    "ticket_exit": "NEW: owner-approved English wording (decision B-11, verbatim); Hindi and Hinglish are DRAFTS awaiting fluent review",
+    "ticket_prompt_two_over": "NEW: owner-approved English wording (decision B-11, verbatim); Hindi and Hinglish are DRAFTS awaiting fluent review",
+    "ticket_fresh_request": "NEW: owner-approved English wording (design specification, fixed request); Hindi and Hinglish are DRAFTS awaiting fluent review",
     "refund_pending": "must not read as a promise or a refusal; mixes the English status word Pending",
     "refund_processed": "must not suggest the money has arrived; mixes the English status word Processed",
     "refund_failed": "must not promise; offers a ticket",
@@ -234,6 +263,11 @@ engine said before localisation. All {count} sentences live in ONE catalogue, `a
 paragraphs that carry times are in `app/tools/return_texts.py`: they were reviewed with the first sheet and are unchanged.)
 This sheet is generated by `scripts/localization_review.py`; a CSV with blank verdict, notes and suggestion columns for the
 reviewer is generated beside it.
+
+Approval status of the English wording. `REVIEW_STATUS` marks the English catalogue as the approved reference text.
+That does not approve every individual sentence: four ticket messages are PROPOSALS awaiting owner approval and are
+marked as such in this sheet: `ticket_duplicate_active`, `ticket_idempotency_conflict`, `ticket_recovery_unknown` and
+`ticket_recovered_created`. They are spoken only while the fresh-ticket gate is ON (it is OFF by default).
 
 How to review: for each row check (1) it reads naturally, (2) the tone is polite and equally formal across rows (the draft
 uses "aap"/"kripya"/"कृपया" and "main"/"मैं" for the assistant), (3) it promises no more than the English does (a ticket is a

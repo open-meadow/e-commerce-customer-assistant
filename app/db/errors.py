@@ -57,3 +57,14 @@ class DatabaseConstraintError(DatabaseError):
 
 class DatabaseDataIntegrityError(DatabaseError):
     """Persisted data violates an invariant (for example a bad timestamp)."""
+
+
+class MigrationError(DatabaseError):
+    """An operator-run schema migration was refused or failed. The database is left exactly as it was."""
+
+
+class DatabaseOutcomeUnknownError(DatabaseError):
+    """A write was sent to the database but its outcome cannot be established (for example the COMMIT itself failed).
+
+    The caller must NOT report success or "nothing was saved"; it keeps the request key and retries the same request.
+    """

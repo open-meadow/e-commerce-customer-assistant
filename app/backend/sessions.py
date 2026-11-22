@@ -72,6 +72,25 @@ class ChoiceState:
 
 
 @dataclass
+class TicketDraft:
+    """All ticket-specific state of the fresh-description flow (Phase 1.1; the single draft object is a proposed mechanic [R]).
+
+    It is created when a customer-originated ticket request starts the flow and cleared by one assignment on cancel, exit,
+    expiry or creation. The issue book, the chat history, summaries and buffered clarification messages are never part of it
+    and are never read to build the description (OD-14, OD-18).
+    """
+    stage: str                        # "awaiting" | "metadata" | "preview"
+    created: datetime
+    expires: Optional[datetime]       # the draft's own absolute time-out; None while an outcome is unresolved (W-1)
+    attempts: int = 0                 # invalid description attempts so far (B-11: the second one ends the attempt)
+    last_invalid: str = ""            # bare or over_limit: which second prompt the last invalid reply earned
+    description: Optional[str] = None  # exactly the customer's text, never modified (OD-24)
+    issue_type: Optional[str] = None
+    order_id: Optional[str] = None
+    unresolved: Optional[dict[str, Any]] = None  # set after ``outcome_unknown``: {"action_id", "request_key"} (W-1)
+
+
+@dataclass
 class Session:
     handle: str
     customer_id: str
@@ -104,6 +123,7 @@ class Session:
     # An offer of a support ticket made in text after a refused return: {"order_id", "item_id",
     # "stage": "offered" | "details", "expires"}. It creates nothing; a ticket still needs its own Confirm.
     ticket_offer: Optional[dict[str, Any]] = None
+    ticket_draft: Optional[TicketDraft] = None  # the fresh-description flow's single draft object (gate ON only)
     committed: dict[str, int] = field(default_factory=lambda: {"return_request": 0, "support_ticket": 0})
     reserved: dict[str, int] = field(default_factory=lambda: {"return_request": 0, "support_ticket": 0})
     turn_lock: threading.Lock = field(default_factory=threading.Lock)
@@ -383,6 +403,17 @@ class SessionRegistry:
             if committed:
                 session.committed[action.kind] += 1
             action.state = "done"
+
+    def release(self, session: Session, action: PendingAction, *, keep_until: Optional[datetime] = None) -> None:
+        """Return a claimed action to ``open`` so the customer can retry THE SAME confirmation (same id, same payload, same
+        request key). Nothing is committed and the reserved capacity is released. The expiry is the original absolute one
+        unless ``keep_until`` is given (only for an unresolved outcome, which must not be cleared by a time-out, W-1)."""
+        with self._lock:
+            session.reserved[action.kind] = max(0, session.reserved[action.kind] - 1)
+            if action.state == "claimed":
+                action.state = "open"
+                if keep_until is not None and keep_until > action.expires:
+                    action.expires = keep_until
 
     def capacity_left(self, session: Session, kind: str) -> int:
         with self._lock:
