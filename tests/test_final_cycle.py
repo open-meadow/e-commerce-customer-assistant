@@ -205,9 +205,14 @@ class TestReturnJourneyLocalised:
 
     def test_reminders_while_a_choice_or_a_card_is_open(self, temp_db, language):
         client, choice = start_return(language)
-        assert client.say("hello?").text == flow_texts.text("remind_choice", language)
+        assert client.say("sure").text == flow_texts.text("remind_choice", language)
+        # Revision 4.5 (shared improvement): a greeting is a read-only message; it is answered and the open choice stays.
+        greeted = client.say("hello?")
+        assert greeted.text == flow_texts.text("greeting", language) and greeted.choice is not None
         card = client.pick(choice, "standard")
-        assert client.say("hello?").text == flow_texts.text("remind_pending", language)
+        assert client.say("sure").text == flow_texts.text("remind_pending", language)
+        greeted = client.say("hello?")
+        assert greeted.text == flow_texts.text("greeting", language) and greeted.pending is not None
         assert card.pending is not None
 
     def test_a_repeated_or_unknown_confirmation_is_refused_in_the_customers_language(self, temp_db, language):

@@ -122,14 +122,14 @@ class TestReturnIntents:
 
 class TestGreetings:
     def test_the_fixed_reply_says_it_is_automated(self):
-        assert "automated support assistant" in guard.GREETING_REPLY
+        assert "automated customer-support assistant" in guard.GREETING_REPLY  # the approved greeting (U-3, revision 4.5)
 
     def test_the_session_greeting_says_it_is_automated_and_keeps_the_name(self, temp_db):
         result = Backend(llm=ScriptedLLM()).start_session("C101")
-        assert result.ok and "Alice" in result.greeting and "automated support assistant" in result.greeting
+        assert result.ok and "Alice" in result.greeting and "automated customer-support assistant" in result.greeting
 
     @pytest.mark.parametrize("text", ["hi", "hello", "good morning"])
     def test_a_greeting_gets_the_reply_without_a_model_call(self, temp_db, text):
         llm = ScriptedLLM()
         reply = Client(Backend(llm=llm), "C101").say(text)
-        assert "automated support assistant" in reply.text and llm.chat_calls == 0
+        assert "automated customer-support assistant" in reply.text and llm.chat_calls == 0

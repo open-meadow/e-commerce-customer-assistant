@@ -80,11 +80,12 @@ def ret(db, rid="R1", reason="reason", category="standard", status="Requested",
 
 def ticket(db, tid="T1", issue="order", desc="d", summary="s", status="Open",
            priority="Normal", created_at=GOOD_TS, oid=None, cid="C1"):
+    # Phase 2: the rebuilt table also needs the issue key, the request key and hash and updated_at.
     db.execute(
-        "INSERT INTO support_tickets (ticket_id, customer_id, order_id, issue_type, "
-        "description, conversation_summary, status, priority, created_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        (tid, cid, oid, issue, desc, summary, status, priority, created_at),
+        "INSERT INTO support_tickets (ticket_id, customer_id, order_id, issue_type, issue_key, "
+        "description, conversation_summary, status, priority, request_key, request_hash, created_at, updated_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (tid, cid, oid, issue, "n:" + tid, desc, summary, status, priority, "k-" + tid, "h", created_at, created_at),
     )
 
 
@@ -93,26 +94,30 @@ def ticket(db, tid="T1", issue="order", desc="d", summary="s", status="Open",
 # ---------------------------------------------------------------------------
 
 class TestCreation:
-    def test_creates_five_tables_and_indexes(self, db):
+    def test_creates_eight_tables_and_indexes(self, db):
         names = {r[0] for r in db.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")}
         assert names == {"customers", "orders", "order_items",
-                         "return_requests", "support_tickets"}
+                         "return_requests", "support_tickets",
+                         "ticket_events", "ticket_erasure_log", "ticket_write_intents"}
         indexes = {r[0] for r in db.execute(
             "SELECT name FROM sqlite_master WHERE type='index' AND name NOT LIKE 'sqlite_%'")}
         assert "uq_active_return_per_item" in indexes
 
-    def test_stamps_user_version_one(self, db):
-        assert db.execute("PRAGMA user_version").fetchone()[0] == 1
+    def test_stamps_the_current_schema_version(self, db):
+        from app.db.connection import SCHEMA_VERSION
+        assert SCHEMA_VERSION == 2
+        assert db.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
 
     def test_return_requests_has_reason_category_column(self, db):
         columns = {r["name"]: r for r in db.execute("PRAGMA table_info(return_requests)")}
         assert columns["reason_category"]["notnull"] == 1
         assert columns["reason"]["notnull"] == 1
 
-    def test_ticket_summary_is_required(self, db):
+    def test_ticket_summary_is_nullable_since_phase_2(self, db):
+        # OD-15: new tickets carry NULL; legacy values are preserved by the migration (the old test asserted NOT NULL)
         columns = {r["name"]: r for r in db.execute("PRAGMA table_info(support_tickets)")}
-        assert columns["conversation_summary"]["notnull"] == 1
+        assert columns["conversation_summary"]["notnull"] == 0
 
     def test_foreign_key_guard(self):
         raw = sqlite3.connect(":memory:")
@@ -387,7 +392,10 @@ class TestSupportTickets:
     def test_text_limits_and_backstops(self, db, column):
         customer(db)
         ticket(db, "T1", **{column: "a" * 2000})
-        for n, bad in enumerate(["a" * 2001, "", " \t\n", "a\x00b", b"blob", None]):
+        bad_values = ["a" * 2001, "", " \t\n", "a\x00b", b"blob"]
+        if column == "desc":
+            bad_values.append(None)  # NULL is allowed for the summary only (OD-15); the description stays NOT NULL
+        for n, bad in enumerate(bad_values):
             with pytest.raises(sqlite3.IntegrityError):
                 ticket(db, f"X{n}", **{column: bad})
 

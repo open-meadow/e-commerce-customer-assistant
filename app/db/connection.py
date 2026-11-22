@@ -32,9 +32,12 @@ it. The default file is never created by normal startup; it is created
 only by the explicit seed command (``python -m app.db.seed_data``).
 
 Schema versions (``PRAGMA user_version``): 0 means uninitialized when no
-tables exist and a legacy pre-D2 database when tables exist; 1 is the
-current schema; greater than 1 is a future schema. There is no migration
-(M2: fresh database only).
+tables exist and a legacy pre-D2 database when tables exist;
+``SCHEMA_VERSION`` is the current schema; a version between 1 and
+``SCHEMA_VERSION - 1`` is an older D2 schema that an operator can migrate
+(reported as ``outdated``); greater than ``SCHEMA_VERSION`` is a future
+schema. Nothing migrates automatically: ``get_migration_connection`` is the
+fourth, tightly scoped factory used only by ``app.db.migrations`` (Phase 2).
 """
 
 from __future__ import annotations
@@ -54,7 +57,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_DB_PATH = str(PROJECT_ROOT / "app" / "db" / "data" / "app_d2.db")
 PROTECTED_DB_PATH = str(PROJECT_ROOT / "app" / "db" / "data" / "app.db")
 ENV_DB_PATH = "APP_DB_PATH"
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
+APP_D2_DB_PATH = str(PROJECT_ROOT / "app" / "db" / "data" / "app_d2.db")
 CONNECT_TIMEOUT_SECONDS = 5.0
 MEMORY_PATH = ":memory:"
 
@@ -69,6 +73,7 @@ __all__ = [
     "SCHEMA_VERSION",
     "get_connection",
     "get_initialization_connection",
+    "get_migration_connection",
     "get_readonly_connection",
     "read_schema_state",
     "resolve_db_path",
@@ -170,12 +175,13 @@ def _enable_foreign_keys(connection: sqlite3.Connection) -> None:
 
 
 def read_schema_state(connection: sqlite3.Connection) -> str:
-    """Classify the database: ``empty``, ``legacy``, ``current`` or ``future``.
+    """Classify the database: ``empty``, ``legacy``, ``outdated``, ``current`` or ``future``.
 
     Reads ``PRAGMA user_version`` and whether any user table exists.
     ``user_version`` 0 with no tables is ``empty``; with tables it is
-    ``legacy`` (a pre-D2 database). Version 1 is ``current``. Any other
-    value is ``future``.
+    ``legacy`` (a pre-D2 database). ``SCHEMA_VERSION`` is ``current``; an
+    older D2 version (1 up to ``SCHEMA_VERSION - 1``) is ``outdated`` (an
+    operator can migrate it); any greater value is ``future``.
     """
     version = connection.execute("PRAGMA user_version;").fetchone()[0]
     tables = connection.execute(
@@ -186,6 +192,8 @@ def read_schema_state(connection: sqlite3.Connection) -> str:
         return "empty" if tables == 0 else "legacy"
     if version == SCHEMA_VERSION:
         return "current"
+    if 0 < version < SCHEMA_VERSION:
+        return "outdated"
     return "future"
 
 
@@ -203,6 +211,10 @@ def _require_current(connection: sqlite3.Connection) -> None:
     if state == "legacy":
         raise SchemaIncompatibleError(
             "legacy pre-D2 database (user_version 0 with tables)", "outdated"
+        )
+    if state == "outdated":
+        raise SchemaIncompatibleError(
+            "older schema version; an operator must migrate it (nothing migrates automatically)", "outdated"
         )
     raise SchemaIncompatibleError("unsupported newer schema version", "future")
 
@@ -311,4 +323,45 @@ def get_initialization_connection(db_path: str) -> sqlite3.Connection:
         _check_file_header(path)
     connection = _open(_uri(path, "rwc"))
     _enable_foreign_keys(connection)
+    return connection
+
+
+def get_migration_connection(db_path: str) -> sqlite3.Connection:
+    """Open the one connection a schema migration may use (Phase 2, OD-06).
+
+    Tightly scoped: an explicit path to an EXISTING rollback-journal database,
+    never ``:memory:``, never the protected legacy ``app/db/data/app.db`` and never the
+    default ``app/db/data/app_d2.db``. Sidecar files must be absent. Unlike every other factory it leaves
+    ``PRAGMA foreign_keys`` OFF, because SQLite's table-rebuild procedure needs it; the migration turns
+    enforcement back on itself and verifies ``foreign_key_check`` before it commits. It never creates a file
+    and never checks the schema version (the migration does that itself).
+
+    Raises:
+        ConnectionError_: unsafe, protected, missing or unopenable path.
+    """
+    if db_path is None:
+        raise ConnectionError_("an explicit database path is required")
+    path = resolve_db_path(db_path)
+    if path == MEMORY_PATH:
+        raise ConnectionError_("an in-memory database cannot be migrated")
+    _refuse_protected(path)
+    if _same_path(path, APP_D2_DB_PATH):
+        raise ConnectionError_("the default demo database is not an authorised migration target")
+    if not os.path.isfile(path):
+        raise DatabaseNotInitializedError("the database file does not exist")
+    if _sidecars_present(path):
+        raise ConnectionError_("sidecar files present; refusing to migrate")
+    if _check_file_header(path):
+        raise DatabaseNotInitializedError("the database file is empty")
+    connection = _open(_uri(path, "rw"))
+    try:
+        connection.execute("PRAGMA foreign_keys = OFF;")
+        if connection.execute("PRAGMA foreign_keys;").fetchone()[0] != 0:
+            raise ConnectionError_("could not disable foreign keys for the migration")
+    except sqlite3.Error as exc:
+        _close_quietly(connection)
+        raise ConnectionError_("failed to prepare the migration connection") from exc
+    except ConnectionError_:
+        _close_quietly(connection)
+        raise
     return connection

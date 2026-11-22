@@ -106,9 +106,13 @@ class TestPaging:
 
 class TestMalformedRows:
     def future_row(self, raw):
-        raw.execute("INSERT INTO support_tickets (ticket_id, customer_id, order_id, issue_type, description, conversation_summary,"
-                    " status, priority, created_at) VALUES ('TKT_' || lower(hex(randomblob(16))), 'C101', NULL, 'general', 'd', 's',"
-                    " 'Open', 'Normal', '2099-01-01T00:00:00Z')")
+        # Phase 2 columns: an ``n:`` issue key, a request key and hash, and updated_at (>= created_at)
+        import uuid
+        tid = "TKT_" + uuid.uuid4().hex
+        raw.execute("INSERT INTO support_tickets (ticket_id, customer_id, order_id, issue_type, issue_key, description,"
+                    " conversation_summary, status, priority, request_key, request_hash, created_at, updated_at)"
+                    " VALUES (?, 'C101', NULL, 'general', ?, 'd', 's', 'Open', 'Normal', ?, 'h',"
+                    " '2099-01-01T00:00:00Z', '2099-01-01T00:00:00Z')", (tid, "n:" + tid, "k-" + tid))
         raw.commit()
 
     def test_a_future_dated_row_is_skipped_and_counted(self, temp_db, set_now, raw):
@@ -133,9 +137,10 @@ class TestMalformedRows:
     def test_a_skipped_row_is_logged_with_opaque_references_only(self, temp_db, set_now, raw, caplog):
         import logging
         seed_tickets(set_now, 1)
-        raw.execute("INSERT INTO support_tickets (ticket_id, customer_id, order_id, issue_type, description, conversation_summary,"
-                    " status, priority, created_at) VALUES ('TKT_" + "e" * 32 + "', 'C101', NULL, 'general', 'SECRET-DESCRIPTION', 'SECRET-SUMMARY',"
-                    " 'Open', 'Normal', '2099-01-01T00:00:00Z')")
+        raw.execute("INSERT INTO support_tickets (ticket_id, customer_id, order_id, issue_type, issue_key, description,"
+                    " conversation_summary, status, priority, request_key, request_hash, created_at, updated_at)"
+                    " VALUES ('TKT_" + "e" * 32 + "', 'C101', NULL, 'general', 'n:TKT_" + "e" * 32 + "', 'SECRET-DESCRIPTION', 'SECRET-SUMMARY',"
+                    " 'Open', 'Normal', 'k-secret', 'h', '2099-01-01T00:00:00Z', '2099-01-01T00:00:00Z')")
         raw.commit()
         with caplog.at_level(logging.WARNING, logger="app.db.repository"):
             page = repository.list_customer_tickets_page("C101")
@@ -185,10 +190,11 @@ class TestTypedTextWithAnOpenCard:
         c.say(word)
         assert rows(raw) == []
 
-    def test_an_unrelated_question_only_gets_the_reminder(self, temp_db, raw):
+    def test_an_unrelated_topic_is_answered_with_the_scope_reply_and_the_card_is_kept(self, temp_db, raw):
+        # Revision 4.5 (shared improvement): a topic change that changes no state is answered; it used to get only the reminder.
         c, card = open_card()
         out = c.say("what's the weather in Delhi?")
-        assert out.text == flow_texts.text("remind_pending", "en") and out.pending.action_id == card.pending.action_id
+        assert out.text == flow_texts.text("scope_redirect", "en") and out.pending.action_id == card.pending.action_id
 
     def test_a_question_is_answered_with_the_cards_own_text_and_the_draft_is_kept(self, temp_db, raw):
         c, card = open_card()

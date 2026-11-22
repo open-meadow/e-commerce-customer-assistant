@@ -35,6 +35,7 @@ original error.
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import sqlite3
 import uuid
@@ -47,6 +48,7 @@ from app.db.errors import (
     DatabaseConstraintError,
     DatabaseDataIntegrityError,
     DatabaseOperationalError,
+    DatabaseOutcomeUnknownError,
 )
 from app.db.validation import (
     RETURN_REASON_MAX,
@@ -648,16 +650,596 @@ def create_support_ticket(
             if not state["allowed"]:
                 return {"outcome": "rate_limited", "retry_at": state["retry_at"]}, False
         ticket_id = _new_id("TKT")
+        stamp = clock.format_timestamp(now)
+        # [R] deviation from the design wording (U-1): this gate-OFF legacy path keeps its signature and its summary
+        # semantics. It fills the Phase 2 columns itself: a server-generated request key, no idempotency hash, an ``n:``
+        # issue key (never deduplicated by the database) and a ``created`` event.
         connection.execute(
             "INSERT INTO support_tickets "
-            "(ticket_id, customer_id, order_id, issue_type, description, "
-            "conversation_summary, status, priority, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, 'Open', 'Normal', ?)",
+            "(ticket_id, customer_id, order_id, item_id, issue_type, issue_key, description, "
+            "conversation_summary, status, priority, parent_ticket_id, request_key, request_hash, "
+            "created_at, updated_at) "
+            "VALUES (?, ?, ?, NULL, ?, ?, ?, ?, 'Open', 'Normal', NULL, ?, 'legacy', ?, ?)",
             (
-                ticket_id, authenticated_customer_id, linked, issue_type,
-                description, conversation_summary, clock.format_timestamp(now),
+                ticket_id, authenticated_customer_id, linked, issue_type, f"n:{ticket_id}",
+                description, conversation_summary, f"legacy:{ticket_id}", stamp, stamp,
             ),
         )
+        _insert_event(connection, ticket_id=ticket_id, customer_id=authenticated_customer_id, kind="created",
+                      actor_type="customer", actor_ref=f"customer:{authenticated_customer_id}",
+                      request_key=f"legacy:{ticket_id}", request_hash="legacy", created_at=stamp)
         return {"outcome": "created", "ticket_id": ticket_id}, True
+
+    return _run_write(work)
+
+
+# ---------------------------------------------------------------------------
+# Phase 2: tickets with events, idempotency, duplicate detection and durable recovery
+# ---------------------------------------------------------------------------
+
+TICKET_STATUSES = ("New", "Open", "In Progress", "Pending", "Waiting for customer", "On hold",
+                   "Resolved", "Reopened", "Closed", "Cancelled")
+TERMINAL_STATUSES = ("Resolved", "Closed", "Cancelled")
+COMMENTS_MAX_DEFAULT = 100                 # OD-09 proposed starting value (configuration, not a constant of the schema)
+REOPEN_WINDOW_SECONDS_DEFAULT = 604800     # OD-03 proposed starting value: seven days
+REQUEST_KEY_MAX = 200                      # leaves room for the '#status' suffix inside the 256-character column check
+COMMENT_TEXT_MAX = 2000
+
+_TERMINAL_SQL = "('Resolved', 'Closed', 'Cancelled')"
+
+
+def _validate_request_key(value: Any) -> str:
+    if not isinstance(value, str):
+        raise TypeError("'request_key' must be a string")
+    if not value or len(value) > REQUEST_KEY_MAX or "\x00" in value:
+        raise ValueError("'request_key' must be 1 to 200 characters without NUL")
+    return value
+
+
+def _canonical_payload(issue_type: str, order_id: Optional[str], item_id: Optional[str],
+                       parent_ticket_id: Optional[str], description: str) -> str:
+    """The immutable request payload: exactly the fields the design hashes. No summary and no chat content."""
+    return json.dumps({"description": description, "issue_type": issue_type, "item_id": item_id,
+                       "order_id": order_id, "parent_ticket_id": parent_ticket_id},
+                      sort_keys=True, ensure_ascii=True, separators=(",", ":"))
+
+
+def _payload_hash(payload_json: str) -> str:
+    return hashlib.sha256(payload_json.encode("utf-8")).hexdigest()
+
+
+def _issue_key(issue_type: str, order_id: Optional[str], item_id: Optional[str], ticket_id: str) -> str:
+    """The one place an issue identity is built (design 3.1). Never supplied by the model or the customer."""
+    if issue_type in ("product", "return") and order_id is not None and item_id is not None:
+        return f"i:{order_id}:{item_id}"
+    if issue_type in ("order", "payment") and order_id is not None and item_id is None:
+        return f"o:{order_id}"
+    return f"n:{ticket_id}"
+
+
+def _next_seq(connection: sqlite3.Connection, ticket_id: str) -> int:
+    return connection.execute(
+        "SELECT COALESCE(MAX(seq), 0) + 1 FROM ticket_events WHERE ticket_id = ?", (ticket_id,)).fetchone()[0]
+
+
+def _insert_event(connection: sqlite3.Connection, *, ticket_id: str, customer_id: str, kind: str, actor_type: str,
+                  actor_ref: str, request_key: str, request_hash: str, created_at: str, body: Optional[str] = None,
+                  intent: Optional[str] = None, staff_review_required: int = 0, from_status: Optional[str] = None,
+                  to_status: Optional[str] = None, transition_reason: Optional[str] = None,
+                  trigger_event_id: Optional[str] = None) -> str:
+    event_id = _new_id("EVT")
+    connection.execute(
+        "INSERT INTO ticket_events (event_id, ticket_id, customer_id, seq, kind, actor_type, actor_ref, body, intent, "
+        "staff_review_required, from_status, to_status, transition_reason, trigger_event_id, request_key, request_hash, "
+        "created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (event_id, ticket_id, customer_id, _next_seq(connection, ticket_id), kind, actor_type, actor_ref, body, intent,
+         staff_review_required, from_status, to_status, transition_reason, trigger_event_id, request_key, request_hash,
+         created_at),
+    )
+    return event_id
+
+
+def _run_write_tracked(
+    work: Callable[[sqlite3.Connection, datetime], tuple[dict[str, Any], bool]],
+) -> dict[str, Any]:
+    """Like ``_run_write`` but a failure of the COMMIT itself raises ``DatabaseOutcomeUnknownError``.
+
+    An error before the COMMIT is sent means nothing was written (the transaction is rolled back). An error while the
+    COMMIT is running means the outcome cannot be established, so the caller must neither claim success nor claim that
+    nothing was saved. Business outcomes are still returned as values.
+    """
+    connection = get_connection()
+    committing = False
+    try:
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            now = clock.utc_now()
+            result, commit = work(connection, now)
+            if commit:
+                committing = True
+                connection.commit()
+                committing = False
+            else:
+                connection.rollback()
+            return result
+        except sqlite3.Error as exc:
+            if committing:
+                raise DatabaseOutcomeUnknownError("the outcome of a database write could not be established") from exc
+            _rollback_quietly(connection)
+            if isinstance(exc, sqlite3.IntegrityError):
+                raise DatabaseConstraintError("a database constraint was violated") from exc
+            raise DatabaseOperationalError("database write failed") from exc
+        except BaseException:
+            _rollback_quietly(connection)
+            raise
+    finally:
+        _close_quietly(connection)
+
+
+def _ticket_by_key(connection: sqlite3.Connection, customer_id: str, request_key: str) -> Optional[sqlite3.Row]:
+    return connection.execute(
+        "SELECT ticket_id, request_hash, status FROM support_tickets WHERE customer_id = ? AND request_key = ?",
+        (customer_id, request_key)).fetchone()
+
+
+def _prepare_intent(customer_id: str, request_key: str, payload_json: str, request_hash: str) -> dict[str, Any]:
+    """Transaction 1: persist the request key and the immutable payload BEFORE the insert is attempted (durable half of
+    idempotency). Returns ``prepared``, or ``already_created`` / ``idempotency_conflict`` without writing."""
+    def work(connection: sqlite3.Connection, now: datetime) -> tuple[dict[str, Any], bool]:
+        existing = _ticket_by_key(connection, customer_id, request_key)
+        if existing is not None:
+            if existing["request_hash"] == request_hash:
+                return {"outcome": "already_created", "ticket_id": existing["ticket_id"]}, False
+            return {"outcome": "idempotency_conflict"}, False
+        intent = connection.execute(
+            "SELECT request_hash, state, ticket_id FROM ticket_write_intents WHERE customer_id = ? AND request_key = ?",
+            (customer_id, request_key)).fetchone()
+        if intent is not None:
+            if intent["request_hash"] != request_hash:
+                return {"outcome": "idempotency_conflict"}, False
+            if intent["state"] == "committed":
+                return {"outcome": "already_created", "ticket_id": intent["ticket_id"]}, False
+            return {"outcome": "prepared"}, False
+        connection.execute(
+            "INSERT INTO ticket_write_intents (customer_id, request_key, payload_json, request_hash, state, created_at) "
+            "VALUES (?, ?, ?, ?, 'prepared', ?)",
+            (customer_id, request_key, payload_json, request_hash, clock.format_timestamp(now)))
+        return {"outcome": "prepared"}, True
+
+    return _run_write(work)
+
+
+def _insert_ticket_attempt(customer_id: str, request_key: str, payload: dict[str, Any], payload_json: str,
+                           request_hash: str, limit: Optional[tuple[int, int]]) -> dict[str, Any]:
+    """Transaction 2: ONE ``BEGIN IMMEDIATE`` holding the idempotency re-check, order and item ownership, duplicate
+    detection, the rolling rate-limit count and the INSERT (with its ``created`` event and the intent's move to
+    ``committed``). The check order is a requirement (design 4.1)."""
+    issue_type = payload["issue_type"]
+    order_id = payload["order_id"]
+    item_id = payload["item_id"]
+    parent_id = payload["parent_ticket_id"]
+    description = payload["description"]
+
+    def work(connection: sqlite3.Connection, now: datetime) -> tuple[dict[str, Any], bool]:
+        stamp = clock.format_timestamp(now)
+        existing = _ticket_by_key(connection, customer_id, request_key)
+        if existing is not None:  # 1. a retry always gets the original answer, even at the limit
+            if existing["request_hash"] == request_hash:
+                return {"outcome": "already_created", "ticket_id": existing["ticket_id"]}, False
+            return {"outcome": "idempotency_conflict"}, False
+        linked: Optional[str] = None  # 2. ownership; an unowned order silently becomes NULL (existence never disclosed)
+        if order_id is not None:
+            if connection.execute("SELECT 1 FROM orders WHERE customer_id = ? AND order_id = ?",
+                                  (customer_id, order_id)).fetchone() is not None:
+                linked = order_id
+        if item_id is not None:
+            owned_item = linked is not None and connection.execute(
+                "SELECT 1 FROM order_items WHERE item_id = ? AND order_id = ?", (item_id, linked)).fetchone()
+            if not owned_item:
+                _mark_intent(connection, customer_id, request_key, "item_not_found", stamp)
+                return {"outcome": "item_not_found"}, True
+        if parent_id is not None and connection.execute(
+                "SELECT 1 FROM support_tickets WHERE ticket_id = ? AND customer_id = ?",
+                (parent_id, customer_id)).fetchone() is None:
+            _mark_intent(connection, customer_id, request_key, "parent_not_found", stamp)
+            return {"outcome": "parent_not_found"}, True
+        ticket_id = _new_id("TKT")
+        issue_key = _issue_key(issue_type, linked, item_id, ticket_id)
+        if not issue_key.startswith("n:"):  # 3. duplicate detection: a new key for an issue that already has an active ticket
+            active = connection.execute(
+                "SELECT ticket_id, status FROM support_tickets WHERE customer_id = ? AND issue_type = ? AND issue_key = ? "
+                f"AND status NOT IN {_TERMINAL_SQL}", (customer_id, issue_type, issue_key)).fetchone()
+            if active is not None:
+                _mark_intent(connection, customer_id, request_key, "duplicate_active", stamp)
+                return {"outcome": "duplicate_active", "ticket_id": active["ticket_id"], "status": active["status"]}, True
+        if limit is not None:  # 4. the rolling account-level count, in the same transaction as the INSERT
+            state = _rate_state(connection, now, customer_id, limit)
+            if not state["allowed"]:
+                _mark_intent(connection, customer_id, request_key, "rate_limited", stamp)
+                return {"outcome": "rate_limited", "retry_at": state["retry_at"]}, True
+        connection.execute(  # 5. the INSERT: conversation_summary is NULL for every new ticket (OD-15)
+            "INSERT INTO support_tickets (ticket_id, customer_id, order_id, item_id, issue_type, issue_key, description, "
+            "conversation_summary, status, priority, parent_ticket_id, request_key, request_hash, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, NULL, 'Open', 'Normal', ?, ?, ?, ?, ?)",
+            (ticket_id, customer_id, linked, item_id, issue_type, issue_key, description, parent_id, request_key,
+             request_hash, stamp, stamp))
+        _insert_event(connection, ticket_id=ticket_id, customer_id=customer_id, kind="created", actor_type="customer",
+                      actor_ref=f"customer:{customer_id}", request_key=request_key, request_hash=request_hash,
+                      created_at=stamp)
+        updated = connection.execute(
+            "UPDATE ticket_write_intents SET state = 'committed', ticket_id = ?, last_outcome = NULL, resolved_at = ? "
+            "WHERE customer_id = ? AND request_key = ? AND state = 'prepared'", (ticket_id, stamp, customer_id, request_key))
+        if updated.rowcount != 1:
+            raise sqlite3.DatabaseError("the prepared intent for this request is missing")
+        return {"outcome": "created", "ticket_id": ticket_id}, True
+
+    try:
+        return _run_write_tracked(work)
+    except DatabaseConstraintError:
+        # another writer bypassed steps 1 to 3 (the unique indexes are the backstop): repeat once to report the typed outcome
+        return _run_write_tracked(work)
+
+
+def _mark_intent(connection: sqlite3.Connection, customer_id: str, request_key: str, outcome: str, stamp: str) -> None:
+    connection.execute(
+        "UPDATE ticket_write_intents SET last_outcome = ?, resolved_at = ? WHERE customer_id = ? AND request_key = ? "
+        "AND state = 'prepared'", (outcome, stamp, customer_id, request_key))
+
+
+def close_ticket_request(authenticated_customer_id: str, request_key: str) -> dict[str, Any]:
+    """Record that the customer was told a creation request definitely did NOT complete (``last_outcome = 'unavailable'``), so
+    reconciliation never replays it silently later. Only a still-unresolved ``prepared`` intent of this customer is touched; a
+    committed request is never changed (the answer stays ``already_created``). The same confirmation may still be retried with
+    its key: a successful retry clears the marker. Returns ``{"closed": bool}``."""
+    validate_identifier(authenticated_customer_id, "authenticated_customer_id")
+    _validate_request_key(request_key)
+
+    def work(connection: sqlite3.Connection, now: datetime) -> tuple[dict[str, Any], bool]:
+        cursor = connection.execute(
+            "UPDATE ticket_write_intents SET last_outcome = 'unavailable', resolved_at = ? "
+            "WHERE customer_id = ? AND request_key = ? AND state = 'prepared' AND last_outcome IS NULL",
+            (clock.format_timestamp(now), authenticated_customer_id, request_key))
+        return {"closed": cursor.rowcount == 1}, cursor.rowcount == 1
+
+    return _run_write(work)
+
+
+def _create_from_payload(customer_id: str, request_key: str, payload: dict[str, Any],
+                         limit: Optional[tuple[int, int]]) -> dict[str, Any]:
+    payload_json = _canonical_payload(payload["issue_type"], payload["order_id"], payload["item_id"],
+                                      payload["parent_ticket_id"], payload["description"])
+    request_hash = _payload_hash(payload_json)
+    prepared = _prepare_intent(customer_id, request_key, payload_json, request_hash)
+    if prepared["outcome"] != "prepared":
+        return prepared
+    return _insert_ticket_attempt(customer_id, request_key, payload, payload_json, request_hash, limit)
+
+
+def create_ticket_from_description(
+    authenticated_customer_id: str,
+    issue_type: str,
+    description: str,
+    request_key: str,
+    order_id: Optional[str] = None,
+    item_id: Optional[str] = None,
+    parent_ticket_id: Optional[str] = None,
+    rate_limit: Optional[tuple[int, int]] = None,
+) -> dict[str, Any]:
+    """Create a ticket from the customer's own description (the fresh-description contract, TD-23 and OD-14).
+
+    ``conversation_summary`` is NULL for every ticket created here (OD-15); the function never receives, generates or stores a
+    summary. ``description`` is validated and stored exactly as given (verbatim, at most 2,000 code points; never modified).
+    ``request_key`` is stable per confirmation; the request hash covers ``issue_type``, ``order_id``, ``item_id``,
+    ``parent_ticket_id`` and the exact description (no summary or chat content). The request key and the immutable payload are
+    persisted BEFORE the insert (``ticket_write_intents``), so an uncertain outcome is recoverable (see
+    ``retry_ticket_request``). Business outcomes are returned as values:
+
+    * ``created`` + ``ticket_id``
+    * ``already_created`` + ``ticket_id``: the same key and payload (idempotency; a retry never writes again)
+    * ``idempotency_conflict``: the same key with a different payload
+    * ``duplicate_active`` + ``ticket_id`` + ``status``: a NEW key for an issue that already has an active ticket (duplicate
+      detection; nothing written; no offer to add information)
+    * ``rate_limited`` + ``retry_at``
+    * ``item_not_found``, ``parent_not_found``
+
+    An error while the COMMIT of the insert runs raises ``DatabaseOutcomeUnknownError``. Idempotency, duplicate detection and
+    adding information are three different operations (OD-27) and never turn into one another.
+    """
+    validate_identifier(authenticated_customer_id, "authenticated_customer_id")
+    validate_issue_type(issue_type)
+    validate_text(description, "description", TICKET_TEXT_MAX)
+    _validate_request_key(request_key)
+    for name, value in (("order_id", order_id), ("item_id", item_id), ("parent_ticket_id", parent_ticket_id)):
+        if value is not None:
+            validate_identifier(value, name)
+    if item_id is not None and order_id is None:
+        raise ValueError("an item needs its order")
+    limit = _validate_rate_limit(rate_limit)
+    payload = {"issue_type": issue_type, "order_id": order_id, "item_id": item_id,
+               "parent_ticket_id": parent_ticket_id, "description": description}
+    return _create_from_payload(authenticated_customer_id, request_key, payload, limit)
+
+
+def get_ticket_request_state(authenticated_customer_id: str, request_key: str) -> dict[str, Any]:
+    """What the database knows about a creation request of this customer: ``unknown``, ``prepared`` (persisted, no ticket
+    yet; ``last_outcome`` may name a definite refusal) or ``committed`` (``ticket_id``). Customer-scoped in SQL."""
+    validate_identifier(authenticated_customer_id, "authenticated_customer_id")
+    _validate_request_key(request_key)
+
+    def work(connection: sqlite3.Connection, now: datetime) -> dict[str, Any]:
+        row = connection.execute(
+            "SELECT state, last_outcome, ticket_id FROM ticket_write_intents WHERE customer_id = ? AND request_key = ?",
+            (authenticated_customer_id, request_key)).fetchone()
+        if row is None:
+            return {"state": "unknown"}
+        return {"state": row["state"], "last_outcome": row["last_outcome"], "ticket_id": row["ticket_id"]}
+
+    return _run_read(work)
+
+
+def list_unresolved_ticket_requests(authenticated_customer_id: str) -> list[dict[str, Any]]:
+    """The customer's persisted creation requests that have neither produced a ticket nor received a definite refusal.
+
+    Survives session expiry and process restart (it reads the database, not memory). Each entry carries the request key and
+    the immutable payload so ``retry_ticket_request`` can replay it unchanged. Entries whose payload was erased are omitted."""
+    validate_identifier(authenticated_customer_id, "authenticated_customer_id")
+
+    def work(connection: sqlite3.Connection, now: datetime) -> list[dict[str, Any]]:
+        rows = connection.execute(
+            "SELECT request_key, request_hash, payload_json, created_at FROM ticket_write_intents "
+            "WHERE customer_id = ? AND state = 'prepared' AND last_outcome IS NULL AND payload_json IS NOT NULL "
+            "ORDER BY created_at ASC, request_key ASC", (authenticated_customer_id,)).fetchall()
+        return [{"request_key": r["request_key"], "request_hash": r["request_hash"],
+                 "payload": json.loads(r["payload_json"]), "created_at": r["created_at"]} for r in rows]
+
+    return _run_read(work)
+
+
+def retry_ticket_request(authenticated_customer_id: str, request_key: str,
+                         rate_limit: Optional[tuple[int, int]] = None) -> dict[str, Any]:
+    """Replay a persisted creation request with its stored key and immutable payload (recovery after an uncertain outcome).
+
+    Returns the same outcome vocabulary as ``create_ticket_from_description`` (``already_created`` when the ticket exists, so
+    a request never creates two tickets), ``unknown_request`` for a key this customer never persisted, or
+    ``payload_erased`` when the audited erasure removed the payload. It never accepts a new payload: the stored one is final."""
+    validate_identifier(authenticated_customer_id, "authenticated_customer_id")
+    _validate_request_key(request_key)
+    limit = _validate_rate_limit(rate_limit)
+
+    def work(connection: sqlite3.Connection, now: datetime) -> dict[str, Any]:
+        row = connection.execute(
+            "SELECT payload_json, state, ticket_id FROM ticket_write_intents WHERE customer_id = ? AND request_key = ?",
+            (authenticated_customer_id, request_key)).fetchone()
+        return dict(row) if row is not None else {}
+
+    stored = _run_read(work)
+    if not stored:
+        return {"outcome": "unknown_request"}
+    if stored["state"] == "committed":
+        return {"outcome": "already_created", "ticket_id": stored["ticket_id"]}
+    if stored["payload_json"] is None:
+        return {"outcome": "payload_erased"}
+    return _create_from_payload(authenticated_customer_id, request_key, json.loads(stored["payload_json"]), limit)
+
+
+# -- events -----------------------------------------------------------------
+
+def get_ticket_events(authenticated_customer_id: str, ticket_id: str, offset: int = 0, limit: int = 50) -> dict[str, Any]:
+    """The events of one of the customer's tickets in ``seq`` order. A foreign and a fabricated ticket ID give the same
+    empty answer. Redacted comments have a NULL body."""
+    validate_identifier(authenticated_customer_id, "authenticated_customer_id")
+    validate_identifier(ticket_id, "ticket_id")
+    if isinstance(offset, bool) or not isinstance(offset, int) or offset < 0:
+        raise ValueError("'offset' must be a non-negative integer")
+    if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
+        raise ValueError("'limit' must be a positive integer")
+
+    def work(connection: sqlite3.Connection, now: datetime) -> dict[str, Any]:
+        total = connection.execute(
+            "SELECT COUNT(*) FROM ticket_events WHERE ticket_id = ? AND customer_id = ?",
+            (ticket_id, authenticated_customer_id)).fetchone()[0]
+        rows = connection.execute(
+            "SELECT event_id, ticket_id, seq, kind, actor_type, body, intent, staff_review_required, from_status, "
+            "to_status, transition_reason, trigger_event_id, created_at, redacted_at FROM ticket_events "
+            "WHERE ticket_id = ? AND customer_id = ? ORDER BY seq ASC LIMIT ? OFFSET ?",
+            (ticket_id, authenticated_customer_id, limit, offset)).fetchall()
+        return {"events": _rows_to_dicts(rows), "total": total}
+
+    return _run_read(work)
+
+
+def add_ticket_event(
+    authenticated_customer_id: str,
+    ticket_id: str,
+    request_key: str,
+    body: str,
+    intent: str = "information",
+    *,
+    comments_max: int = COMMENTS_MAX_DEFAULT,
+    reopen_window_seconds: int = REOPEN_WINDOW_SECONDS_DEFAULT,
+) -> dict[str, Any]:
+    """Append information to one of the customer's tickets and apply ONLY the owner-approved status rules (OD-13).
+
+    This is the repository half of "add information" (design 4.2); the customer conversation that offers it is Phase 3 and
+    is not part of this change. There is no status argument: ``intent`` is the closed enum ``information`` or
+    ``issue_persists``. One ``BEGIN IMMEDIATE`` transaction holds idempotency, ownership, the comment bound, the rule lookup,
+    the comment event, the status update and the audit event. It never touches ``description`` and never counts toward the
+    creation limit. Outcomes (values): ``added`` (``event_id``, ``status``, ``transition``, ``staff_review_required``),
+    ``already_applied``, ``idempotency_conflict``, ``not_found`` (foreign and fabricated IDs alike), ``comment_limit_reached``,
+    ``reopen_window_expired``, ``reopen_unavailable``, ``active_ticket_exists``, ``intent_not_applicable``, ``ticket_closed``
+    and ``status_rule_unspecified``.
+
+    ``status_rule_unspecified`` is returned (nothing written) for tickets in ``New``, ``Pending`` or ``Reopened``: the owner
+    approved no rule for them (open decision B-5), and none is invented here.
+    """
+    validate_identifier(authenticated_customer_id, "authenticated_customer_id")
+    validate_identifier(ticket_id, "ticket_id")
+    _validate_request_key(request_key)
+    validate_text(body, "body", COMMENT_TEXT_MAX)
+    if intent not in ("information", "issue_persists"):
+        raise ValueError("'intent' must be 'information' or 'issue_persists'")
+    for name, value in (("comments_max", comments_max), ("reopen_window_seconds", reopen_window_seconds)):
+        if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+            raise ValueError(f"'{name}' must be a positive integer")
+    payload_json = json.dumps({"body": body, "intent": intent, "ticket_id": ticket_id}, sort_keys=True,
+                              ensure_ascii=True, separators=(",", ":"))
+    request_hash = _payload_hash(payload_json)
+
+    def work(connection: sqlite3.Connection, now: datetime) -> tuple[dict[str, Any], bool]:
+        stamp = clock.format_timestamp(now)
+        prior = connection.execute(
+            "SELECT event_id, request_hash FROM ticket_events WHERE customer_id = ? AND request_key = ?",
+            (authenticated_customer_id, request_key)).fetchone()
+        if prior is not None:  # 1. idempotency
+            if prior["request_hash"] != request_hash:
+                return {"outcome": "idempotency_conflict"}, False
+            ticket = connection.execute("SELECT status FROM support_tickets WHERE ticket_id = ? AND customer_id = ?",
+                                        (ticket_id, authenticated_customer_id)).fetchone()
+            return {"outcome": "already_applied", "event_id": prior["event_id"],
+                    "status": ticket["status"] if ticket else None}, False
+        ticket = connection.execute(  # 2. ownership in SQL
+            "SELECT ticket_id, status, issue_type, issue_key FROM support_tickets WHERE ticket_id = ? AND customer_id = ?",
+            (ticket_id, authenticated_customer_id)).fetchone()
+        if ticket is None:
+            return {"outcome": "not_found"}, False
+        comments = connection.execute(  # 3. the comment bound (redacted comments count)
+            "SELECT COUNT(*) FROM ticket_events WHERE ticket_id = ? AND kind = 'comment'", (ticket_id,)).fetchone()[0]
+        if comments >= comments_max:
+            return {"outcome": "comment_limit_reached"}, False
+        status = ticket["status"]
+        transition: Optional[tuple[str, str]] = None
+        review = 0
+        unavailable = False
+        if status in ("Closed", "Cancelled"):  # 4. the predefined rule lookup (business rules 7.2)
+            return {"outcome": "ticket_closed"}, False
+        if status in ("New", "Pending", "Reopened"):
+            return {"outcome": "status_rule_unspecified"}, False  # B-5: no owner-approved rule, none invented
+        if status == "Waiting for customer":
+            if intent == "information":
+                transition = ("In Progress", "customer_supplied_requested_information")
+            else:
+                return {"outcome": "intent_not_applicable"}, False
+        elif status == "Resolved":
+            if intent == "issue_persists":
+                resolved = connection.execute(
+                    "SELECT created_at FROM ticket_events WHERE ticket_id = ? AND kind = 'status_change' "
+                    "AND to_status = 'Resolved' ORDER BY seq DESC LIMIT 1", (ticket_id,)).fetchone()
+                if resolved is None:  # fails closed: the window cannot be proven without a trusted event
+                    review = 1
+                    unavailable = True
+                else:
+                    resolved_at = clock.parse_timestamp(resolved["created_at"])
+                    if now >= resolved_at + timedelta(seconds=reopen_window_seconds):
+                        return {"outcome": "reopen_window_expired"}, False
+                    if not ticket["issue_key"].startswith("n:") and connection.execute(
+                            "SELECT 1 FROM support_tickets WHERE customer_id = ? AND issue_type = ? AND issue_key = ? "
+                            f"AND ticket_id <> ? AND status NOT IN {_TERMINAL_SQL}",
+                            (authenticated_customer_id, ticket["issue_type"], ticket["issue_key"], ticket_id)).fetchone():
+                        return {"outcome": "active_ticket_exists"}, False
+                    transition = ("Reopened", "customer_reported_issue_persists")
+        elif status == "On hold":
+            if intent == "information":
+                review = 1
+            else:
+                return {"outcome": "intent_not_applicable"}, False
+        else:  # Open, In Progress
+            if intent == "issue_persists":
+                return {"outcome": "intent_not_applicable"}, False
+        comment_id = _insert_event(  # 5. the comment, then the transition and its audit event, atomically
+            connection, ticket_id=ticket_id, customer_id=authenticated_customer_id, kind="comment",
+            actor_type="customer", actor_ref=f"customer:{authenticated_customer_id}", request_key=request_key,
+            request_hash=request_hash, created_at=stamp, body=body, intent=intent, staff_review_required=review)
+        new_status = status
+        if transition is not None:
+            new_status, reason = transition
+            connection.execute("UPDATE support_tickets SET status = ?, updated_at = ? WHERE ticket_id = ? AND customer_id = ?",
+                               (new_status, stamp, ticket_id, authenticated_customer_id))
+            _insert_event(connection, ticket_id=ticket_id, customer_id=authenticated_customer_id, kind="status_change",
+                          actor_type="system", actor_ref="system", request_key=f"{request_key}#status",
+                          request_hash=request_hash, created_at=stamp, from_status=status, to_status=new_status,
+                          transition_reason=reason, trigger_event_id=comment_id)
+        else:
+            connection.execute("UPDATE support_tickets SET updated_at = ? WHERE ticket_id = ? AND customer_id = ?",
+                               (stamp, ticket_id, authenticated_customer_id))
+        result = {"outcome": "reopen_unavailable" if unavailable else "added", "event_id": comment_id,
+                  "status": new_status, "staff_review_required": bool(review),
+                  "transition": {"from": status, "to": new_status} if transition is not None else None}
+        return result, True
+
+    return _run_write(work)
+
+
+# -- audited erasure (operator only) ---------------------------------------
+
+ERASURE_REASONS = ("privacy_request", "retention_expiry", "legal_order")
+ERASED_MARKER = "[erased]"
+
+
+def erase_ticket_content(
+    operator_ref: str,
+    authorization_ref: str,
+    reason_code: str,
+    customer_id: str,
+    request_key: str,
+    ticket_ids: Optional[list[str]] = None,
+) -> dict[str, Any]:
+    """Operator-run, audited redaction of ticket content (OD-09, design 4.5). Never reachable from a customer tool, a
+    model-visible tool, an HTTP route or the voice agent token (a source test enforces that no application module calls it).
+
+    In ONE transaction: ticket descriptions become ``[erased]``, summaries NULL, ``redacted_at`` is set; the selected tickets'
+    comment bodies become NULL with ``redacted_at``; write-intent payloads of the scope are removed; and one
+    ``ticket_erasure_log`` row records counts only (no text, no customer data). Rows are redacted, never deleted. Idempotent by
+    ``request_key``. No retention period exists and nothing erases automatically.
+    """
+    for name, value in (("operator_ref", operator_ref), ("authorization_ref", authorization_ref)):
+        validate_text(value, name, 200)
+    if reason_code not in ERASURE_REASONS:
+        raise ValueError("'reason_code' is not an approved erasure reason")
+    validate_identifier(customer_id, "customer_id")
+    _validate_request_key(request_key)
+    if ticket_ids is not None:
+        if not isinstance(ticket_ids, list) or not ticket_ids:
+            raise ValueError("'ticket_ids' must be a non-empty list or None")
+        for value in ticket_ids:
+            validate_identifier(value, "ticket_id")
+
+    def work(connection: sqlite3.Connection, now: datetime) -> tuple[dict[str, Any], bool]:
+        stamp = clock.format_timestamp(now)
+        prior = connection.execute(
+            "SELECT erasure_id, tickets_redacted, events_redacted FROM ticket_erasure_log WHERE request_key = ?",
+            (request_key,)).fetchone()
+        if prior is not None:
+            return {"outcome": "already_applied", "erasure_id": prior["erasure_id"],
+                    "tickets_redacted": prior["tickets_redacted"], "events_redacted": prior["events_redacted"]}, False
+        if ticket_ids is None:
+            scope = [r[0] for r in connection.execute(
+                "SELECT ticket_id FROM support_tickets WHERE customer_id = ?", (customer_id,))]
+        else:
+            scope = [r[0] for r in connection.execute(
+                "SELECT ticket_id FROM support_tickets WHERE customer_id = ? AND ticket_id IN (%s)" %
+                ",".join("?" * len(ticket_ids)), (customer_id, *ticket_ids))]
+        tickets = events = 0
+        for tid in scope:
+            tickets += connection.execute(
+                "UPDATE support_tickets SET description = ?, conversation_summary = NULL, redacted_at = ? "
+                "WHERE ticket_id = ? AND customer_id = ? AND redacted_at IS NULL",
+                (ERASED_MARKER, stamp, tid, customer_id)).rowcount
+            events += connection.execute(
+                "UPDATE ticket_events SET body = NULL, redacted_at = ? WHERE ticket_id = ? AND customer_id = ? "
+                "AND redacted_at IS NULL", (stamp, tid, customer_id)).rowcount
+            connection.execute(
+                "UPDATE ticket_write_intents SET payload_json = NULL, redacted_at = ? WHERE customer_id = ? "
+                "AND ticket_id = ? AND redacted_at IS NULL", (stamp, customer_id, tid))
+        if ticket_ids is None:  # a whole-customer erasure also removes unresolved payloads that never became a ticket
+            connection.execute(
+                "UPDATE ticket_write_intents SET payload_json = NULL, redacted_at = ? WHERE customer_id = ? "
+                "AND redacted_at IS NULL", (stamp, customer_id))
+        erasure_id = _new_id("ERS")
+        connection.execute(
+            "INSERT INTO ticket_erasure_log (erasure_id, performed_at, operator_ref, authorization_ref, reason_code, "
+            "scope_customer_id, tickets_redacted, events_redacted, request_key) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (erasure_id, stamp, operator_ref, authorization_ref, reason_code, customer_id, tickets, events, request_key))
+        return {"outcome": "erased", "erasure_id": erasure_id, "tickets_redacted": tickets,
+                "events_redacted": events}, True
 
     return _run_write(work)

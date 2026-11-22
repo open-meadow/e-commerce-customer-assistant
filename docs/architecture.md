@@ -20,7 +20,7 @@ flowchart LR
     O --> T["Tool registry<br/>app/tools/registry.py"]
     T --> BL["Business logic<br/>app/db/repository.py"]
     T --> R["Retrieval<br/>app/rag (Chroma)"]
-    BL --> D[("SQLite<br/>5 tables")]
+    BL --> D[("SQLite<br/>8 tables")]
     R --> K["FAQ.md and Policies.md"]
     O --> G["Guards and code-owned replies<br/>guard.py, flow_texts.py"]
     G --> RES["Reply to the customer"]
@@ -35,7 +35,7 @@ flowchart LR
 | **LLM** | OpenAI Responses (live-evaluated, `gpt-4o-mini`, temperature 0.2), Anthropic (mock-tested only) or the offline `RuleBasedLLM` stand-in. A misconfigured provider raises an error; it never falls back silently | `app/llm` |
 | **Tool registry** | Ten tools. No schema contains a customer ID: the customer comes from the session | `app/tools/registry.py` |
 | **Business logic** | Every repository function takes the authenticated customer ID and filters on it in SQL. Writes use `BEGIN IMMEDIATE` and re-check eligibility inside the transaction | `app/db/repository.py` |
-| **Database and retrieval** | SQLite (customers, orders, order items, return requests, support tickets); Chroma vector index over the FAQ and policies with OpenAI `text-embedding-3-small` | `app/db`, `app/rag` |
+| **Database and retrieval** | SQLite (customers, orders, order items, return requests, support tickets, and the Phase 2 tables `ticket_events`, `ticket_erasure_log` and `ticket_write_intents`); Chroma vector index over the FAQ and policies with OpenAI `text-embedding-3-small` | `app/db`, `app/rag` |
 | **Response** | Either the model's prose after the guards have checked it, or a fixed sentence chosen by code in the customer's language | `app/tools/flow_texts.py` |
 
 The ten tools: `list_my_orders`, `get_order_status`, `get_my_returns`, `get_my_tickets`, `get_refund_policy`,
@@ -115,9 +115,13 @@ The ten tools: `list_my_orders`, `get_order_status`, `get_my_returns`, `get_my_t
 
 - Money is integer paise; timestamps are UTC text `YYYY-MM-DDTHH:MM:SSZ`; return and ticket text is validated exactly and
   never modified.
-- Three connection factories; only the initialization factory can create a database, and it refuses the legacy
-  `app/db/data/app.db`. Normal startup never creates a database; the health check reports `not_initialized` until the seed
-  command has run.
+- Four connection factories; only the initialization factory can create a database, and it refuses the legacy
+  `app/db/data/app.db`. `get_migration_connection()` opens an existing database for the operator-run migration only: it never
+  creates a file and also refuses `app_d2.db`. Normal startup never creates a database; the health check reports
+  `not_initialized` until the seed command has run.
+- Runtime requires schema version 2 (`PRAGMA user_version`); a version-1 database is `outdated` and refused. The
+  fresh-description ticket flow is behind `SUPPORT_TICKET_FRESH_FLOW_ENABLED`, which defaults to OFF. Migration is manual
+  (`python -m app.db.migrate`, scratch databases only) and nothing migrates at startup.
 - Sessions and UI chat history are in memory and single-process. The login is simulated and is not production authentication.
 
 ## Not covered

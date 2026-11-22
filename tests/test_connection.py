@@ -13,6 +13,7 @@ from app.db.connection import (
     DEFAULT_DB_PATH,
     PROJECT_ROOT,
     PROTECTED_DB_PATH,
+    SCHEMA_VERSION,
     get_connection,
     get_initialization_connection,
     get_readonly_connection,
@@ -135,7 +136,7 @@ class TestNormalConnection:
 
     def test_future_version_rejected(self, tmp_path):
         path = build_database(str(tmp_path / "f.db"), seed=False)
-        set_version(path, 2)
+        set_version(path, 3)
         with pytest.raises(SchemaIncompatibleError) as info:
             get_connection(path)
         assert info.value.reason == "future"
@@ -144,7 +145,7 @@ class TestNormalConnection:
         connection = get_connection(temp_db)
         try:
             assert connection.execute("PRAGMA foreign_keys").fetchone()[0] == 1
-            assert connection.execute("PRAGMA user_version").fetchone()[0] == 1
+            assert connection.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
             assert connection.execute("PRAGMA busy_timeout").fetchone()[0] == 5000
             row = connection.execute("SELECT customer_id FROM customers").fetchone()
             assert row["customer_id"]  # sqlite3.Row access by name

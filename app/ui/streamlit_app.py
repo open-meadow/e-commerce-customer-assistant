@@ -402,7 +402,7 @@ def _render_actions() -> None:
     if pending is not None:
         with st.container(border=True):
             st.markdown("**Confirm this request**")
-            st.write(pending.summary)
+            st.text(pending.summary)  # literal plain text: Markdown, HTML-like characters and newlines are shown as typed (OD-24)
             st.caption(f"Expires at {pending.expires_at} UTC")
             with st.container(horizontal=True, vertical_alignment="center"):
                 if st.button(

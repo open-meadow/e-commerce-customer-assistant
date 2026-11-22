@@ -38,6 +38,10 @@ class Settings:
     ticket_rate_policy: str = "rolling"                 # SUPPORT_TICKET_RATE_POLICY: "off" or "rolling"
     ticket_rate_max: int = 5                            # SUPPORT_TICKET_RATE_MAX
     ticket_rate_window_seconds: int = 86400             # SUPPORT_TICKET_RATE_WINDOW_SECONDS (rolling UTC window)
+    # Phase 1.1 persistence gate (owner decision U-1): the fresh-description ticket flow, default OFF. Turning it ON makes the
+    # production composition (Backend) require the real repository writer and fail startup closed without it. The setting name is
+    # a proposal [R]. Strict parsing: only true or false.
+    fresh_ticket_flow_enabled: bool = False             # SUPPORT_TICKET_FRESH_FLOW_ENABLED: "true" or "false"
     max_returns_per_session: int = 5
     idle_timeout: timedelta = timedelta(minutes=60)      # SUPPORT_IDLE_TIMEOUT_SECONDS
     pending_ttl: timedelta = timedelta(minutes=10)
@@ -98,6 +102,12 @@ class Settings:
                 chosen["ticket_rate_policy"] = policy
             else:
                 problems.append("SUPPORT_TICKET_RATE_POLICY must be off or rolling")
+        flow = (env.get("SUPPORT_TICKET_FRESH_FLOW_ENABLED") or "").strip().lower()
+        if flow:
+            if flow in ("true", "false"):
+                chosen["fresh_ticket_flow_enabled"] = flow == "true"
+            else:
+                problems.append("SUPPORT_TICKET_FRESH_FLOW_ENABLED must be true or false")
         for name, variable in (("agent_token", "SUPPORT_AGENT_TOKEN"), ("ui_token", "SUPPORT_UI_TOKEN")):
             raw = env.get(variable)
             if raw is None or raw == "":

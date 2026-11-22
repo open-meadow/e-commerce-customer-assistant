@@ -69,7 +69,11 @@ class TestWindowBoundary:
             result = make(limit=(5, W))
             assert result["outcome"] == outcome, (offset, result)
             if outcome == "created":  # reset the scenario for the next boundary
+                # the created ticket now has a ``created`` event (Phase 2); events are append-only, so the scenario is reset
+                # with foreign keys off on this scratch connection, which leaves the orphan event rows behind
+                raw.execute("PRAGMA foreign_keys = OFF")
                 raw.execute("DELETE FROM support_tickets WHERE ticket_id = ?", (result["ticket_id"],))
+                raw.execute("PRAGMA foreign_keys = ON")
                 raw.commit()
 
     def test_a_ticket_one_second_younger_than_the_window_still_counts(self, temp_db, set_now, raw):
